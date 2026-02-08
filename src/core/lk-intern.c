@@ -73,8 +73,8 @@ static int it_grow_table(lk_intern *it, lk_u32 new_cap) {
   lk_u32 old_cap = it->tab_cap;
   lk_u32 i;
 
-  it->tab = (struct lk_intern_entry *)
-      it_alloc(it, sizeof(struct lk_intern_entry) * new_cap);
+  it->tab = (struct lk_intern_entry *)it_alloc(
+      it, sizeof(struct lk_intern_entry) * new_cap);
 
   if (!it->tab) {
     it->tab = old;
@@ -112,6 +112,13 @@ static int it_grow_table(lk_intern *it, lk_u32 new_cap) {
 
   if (old) {
     it_dealloc(it, old);
+  }
+
+  for (i = 0; i < new_cap; i++) {
+    if (it->tab[i].used && it->tab[i].id > 0 &&
+        it->tab[i].id <= it->by_id_len) {
+      it->by_id[it->tab[i].id - 1] = &it->tab[i];
+    }
   }
 
   return 1;
@@ -175,7 +182,7 @@ static int it_pool_reserve(lk_intern *it, lk_u32 add_len) {
 }
 
 static int it_by_id_reserve(lk_intern *it) {
-  lk_u32 need = it->by_id_cap + 1;
+  lk_u32 need = it->by_id_len + 1;
   struct lk_intern_entry **nb;
   lk_u32 new_cap;
 
@@ -197,7 +204,7 @@ static int it_by_id_reserve(lk_intern *it) {
   }
 
   if (it->by_id && it->by_id_len) {
-    memcpy(nb, it->by_id, sizeof(struct lk_intern_entry*) * it->by_id_len);
+    memcpy(nb, it->by_id, sizeof(struct lk_intern_entry *) * it->by_id_len);
   }
 
   if (it->by_id) {
@@ -210,7 +217,7 @@ static int it_by_id_reserve(lk_intern *it) {
   return 1;
 }
 
-lk_intern *lk_intern_new(void* (*alloc)(void*, lk_u32), void *alloc_ud) {
+lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32), void *alloc_ud) {
   lk_intern *it;
 
   if (alloc) {
@@ -231,7 +238,8 @@ lk_intern *lk_intern_new(void* (*alloc)(void*, lk_u32), void *alloc_ud) {
   it->dealloc = alloc ? 0 : lk_sys_dealloc;
   it->ud = alloc_ud;
 
-  /* NOTE: if we want symmetric custom alloc/dealloc, adjust create signature. */
+  /* NOTE: if we want symmetric custom alloc/dealloc, adjust create signature.
+   */
   (void)alloc_ud;
 
   if (!it_ensure(it)) {
@@ -358,4 +366,3 @@ lk_str lk_intern_str(const lk_intern *it, lk_node_id id) {
     return s;
   }
 }
-

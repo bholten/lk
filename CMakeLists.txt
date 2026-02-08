@@ -16,6 +16,7 @@ set(LK_SOURCES
   src/core/lk-str.c
   src/core/lk-value.c
   src/core/lk-tree.c
+  src/core/lk-ui.c
   src/core/lk-ht.c
 )
 

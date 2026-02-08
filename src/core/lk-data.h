@@ -247,6 +247,67 @@ int lk_tree_validate_schema(const lk_tree *t,
 
 
 /**
+ * lk_ui — Double-buffered UI context with tree diffing.
+ *
+ * Owns two trees (prev, next) sharing a single intern table.
+ * Each frame: begin_frame resets `next`, host builds into it,
+ * end_frame diffs prev vs next and swaps.
+ **/
+
+typedef enum lk_change_kind {
+  LK_CHANGE_ADDED = 1,
+  LK_CHANGE_REMOVED,
+  LK_CHANGE_UPDATED
+} lk_change_kind;
+
+typedef struct lk_change {
+  lk_u8 kind; /* lk_change_kind */
+  lk_node_id id; /* node identity */
+  lk_ix node_ix; /* index in current tree (0 for REMOVED) */
+} lk_change;
+
+typedef struct lk_changeset {
+  lk_change *changes;
+  lk_u32 count;
+  lk_u32 cap;
+} lk_changeset;
+
+typedef struct lk_ui {
+  lk_intern *intern;
+  lk_tree *prev;
+  lk_tree *next;
+  lk_changeset changeset;
+  void *(*alloc)(void *ud, lk_u32 bytes);
+  void (*dealloc)(void *ud, void *ptr);
+  void *alloc_ud;
+} lk_ui;
+
+typedef struct lk_ui_cfg {
+  void *(*alloc)(void *ud, lk_u32 bytes);
+  void (*dealloc)(void *ud, void *ptr);
+  void *ud;
+  lk_u32 node_cap_hint;
+  lk_u32 prop_cap_hint;
+} lk_ui_cfg;
+
+lk_ui *lk_ui_create(const lk_ui_cfg *cfg);
+void lk_ui_destroy(lk_ui *ui);
+
+/* Reset next tree and return it for building. */
+lk_tree *lk_ui_begin_frame(lk_ui *ui);
+
+/* Diff prev vs next, swap, return changeset.
+ * Changeset is valid until the next lk_ui_end_frame call.
+ * ADDED/UPDATED node_ix values are indices into the current tree.
+ * REMOVED entries have node_ix = 0.
+ */
+const lk_changeset *lk_ui_end_frame(lk_ui *ui);
+
+/* Return the current tree (valid after end_frame, before next begin_frame). */
+const lk_tree *lk_ui_tree(const lk_ui *ui);
+
+
+/**
  * lk_ht - Hash Table
  **/
 typedef struct lk_ht lk_ht;

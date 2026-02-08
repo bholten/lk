@@ -121,7 +121,8 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
 
   memset(&t->nodes[0], 0, sizeof(lk_node));
 
-  if (!lk_tree_reserve_props(t, cfg->prop_cap_hint ? cfg->prop_cap_hint : 128)) {
+  if (!lk_tree_reserve_props(t,
+                             cfg->prop_cap_hint ? cfg->prop_cap_hint : 128)) {
     lk_tree_destroy(t);
     return 0;
   }
@@ -130,7 +131,6 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
 
   return t;
 }
-
 
 void lk_tree_destroy(lk_tree *t) {
   if (!t) {
@@ -152,7 +152,6 @@ void lk_tree_destroy(lk_tree *t) {
   lk_dealloc(t, t);
 }
 
-
 /* keep capacity, clear counts */
 void lk_tree_reset(lk_tree *t) {
   if (!t) {
@@ -167,7 +166,6 @@ void lk_tree_reset(lk_tree *t) {
     memset(&t->nodes[0], 0, sizeof(lk_node));
   }
 }
-
 
 /* Create a node with id+kind, append to arena, return node index (1..N).
  * Caller wires parent/children via lk_tree_append_child.
@@ -235,7 +233,6 @@ void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child) {
   *link = child;
 }
 
-
 /* Set/append a prop on a node.
  * Phase 0: allows duplicates; validation can flag duplicates later if desired.
  */
@@ -245,7 +242,6 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
   if (!t || node == 0 || node >= t->node_count) {
     return;
   }
-
 
   /* Ensure contiguous prop slice: we enforce "append-only per node"
      in construction order. In Phase 0, easiest is: require user to add
@@ -278,10 +274,9 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
   n->props_len++;
 }
 
-
-static void push_diag(lk_diag* diags, lk_u32 cap, lk_u32* len,
-                      lk_diag_kind k, lk_diag_code c, lk_ix node,
-                      lk_u16 key, lk_u16 kind_u16, const char* msg) {
+static void push_diag(lk_diag *diags, lk_u32 cap, lk_u32 *len, lk_diag_kind k,
+                      lk_diag_code c, lk_ix node, lk_u16 key, lk_u16 kind_u16,
+                      const char *msg) {
   lk_u32 i;
 
   if (!diags || !len) {
@@ -291,7 +286,7 @@ static void push_diag(lk_diag* diags, lk_u32 cap, lk_u32* len,
   i = *len;
 
   if (i >= cap) {
-      return;
+    return;
   }
 
   diags[i].kind = k;
@@ -303,11 +298,8 @@ static void push_diag(lk_diag* diags, lk_u32 cap, lk_u32* len,
   *len = i + 1;
 }
 
-int lk_tree_validate(const lk_tree* t,
-                     const lk_validate_opts* opts,
-                     lk_diag* diags,
-                     lk_u32 diags_cap,
-                     lk_u32* out_diags_len) {
+int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
+                     lk_diag *diags, lk_u32 diags_cap, lk_u32 *out_diags_len) {
   lk_validate_opts o;
   lk_u32 dl = 0;
   int ok = 1;
@@ -323,7 +315,8 @@ int lk_tree_validate(const lk_tree* t,
   }
 
   if (!t) {
-    push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_INVALID_NODE_INDEX, 0, 0, 0, "tree is NULL");
+    push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_INVALID_NODE_INDEX, 0, 0,
+              0, "tree is NULL");
     ok = 0;
 
     if (out_diags_len) {
@@ -335,7 +328,8 @@ int lk_tree_validate(const lk_tree* t,
 
   if (opts->require_root) {
     if (t->root == 0 || t->root >= t->node_count) {
-      push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_NO_ROOT, t->root, 0, 0, "missing or invalid root");
+      push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_NO_ROOT, t->root, 0, 0,
+                "missing or invalid root");
       ok = 0;
     }
   }
@@ -343,9 +337,10 @@ int lk_tree_validate(const lk_tree* t,
   /* Basic index sanity for child links + parent pointers, and detect
      multiple parents */
   if (opts->forbid_multiple_parents) {
-    lk_u32* parent_count = 0;
+    lk_u32 *parent_count = 0;
     lk_u32 i;
-    parent_count = (lk_u32*)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_u32) * t->node_count));
+    parent_count =
+        (lk_u32 *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_u32) * t->node_count));
 
     if (parent_count) {
       for (i = 0; i < t->node_count; i++) {
@@ -356,7 +351,8 @@ int lk_tree_validate(const lk_tree* t,
         lk_ix ch = t->nodes[i].first_child;
         while (ch) {
           if (ch >= t->node_count) {
-            push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_INVALID_NODE_INDEX, ch, 0, 0, "child index out of range");
+            push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_INVALID_NODE_INDEX,
+                      ch, 0, 0, "child index out of range");
             ok = 0;
             break;
           }
@@ -368,7 +364,9 @@ int lk_tree_validate(const lk_tree* t,
 
       for (i = 1; i < t->node_count; i++) {
         if (parent_count[i] > 1) {
-          push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_MULTIPLE_PARENTS, (lk_ix)i, 0, 0, "node has multiple parents via child lists");
+          push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_MULTIPLE_PARENTS,
+                    (lk_ix)i, 0, 0,
+                    "node has multiple parents via child lists");
           ok = 0;
         }
       }
@@ -377,8 +375,8 @@ int lk_tree_validate(const lk_tree* t,
     }
   }
 
-    /* Parent mismatch: child's parent pointer should match actual
-       container */
+  /* Parent mismatch: child's parent pointer should match actual
+     container */
   {
     lk_u32 i;
 
@@ -391,7 +389,8 @@ int lk_tree_validate(const lk_tree* t,
         }
 
         if (t->nodes[ch].parent != (lk_ix)i) {
-          push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_PARENT_MISMATCH, ch, 0, 0, "child.parent does not match container");
+          push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_PARENT_MISMATCH, ch,
+                    0, 0, "child.parent does not match container");
           ok = 0;
         }
 
@@ -412,7 +411,8 @@ int lk_tree_validate(const lk_tree* t,
 
       for (j = i + 1; j < t->node_count; j++) {
         if (t->nodes[i].id == t->nodes[j].id && t->nodes[j].id != 0) {
-          push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_DUPLICATE_NODE_ID, (lk_ix)j, 0, 0, "duplicate node id");
+          push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_DUPLICATE_NODE_ID,
+                    (lk_ix)j, 0, 0, "duplicate node id");
           ok = 0;
         }
       }
@@ -421,7 +421,8 @@ int lk_tree_validate(const lk_tree* t,
 
   /* Cycle detection (DFS colors) */
   if (opts->forbid_cycles && t->root != 0 && t->root < t->node_count) {
-    lk_u8* color = (lk_u8*)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_u8) * t->node_count));
+    lk_u8 *color =
+        (lk_u8 *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_u8) * t->node_count));
 
     if (color) {
       lk_u32 i;
@@ -433,8 +434,10 @@ int lk_tree_validate(const lk_tree* t,
       /* recursive DFS not C89-friendly for deep trees; implement
          manual stack */
       {
-        lk_ix* stack = (lk_ix*)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
-        lk_ix* iter  = (lk_ix*)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+        lk_ix *stack = (lk_ix *)lk_sys_alloc(
+            NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+        lk_ix *iter = (lk_ix *)lk_sys_alloc(
+            NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
         lk_u32 sp = 0;
 
         if (stack && iter) {
@@ -461,7 +464,8 @@ int lk_tree_validate(const lk_tree* t,
             }
 
             if (color[c] == 1) {
-              push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_CYCLE_DETECTED, c, 0, 0, "cycle detected");
+              push_diag(diags, diags_cap, &dl, UID_ERROR, UIDC_CYCLE_DETECTED,
+                        c, 0, 0, "cycle detected");
               ok = 0;
               break;
             }
@@ -501,7 +505,7 @@ int lk_tree_validate(const lk_tree* t,
 
 /* Debug/Dump */
 /* TODO */
-static void wr_cstr(lk_write_fn wr, void* ud, const char* s) {
+static void wr_cstr(lk_write_fn wr, void *ud, const char *s) {
   if (!wr || !s) {
     return;
   }
@@ -509,7 +513,7 @@ static void wr_cstr(lk_write_fn wr, void* ud, const char* s) {
   wr(ud, s, (lk_u32)strlen(s));
 }
 
-static void wr_u32(lk_write_fn wr, void* ud, lk_u32 x) {
+static void wr_u32(lk_write_fn wr, void *ud, lk_u32 x) {
   char buf[32];
   int n;
 
@@ -518,7 +522,8 @@ static void wr_u32(lk_write_fn wr, void* ud, lk_u32 x) {
   lk_u32 i = 0;
 
   if (x == 0) {
-    buf[0] = '0'; buf[1] = 0;
+    buf[0] = '0';
+    buf[1] = 0;
     wr_cstr(wr, ud, buf);
     return;
   }
@@ -538,10 +543,10 @@ static void wr_u32(lk_write_fn wr, void* ud, lk_u32 x) {
   wr_cstr(wr, ud, buf);
 }
 
-static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr,
-                      void* ud, lk_u32 indent) {
+static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
+                      lk_u32 indent) {
   lk_u32 i;
-  lk_node* node;
+  lk_node *node;
 
   for (i = 0; i < indent; i++) {
     wr_cstr(wr, ud, "  ");
@@ -589,14 +594,14 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr,
     wr_cstr(wr, ud, " :props {");
 
     for (k = 0; k < node->props_len; k++) {
-      lk_prop* p = &t->props[node->props_off + k];
+      lk_prop *p = &t->props[node->props_off + k];
       wr_cstr(wr, ud, " ");
       wr_u32(wr, ud, (lk_u32)p->key);
       wr_cstr(wr, ud, "=");
 
       switch (p->value.tag) {
       case UIV_BOOL: wr_cstr(wr, ud, p->value.as.b ? "true" : "false"); break;
-      case UIV_I32:  wr_u32(wr, ud, (lk_u32)p->value.as.i); break;
+      case UIV_I32: wr_u32(wr, ud, (lk_u32)p->value.as.i); break;
       case UIV_STR:
         wr_cstr(wr, ud, "\"");
 
@@ -652,7 +657,7 @@ void lk_tree_dump(const lk_tree *t, lk_write_fn wr, void *wr_ud) {
   dump_node(t, t->root, wr, wr_ud, 0);
 }
 
-lk_ix lk_tree_find_by_id(const lk_tree* t, lk_node_id id) {
+lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id) {
   lk_u32 i;
 
   if (!t || id == 0) {
@@ -670,28 +675,23 @@ lk_ix lk_tree_find_by_id(const lk_tree* t, lk_node_id id) {
 
 /* Schema (lots of TODOs) */
 
-lk_kind_schema *ui_default_schema(lk_u32* out_count) {
-    (void)out_count;
-    return 0; /* implement later if you want schema checks in Phase 0 */
+lk_kind_schema *ui_default_schema(lk_u32 *out_count) {
+  (void)out_count;
+  return 0; /* implement later if you want schema checks in Phase 0 */
 }
 
-int lk_tree_validate_schema(
-    const lk_tree* t,
-    const lk_kind_schema* schema,
-    lk_u32 schema_count,
-    lk_diag* diags,
-    lk_u32 diags_cap,
-    lk_u32* out_diags_len
-) {
-    (void)t;
-    (void)schema;
-    (void)schema_count;
-    (void)diags;
-    (void)diags_cap;
+int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,
+                            lk_u32 schema_count, lk_diag *diags,
+                            lk_u32 diags_cap, lk_u32 *out_diags_len) {
+  (void)t;
+  (void)schema;
+  (void)schema_count;
+  (void)diags;
+  (void)diags_cap;
 
   if (out_diags_len) {
     *out_diags_len = 0;
-  }    
+  }
 
   return 1;
 }

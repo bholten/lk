@@ -7,7 +7,7 @@
 
 struct lk_ht_entry {
   const char *key;
-  void *value;  
+  void *value;
 };
 
 struct lk_ht {
@@ -18,7 +18,7 @@ struct lk_ht {
 
 lk_ht *lk_ht_new(size_t elem_size) {
   lk_ht *ht = NULL;
-  
+
   if (elem_size <= 0) {
     return NULL;
   }
@@ -46,7 +46,7 @@ int lk_ht_delete(lk_ht *ht) {
   size_t i;
 
   for (i = 0; i < ht->capacity; i++) {
-    free((void*)ht->entries[i].key);
+    free((void *)ht->entries[i].key);
   }
 
   free(ht->entries);
@@ -55,4 +55,5 @@ int lk_ht_delete(lk_ht *ht) {
   return 0;
 }
 
-/* TODO: hash_key, lk_ht_get, lk_ht_set, lk_ht_length, lk_hti_iterator, lk_hti_next */
+/* TODO: hash_key, lk_ht_get, lk_ht_set, lk_ht_length, lk_hti_iterator,
+ * lk_hti_next */

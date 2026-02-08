@@ -35,4 +35,3 @@ lk_value lk_v_str(lk_intern *it, lk_str s) {
 lk_value lk_v_cstr(lk_intern *it, const char *cstr) {
   return lk_v_str(it, lk_str_c(cstr));
 }
-
