@@ -24,13 +24,15 @@ lk_value lk_v_i32(lk_i32 i) {
   return v;
 }
 
-lk_value lk_v_str(lk_str s) {
+lk_value lk_v_str(lk_intern *it, lk_str s) {
   lk_value v;
   v.tag = UIV_STR;
-  v.as.s = s;
+  v.as.str_id = lk_intern_id(it, s);
 
   return v;
 }
 
-lk_value lk_v_cstr(const char *cstr) { return lk_v_str(lk_str_c(cstr)); }
+lk_value lk_v_cstr(lk_intern *it, const char *cstr) {
+  return lk_v_str(it, lk_str_c(cstr));
+}
 

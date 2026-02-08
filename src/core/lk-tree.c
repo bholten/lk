@@ -95,10 +95,22 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
 
   memset(t, 0, sizeof(*t));
 
-  t->intern = cfg->intern;
   t->alloc = cfg->alloc ? cfg->alloc : lk_sys_alloc;
   t->dealloc = cfg->dealloc ? cfg->dealloc : lk_sys_dealloc;
   t->alloc_ud = cfg->ud;
+
+  if (cfg->intern) {
+    t->intern = cfg->intern;
+    t->owns_intern = 0;
+  } else {
+    t->intern = lk_intern_new(t->alloc, t->alloc_ud);
+    t->owns_intern = 1;
+
+    if (!t->intern) {
+      lk_dealloc(t, t);
+      return 0;
+    }
+  }
 
   t->node_count = 1;
 
@@ -123,6 +135,10 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
 void lk_tree_destroy(lk_tree *t) {
   if (!t) {
     return;
+  }
+
+  if (t->intern && t->owns_intern) {
+    lk_intern_destroy(t->intern);
   }
 
   if (t->nodes) {
@@ -584,8 +600,12 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr,
       case UIV_STR:
         wr_cstr(wr, ud, "\"");
 
-        if (p->value.as.s.ptr && p->value.as.s.len) {
-          wr(ud, p->value.as.s.ptr, p->value.as.s.len);
+        if (t->intern && p->value.as.str_id) {
+          lk_str sv = lk_intern_str(t->intern, p->value.as.str_id);
+
+          if (sv.ptr && sv.len) {
+            wr(ud, sv.ptr, sv.len);
+          }
         }
 
         wr_cstr(wr, ud, "\"");

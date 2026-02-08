@@ -34,7 +34,7 @@ int main(void) {
     lk_tree_append_child(t, root, col);
     lk_tree_append_child(t, col, btn);
 
-    lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr("Increment"));
+    lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Increment"));
     lk_tree_add_prop(t, btn, UIP_FOCUSABLE, lk_v_bool(1));
   }
   

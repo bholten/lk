@@ -64,7 +64,7 @@ typedef struct lk_value {
   union {
     lk_u8 b;
     lk_u32 i;
-    lk_str s;
+    lk_u32 str_id; /* interned string id (UIV_STR) */
   } as;
 } lk_value;
 
@@ -98,6 +98,7 @@ typedef struct lk_node {
 
 typedef struct lk_tree {
   lk_intern *intern;
+  lk_u8 owns_intern; /* 1 if tree created the intern table */
   lk_node *nodes;
   lk_u32 node_cap;
   lk_u32 node_count;
@@ -148,8 +149,8 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v);
 lk_value lk_v_none(void);
 lk_value lk_v_bool(int b);
 lk_value lk_v_i32(lk_i32 i);
-lk_value lk_v_str(lk_str s);
-lk_value lk_v_cstr(const char *cstr);
+lk_value lk_v_str(lk_intern *it, lk_str s);
+lk_value lk_v_cstr(lk_intern *it, const char *cstr);
 
 
 /* Validation */
