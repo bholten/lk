@@ -83,7 +83,6 @@ typedef struct lk_prop {
  *   - first_child / next_sibling: adjacency (compact, no per-node dynamic arrays)
  *   - props: slice into props arena
  */
-
 typedef lk_u32 lk_ix;
 
 typedef struct lk_node {
@@ -125,12 +124,13 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg);
 void lk_tree_destroy(lk_tree *t);
 void lk_tree_reset(lk_tree *t); /* keep capacity, clear counts */
 
-/* Create a node with id+kind, append to arena, return node index (1..N).
- * Caller wires parent/children via lk_tree_append_child.
+/* Create a node with id+kind, append to arena, return node index
+ * (1..N).  Caller wires parent/children via lk_tree_append_child.
  */
 lk_ix lk_tree_add_node(lk_tree *t, lk_node_id id, lk_kind kind);
 
-/* Convenience: create node by string id via intern (must not be NULL). */
+/* Convenience: create node by string id via intern (must not be
+   NULL). */
 lk_ix lk_tree_add_node_s(lk_tree *t, lk_str id_str, lk_kind kind);
 
 /* Set root node index. */
@@ -141,7 +141,9 @@ void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child);
 
 
 /* Set/append a prop on a node.
- * Phase 0: allows duplicates; validation can flag duplicates later if desired.
+ *
+ * Phase 0: allows duplicates; validation can flag duplicates later if
+ * desired.
  */
 void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v);
 
@@ -297,14 +299,78 @@ void lk_ui_destroy(lk_ui *ui);
 lk_tree *lk_ui_begin_frame(lk_ui *ui);
 
 /* Diff prev vs next, swap, return changeset.
+ *
  * Changeset is valid until the next lk_ui_end_frame call.
  * ADDED/UPDATED node_ix values are indices into the current tree.
  * REMOVED entries have node_ix = 0.
  */
 const lk_changeset *lk_ui_end_frame(lk_ui *ui);
 
-/* Return the current tree (valid after end_frame, before next begin_frame). */
+/* Return the current tree (valid after end_frame, before next
+   begin_frame). */
 const lk_tree *lk_ui_tree(const lk_ui *ui);
+
+
+/**
+ * Layout
+ **/
+
+typedef struct lk_rect { lk_i32 x, y, w, h; } lk_rect;
+typedef struct lk_size { lk_i32 w, h; } lk_size;
+
+typedef void (*lk_measure_text_fn)(void *ud, lk_str text,
+                                    lk_i32 *out_w, lk_i32 *out_h);
+
+typedef struct lk_layout_cfg {
+  lk_measure_text_fn measure_text;
+  void *measure_ud;
+  lk_i32 viewport_w, viewport_h;
+} lk_layout_cfg;
+
+/* Compute layout rects for every node in the tree. rects[] must be
+ * at least t->node_count elements (indexed by lk_ix).  Returns 1 on
+ * success, 0 on failure.
+ */
+int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects);
+
+/* Stub text measurer: 8px per char, 16px tall. */
+void lk_measure_text_stub(void *ud, lk_str text,
+                           lk_i32 *out_w, lk_i32 *out_h);
+
+
+/**
+ * Render list — flat display list for renderer consumption.
+ **/
+
+typedef struct lk_color { lk_u8 r, g, b, a; } lk_color;
+
+typedef enum lk_render_op {
+  LK_ROP_FILL_RECT = 1,
+  LK_ROP_DRAW_TEXT
+} lk_render_op;
+
+typedef struct lk_render_cmd {
+  lk_u8 op; /* lk_render_op */
+  lk_rect rect;
+  lk_color color;
+  lk_u32 str_id; /* for DRAW_TEXT: interned string ID */
+} lk_render_cmd;
+
+typedef struct lk_render_list {
+  lk_render_cmd *cmds;
+  lk_u32 count;
+  lk_u32 cap;
+} lk_render_list;
+
+/* Build a render list from a laid-out tree.  rects[] indexed by lk_ix
+ * (from lk_layout).  Reuses existing capacity in out; resets count.
+ * Returns 1 on success, 0 on failure.
+ */
+int lk_render_build(const lk_tree *t, const lk_rect *rects,
+                    lk_render_list *out);
+
+/* Free the cmds array. Safe to call on a zeroed struct. */
+void lk_render_list_destroy(lk_render_list *rl);
 
 
 /**

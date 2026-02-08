@@ -1,6 +1,5 @@
 #include "lk-data.h"
 
-/* Constructors */
 lk_value lk_v_none(void) {
   lk_value v;
   v.tag = UIV_NONE;

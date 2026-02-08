@@ -71,7 +71,6 @@ static int lk_tree_reserve_props(lk_tree *t, lk_u32 need) {
   return 1;
 }
 
-/* Tree lifecycle */
 lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
   lk_tree *t;
   lk_tree_cfg d;
@@ -152,7 +151,6 @@ void lk_tree_destroy(lk_tree *t) {
   lk_dealloc(t, t);
 }
 
-/* keep capacity, clear counts */
 void lk_tree_reset(lk_tree *t) {
   if (!t) {
     return;
@@ -167,9 +165,6 @@ void lk_tree_reset(lk_tree *t) {
   }
 }
 
-/* Create a node with id+kind, append to arena, return node index (1..N).
- * Caller wires parent/children via lk_tree_append_child.
- */
 lk_ix lk_tree_add_node(lk_tree *t, lk_node_id id, lk_kind kind) {
   lk_ix ix;
 
@@ -192,7 +187,6 @@ lk_ix lk_tree_add_node(lk_tree *t, lk_node_id id, lk_kind kind) {
   return ix;
 }
 
-/* Convenience: create node by string id via intern (must not be NULL). */
 lk_ix lk_tree_add_node_s(lk_tree *t, lk_str id_str, lk_kind kind) {
   if (!t || !t->intern) {
     return 0;
@@ -201,7 +195,6 @@ lk_ix lk_tree_add_node_s(lk_tree *t, lk_str id_str, lk_kind kind) {
   return lk_tree_add_node(t, lk_intern_id(t->intern, id_str), kind);
 }
 
-/* Set root node index. */
 void lk_tree_set_root(lk_tree *t, lk_ix root) {
   if (!t) {
     return;
@@ -210,7 +203,6 @@ void lk_tree_set_root(lk_tree *t, lk_ix root) {
   t->root = root;
 }
 
-/* Append child to parent's child list (preserves insertion order). */
 void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child) {
   lk_ix *link;
 
@@ -253,13 +245,12 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
      blocks". For Phase 0, simplest compromise is to require props added
      right after node creation (or accept that this function assumes it).
   */
-
   n = &t->nodes[node];
 
   /* enforce contiguous append in global arena */
   if (n->props_off + n->props_len != t->prop_count) {
-    /* In Phase 0 sketch: just ignore or you could assert/record diag.
-       I recommend: document the rule + keep it strict.
+    /* In Phase 0 sketch: just ignore or we could assert/record diag.
+       Document the rule + keep it strict.
     */
     return;
   }
@@ -334,8 +325,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
     }
   }
 
-  /* Basic index sanity for child links + parent pointers, and detect
-     multiple parents */
   if (opts->forbid_multiple_parents) {
     lk_u32 *parent_count = 0;
     lk_u32 i;
@@ -375,8 +364,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
     }
   }
 
-  /* Parent mismatch: child's parent pointer should match actual
-     container */
   {
     lk_u32 i;
 
@@ -419,7 +406,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
     }
   }
 
-  /* Cycle detection (DFS colors) */
   if (opts->forbid_cycles && t->root != 0 && t->root < t->node_count) {
     lk_u8 *color =
         (lk_u8 *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_u8) * t->node_count));
@@ -431,8 +417,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
         color[i] = 0;
       }
 
-      /* recursive DFS not C89-friendly for deep trees; implement
-         manual stack */
       {
         lk_ix *stack = (lk_ix *)lk_sys_alloc(
             NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
@@ -456,7 +440,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
               continue;
             }
 
-            /* advance iterator */
             iter[sp - 1] = t->nodes[c].next_sibling;
 
             if (c >= t->node_count) {
@@ -503,7 +486,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
   return 1;
 }
 
-/* Debug/Dump */
 /* TODO */
 static void wr_cstr(lk_write_fn wr, void *ud, const char *s) {
   if (!wr || !s) {
@@ -560,7 +542,6 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
   node = &t->nodes[n];
 
   wr_cstr(wr, ud, "(");
-  /* kind */
 
   switch ((lk_kind)node->kind) {
   case UIK_WINDOW: wr_cstr(wr, ud, "window"); break;
@@ -588,7 +569,6 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
     wr_u32(wr, ud, (lk_u32)node->id);
   }
 
-  /* props */
   if (node->props_len) {
     lk_u32 k;
     wr_cstr(wr, ud, " :props {");
@@ -621,7 +601,6 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
     wr_cstr(wr, ud, " }");
   }
 
-  /* children */
   if (node->first_child) {
     wr_cstr(wr, ud, "\n");
 
@@ -674,10 +653,10 @@ lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id) {
 }
 
 /* Schema (lots of TODOs) */
-
+/* TODO implement later for schema checks */
 lk_kind_schema *ui_default_schema(lk_u32 *out_count) {
   (void)out_count;
-  return 0; /* implement later if you want schema checks in Phase 0 */
+  return 0;
 }
 
 int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,

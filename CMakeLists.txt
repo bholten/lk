@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 
 project(lk
   VERSION 0.1.0
-  DESCRIPTION "Dagwood shell orchestration"
+  DESCRIPTION "Lk GUI toolkit"
   LANGUAGES C
 )
 
@@ -18,12 +18,16 @@ set(LK_SOURCES
   src/core/lk-tree.c
   src/core/lk-ui.c
   src/core/lk-ht.c
+  src/core/lk-layout.c
+  src/core/lk-render.c
 )
 
 add_library(lk_core STATIC ${LK_SOURCES})
+
 target_include_directories(lk_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
 target_compile_options(lk_core PRIVATE -Wall -Wextra -pedantic)
 
 add_executable(lk_test src/core/lk-test.c)
@@ -32,3 +36,32 @@ target_include_directories(lk_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_options(lk_test PRIVATE -Wall -Wextra -pedantic)
+
+find_package(SDL3 QUIET)
+find_package(SDL3_ttf QUIET)
+
+if(SDL3_FOUND AND SDL3_ttf_FOUND)
+  message(STATUS "SDL3 found -- building lk_sdl and lk_demo")
+
+  add_library(lk_sdl STATIC src/sdl/lk-sdl.c)
+  target_link_libraries(lk_sdl PUBLIC lk_core PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf)
+  target_include_directories(lk_sdl
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_options(lk_sdl PRIVATE -Wall -Wextra)
+  set_target_properties(lk_sdl PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED OFF
+    C_EXTENSIONS OFF)
+
+  add_executable(lk_demo src/sdl/demo.c)
+  target_link_libraries(lk_demo PRIVATE lk_sdl)
+  target_include_directories(lk_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_options(lk_demo PRIVATE -Wall -Wextra)
+  set_target_properties(lk_demo PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED OFF
+    C_EXTENSIONS OFF)
+else()
+  message(STATUS "SDL3 not found -- skipping lk_sdl and lk_demo")
+endif()

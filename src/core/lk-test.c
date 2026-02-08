@@ -899,6 +899,737 @@ static void test_ui_tree_returns_current(void) {
 }
 
 /* ================================================================
+ * Tests: layout
+ * ================================================================ */
+
+/* helper: build tree, run layout, return rects (caller must free) */
+static lk_rect *run_layout(lk_tree *t, lk_i32 vw, lk_i32 vh) {
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.measure_ud = NULL;
+  cfg.viewport_w = vw;
+  cfg.viewport_h = vh;
+
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+  if (!rects) {
+    return NULL;
+  }
+
+  if (!lk_layout(t, &cfg, rects)) {
+    free(rects);
+    return NULL;
+  }
+
+  return rects;
+}
+
+#define CHECK_RECT(r, ex, ey, ew, eh)                                          \
+  do {                                                                         \
+    CHECK_EQ((unsigned)(r).x, (unsigned)(ex));                                 \
+    CHECK_EQ((unsigned)(r).y, (unsigned)(ey));                                 \
+    CHECK_EQ((unsigned)(r).w, (unsigned)(ew));                                 \
+    CHECK_EQ((unsigned)(r).h, (unsigned)(eh));                                 \
+  } while (0)
+
+static void test_layout_window_fills_viewport(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: window fills viewport");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[w], 0, 0, 800, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_column_two_labels(void) {
+  /* Column with two labels: labels stretch cross-axis, intrinsic main-axis.
+   * "Hello" = 5 chars = 40px wide, 16px tall
+   * "World!" = 6 chars = 48px wide, 16px tall
+   */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column with two labels");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "World!"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[w], 0, 0, 800, 600);
+    CHECK_RECT(r[col], 0, 0, 800, 600); /* column stretches to window */
+    CHECK_RECT(r[l1], 0, 0, 800, 16);   /* stretch cross, intrinsic main */
+    CHECK_RECT(r[l2], 0, 16, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_column_with_gap(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column with gap");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(10));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "B"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    CHECK_RECT(r[l2], 0, 26, 800, 16); /* 16 + 10 gap = 26 */
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_column_with_padding(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column with padding");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(20));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* col stretches to window (800x600), content area starts at (20,20), w=760
+     */
+    CHECK_RECT(r[l1], 20, 20, 760, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_row_two_labels(void) {
+  /* "AA" = 16px wide, "BBB" = 24px wide, both 16px tall */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: row with two labels");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "AA"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "BBB"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, l1);
+  lk_tree_append_child(t, row, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[row], 0, 0, 800, 600);
+    CHECK_RECT(r[l1], 0, 0, 16, 600); /* intrinsic w, stretch h */
+    CHECK_RECT(r[l2], 16, 0, 24, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_row_with_gap(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: row with gap");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(t, row, UIP_GAP, lk_v_i32(5));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "Y"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, l1);
+  lk_tree_append_child(t, row, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* X = 8px, Y = 8px, gap = 5 */
+    CHECK_RECT(r[l1], 0, 0, 8, 600);
+    CHECK_RECT(r[l2], 13, 0, 8, 600); /* 8 + 5 = 13 */
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_spacer_in_column(void) {
+  /* column > spacer + label: spacer takes remaining space, pushes label down */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: spacer in column pushes label down");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Bottom"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* label is 48px wide ("Bottom" = 6*8), 16px tall
+     * spacer takes 600 - 16 = 584
+     */
+    CHECK_RECT(r[sp], 0, 0, 800, 584);
+    CHECK_RECT(r[l1], 0, 584, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_two_spacers_split(void) {
+  /* column > spacer + label + spacer: two spacers split remaining evenly */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp1, l1, sp2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: two spacers split remaining space");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp1 = lk_tree_add_node_s(t, lk_str_c("sp1"), UIK_SPACER);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Mid"));
+  sp2 = lk_tree_add_node_s(t, lk_str_c("sp2"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp1);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, sp2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* label "Mid" = 3*8 = 24px wide, 16px tall
+     * remaining = 600 - 16 = 584, two spacers: 292 each
+     */
+    CHECK_RECT(r[sp1], 0, 0, 800, 292);
+    CHECK_RECT(r[l1], 0, 292, 800, 16);
+    CHECK_RECT(r[sp2], 0, 308, 800, 292);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_spacer_in_row(void) {
+  /* row > label + spacer + label */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, l1, sp, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: spacer in row");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "L"));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "R"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, l1);
+  lk_tree_append_child(t, row, sp);
+  lk_tree_append_child(t, row, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* "L" = 8px, "R" = 8px, spacer = 800 - 8 - 8 = 784 */
+    CHECK_RECT(r[l1], 0, 0, 8, 600);
+    CHECK_RECT(r[sp], 8, 0, 784, 600);
+    CHECK_RECT(r[l2], 792, 0, 8, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_explicit_wh(void) {
+  /* explicit W/H override intrinsics */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: explicit W/H override intrinsics");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_add_prop(t, l1, UIP_W, lk_v_i32(200));
+  lk_tree_add_prop(t, l1, UIP_H, lk_v_i32(50));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* explicit W=200 overrides cross-axis stretch, explicit H=50 overrides
+     * intrinsic 16 */
+    CHECK_RECT(r[l1], 0, 0, 200, 50);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_button_intrinsic(void) {
+  /* button intrinsic = text size + padding*2 on each axis */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, btn;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: button intrinsic includes padding");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(8));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* "OK" = 2*8 = 16px, +8*2 padding = 32px wide, 16+16=32 tall
+     * but cross-axis stretches in column (no explicit W), so w = 800
+     * main axis is intrinsic: h = 32
+     */
+    CHECK_RECT(r[btn], 0, 0, 800, 32);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_padding_gap_combined(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: padding + gap combined");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(10));
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(5));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "B"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* content area: x=10, y=10, w=780, h=580
+     * l1: (10, 10, 780, 16)
+     * l2: (10, 10+16+5, 780, 16) = (10, 31, 780, 16)
+     */
+    CHECK_RECT(r[l1], 10, 10, 780, 16);
+    CHECK_RECT(r[l2], 10, 31, 780, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_empty_tree(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_layout_cfg cfg;
+  lk_rect rects[2];
+  int ok;
+
+  BEGIN_TEST("layout: empty tree (no root)");
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+
+  /* root is 0 (no root set), layout should return 0 */
+  ok = lk_layout(t, &cfg, rects);
+  CHECK_EQ((unsigned)ok, 0u);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_spacer_explicit_h(void) {
+  /* spacer with explicit H in column: fixed, not flex */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: spacer with explicit H (fixed)");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_H, lk_v_i32(100));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* spacer is fixed 100px tall, label at y=100 */
+    CHECK_RECT(r[sp], 0, 0, 800, 100);
+    CHECK_RECT(r[l1], 0, 100, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_nested_column_row_labels(void) {
+  /* column > row > two labels */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, row, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: nested column > row > labels");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "AB"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "CD"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, row);
+  lk_tree_append_child(t, row, l1);
+  lk_tree_append_child(t, row, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* row intrinsic: w=16+16=32, h=16 (max child)
+     * in column, row stretches cross (w=800), uses intrinsic h=16
+     * row's content area: (0,0,800,16)
+     * l1: "AB"=16px wide, l2: "CD"=16px wide
+     * in row, labels get intrinsic w, stretch h to row content (16)
+     */
+    CHECK_RECT(r[col], 0, 0, 800, 600);
+    CHECK_RECT(r[row], 0, 0, 800, 16);
+    CHECK_RECT(r[l1], 0, 0, 16, 16);
+    CHECK_RECT(r[l2], 16, 0, 16, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+/* ================================================================
+ * Tests: render list
+ * ================================================================ */
+
+static void test_render_empty_tree(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_render_list rl;
+  int ok;
+
+  BEGIN_TEST("render: empty tree returns success");
+
+  memset(&rl, 0, sizeof(rl));
+  ok = lk_render_build(t, NULL, &rl);
+  CHECK_EQ((unsigned)ok, 1u);
+  CHECK_EQ(rl.count, 0u);
+
+  lk_render_list_destroy(&rl);
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_render_window_only(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w;
+  lk_rect *r;
+  lk_render_list rl;
+
+  BEGIN_TEST("render: window only -> 1 FILL_RECT");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, &rl);
+    CHECK_EQ(rl.count, 1u);
+    CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
+    CHECK_EQ((unsigned)rl.cmds[0].rect.w, 800u);
+    CHECK_EQ((unsigned)rl.cmds[0].rect.h, 600u);
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_render_window_column_label(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, lbl;
+  lk_rect *r;
+  lk_render_list rl;
+  lk_str resolved;
+
+  BEGIN_TEST("render: window > column > label -> FILL_RECT + DRAW_TEXT");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, &rl);
+    CHECK_EQ(rl.count, 2u);
+    CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
+    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_DRAW_TEXT);
+    /* verify str_id resolves to "Hello" */
+    resolved = lk_intern_str(t->intern, rl.cmds[1].str_id);
+    CHECK(lk_str_cmp(resolved, lk_str_c("Hello")));
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_render_button_with_padding(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, btn;
+  lk_rect *r;
+  lk_render_list rl;
+
+  BEGIN_TEST("render: button with padding -> FILL_RECT + FILL_RECT + DRAW_TEXT");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(8));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, &rl);
+    /* window FILL_RECT + button FILL_RECT + button DRAW_TEXT */
+    CHECK_EQ(rl.count, 3u);
+    CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
+    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_FILL_RECT);
+    CHECK_EQ((unsigned)rl.cmds[2].op, (unsigned)LK_ROP_DRAW_TEXT);
+    /* text rect should be inset by padding from button rect */
+    CHECK_EQ((unsigned)rl.cmds[2].rect.x, (unsigned)(rl.cmds[1].rect.x + 8));
+    CHECK_EQ((unsigned)rl.cmds[2].rect.y, (unsigned)(rl.cmds[1].rect.y + 8));
+    CHECK_EQ((unsigned)rl.cmds[2].rect.w, (unsigned)(rl.cmds[1].rect.w - 16));
+    CHECK_EQ((unsigned)rl.cmds[2].rect.h, (unsigned)(rl.cmds[1].rect.h - 16));
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_render_larger_tree(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, l2, btn;
+  lk_rect *r;
+  lk_render_list rl;
+
+  BEGIN_TEST("render: larger tree -> correct command count");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Title"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "Subtitle"));
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(4));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, l2);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, &rl);
+    /* 1 window FILL + 2 label DRAW_TEXT + 1 btn FILL + 1 btn DRAW_TEXT = 5 */
+    CHECK_EQ(rl.count, 5u);
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_render_build_reuse(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, lbl;
+  lk_rect *r;
+  lk_render_list rl;
+  lk_u32 cap_after_first;
+
+  BEGIN_TEST("render: build twice reuses capacity");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Test"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+
+    /* first build */
+    lk_render_build(t, r, &rl);
+    CHECK_EQ(rl.count, 2u);
+    cap_after_first = rl.cap;
+    CHECK(cap_after_first > 0);
+
+    /* second build on same list — count resets, cap stays */
+    lk_render_build(t, r, &rl);
+    CHECK_EQ(rl.count, 2u);
+    CHECK_EQ(rl.cap, cap_after_first);
+
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -944,6 +1675,33 @@ int main(void) {
   test_add_then_remove();
   test_many_siblings();
   test_ui_tree_returns_current();
+
+  /* layout */
+  printf("\nlk layout tests:\n");
+  test_layout_window_fills_viewport();
+  test_layout_column_two_labels();
+  test_layout_column_with_gap();
+  test_layout_column_with_padding();
+  test_layout_row_two_labels();
+  test_layout_row_with_gap();
+  test_layout_spacer_in_column();
+  test_layout_two_spacers_split();
+  test_layout_spacer_in_row();
+  test_layout_explicit_wh();
+  test_layout_button_intrinsic();
+  test_layout_padding_gap_combined();
+  test_layout_empty_tree();
+  test_layout_spacer_explicit_h();
+  test_layout_nested_column_row_labels();
+
+  /* render list */
+  printf("\nlk render tests:\n");
+  test_render_empty_tree();
+  test_render_window_only();
+  test_render_window_column_label();
+  test_render_button_with_padding();
+  test_render_larger_tree();
+  test_render_build_reuse();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
