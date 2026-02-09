@@ -7,6 +7,16 @@
 #include "core/lk-memory.h"
 #include "lk-sdl.h"
 
+/* ------- Text texture cache ------- */
+
+#define TEXT_CACHE_CAP 256 /* must be power of two */
+
+typedef struct text_cache_entry {
+  lk_u32 str_id; /* 0 = empty slot */
+  SDL_Texture *tex;
+  int w, h;
+} text_cache_entry;
+
 struct lk_window {
   SDL_Window *sdl_win;
   SDL_Renderer *sdl_ren;
@@ -15,7 +25,9 @@ struct lk_window {
   lk_rect *rects;
   lk_u32 rects_cap;
   lk_render_list rl;
-  int width, height;
+  text_cache_entry text_cache[TEXT_CACHE_CAP];
+  int width;
+  int height;
   int running;
 };
 
@@ -58,6 +70,83 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
   }
   if (out_h) {
     *out_h = (lk_i32)h;
+  }
+}
+
+static void text_cache_clear(lk_window *win) {
+  int i;
+  for (i = 0; i < TEXT_CACHE_CAP; i++) {
+    if (win->text_cache[i].tex) {
+      SDL_DestroyTexture(win->text_cache[i].tex);
+    }
+    win->text_cache[i].str_id = 0;
+    win->text_cache[i].tex = NULL;
+  }
+}
+
+/* Look up or create a cached text texture.  Returns the texture, sets
+ * out_w/out_h to the texture dimensions.  Returns NULL on failure.
+ */
+static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
+                                   const char *text, lk_color color,
+                                   int *out_w, int *out_h) {
+  unsigned slot = str_id & (TEXT_CACHE_CAP - 1);
+  int probes = 0;
+
+  /* Linear probe for existing entry */
+  while (probes < TEXT_CACHE_CAP) {
+    text_cache_entry *e = &win->text_cache[slot];
+    if (e->str_id == 0) {
+      /* Empty slot — not cached.  Render and insert. */
+      SDL_Color c;
+      SDL_Surface *surf;
+      SDL_Texture *tex;
+      int w, h;
+
+      c.r = color.r; c.g = color.g; c.b = color.b; c.a = color.a;
+      surf = TTF_RenderText_Blended(win->font, text, 0, c);
+      if (!surf) return NULL;
+
+      tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
+      w = surf->w;
+      h = surf->h;
+      SDL_DestroySurface(surf);
+      if (!tex) return NULL;
+
+      e->str_id = str_id;
+      e->tex = tex;
+      e->w = w;
+      e->h = h;
+
+      *out_w = w;
+      *out_h = h;
+      return tex;
+    }
+    if (e->str_id == str_id) {
+      /* Cache hit */
+      *out_w = e->w;
+      *out_h = e->h;
+      return e->tex;
+    }
+    slot = (slot + 1) & (TEXT_CACHE_CAP - 1);
+    probes++;
+  }
+
+  /* Cache full — render without caching (should be rare) */
+  {
+    SDL_Color c;
+    SDL_Surface *surf;
+    SDL_Texture *tex;
+
+    c.r = color.r; c.g = color.g; c.b = color.b; c.a = color.a;
+    surf = TTF_RenderText_Blended(win->font, text, 0, c);
+    if (!surf) return NULL;
+
+    tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
+    *out_w = surf->w;
+    *out_h = surf->h;
+    SDL_DestroySurface(surf);
+    return tex;
   }
 }
 
@@ -145,6 +234,7 @@ void lk_window_destroy(lk_window *win) {
     return;
   }
 
+  text_cache_clear(win);
   lk_render_list_destroy(&win->rl);
 
   if (win->rects) {
@@ -174,34 +264,6 @@ void lk_window_destroy(lk_window *win) {
 
 lk_ui *lk_window_ui(lk_window *win) {
   return win ? win->ui : NULL;
-}
-
-static void render_text(SDL_Renderer *ren, TTF_Font *font, const char *text,
-                        SDL_FRect *dst, lk_color color) {
-  SDL_Color c;
-  SDL_Surface *surf;
-  SDL_Texture *tex;
-
-  c.r = color.r;
-  c.g = color.g;
-  c.b = color.b;
-  c.a = color.a;
-
-  surf = TTF_RenderText_Blended(font, text, 0, c);
-
-  if (!surf) {
-    return;
-  }
-
-  tex = SDL_CreateTextureFromSurface(ren, surf);
-  SDL_DestroySurface(surf);
-
-  if (!tex) {
-    return;
-  }
-
-  SDL_RenderTexture(ren, tex, NULL, dst);
-  SDL_DestroyTexture(tex);
 }
 
 void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
@@ -304,14 +366,34 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           if (text.ptr && text.len > 0) {
             char *buf = (char *)malloc(text.len + 1);
             if (buf) {
+              int tw, th;
+              SDL_Texture *tex;
               memcpy(buf, text.ptr, text.len);
               buf[text.len] = '\0';
-              render_text(win->sdl_ren, win->font, buf, &fr, cmd->color);
+              tex = text_cache_get(win, cmd->str_id, buf, cmd->color,
+                                   &tw, &th);
+              if (tex) {
+                SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
+              }
               free(buf);
             }
           }
         }
 
+        break;
+
+      case LK_ROP_CLIP_BEGIN: {
+        SDL_Rect cr;
+        cr.x = (int)cmd->rect.x;
+        cr.y = (int)cmd->rect.y;
+        cr.w = (int)cmd->rect.w;
+        cr.h = (int)cmd->rect.h;
+        SDL_SetRenderClipRect(win->sdl_ren, &cr);
+        break;
+      }
+
+      case LK_ROP_CLIP_END:
+        SDL_SetRenderClipRect(win->sdl_ren, NULL);
         break;
 
       default: break;

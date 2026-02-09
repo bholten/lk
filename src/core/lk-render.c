@@ -76,10 +76,25 @@ static int rl_push(lk_render_list *rl, lk_render_cmd cmd) {
   return 1;
 }
 
+/* High bit marks a CLIP_END sentinel on the DFS stack.  Node indices
+ * never reach 2^31 so this is safe.
+ */
+#define CLIP_END_MARKER 0x80000000u
+
+/* Return 1 if this node should clip its children. */
+static int node_clips(const lk_tree *t, lk_ix n) {
+  (void)t;
+  return t->nodes[n].kind == UIK_WINDOW;
+}
+
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     lk_render_list *out) {
   lk_ix *stack;
   lk_u32 sp;
+  /* Stack needs room for each node plus a CLIP_END marker per clipping
+   * node.  2x node_count is a safe upper bound.
+   */
+  lk_u32 stack_cap;
 
   if (!t || !out) {
     return 0;
@@ -95,7 +110,8 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     return 0;
   }
 
-  stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+  stack_cap = t->node_count * 2;
+  stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * stack_cap));
 
   if (!stack) {
     return 0;
@@ -105,9 +121,25 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
   stack[sp++] = t->root;
 
   while (sp > 0) {
-    lk_ix n = stack[--sp];
-    const lk_node *nd = &t->nodes[n];
-    lk_kind kind = (lk_kind)nd->kind;
+    lk_ix raw = stack[--sp];
+    lk_ix n;
+    const lk_node *nd;
+    lk_kind kind;
+    int clips;
+
+    /* Check for CLIP_END sentinel */
+    if (raw & CLIP_END_MARKER) {
+      lk_render_cmd cmd;
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_CLIP_END;
+      rl_push(out, cmd);
+      continue;
+    }
+
+    n = raw;
+    nd = &t->nodes[n];
+    kind = (lk_kind)nd->kind;
+    clips = node_clips(t, n);
 
     switch (kind) {
     case UIK_WINDOW: {
@@ -167,6 +199,16 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       break;
     }
 
+    /* Emit CLIP_BEGIN after own render commands, before children */
+    if (clips) {
+      lk_render_cmd cmd;
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_CLIP_BEGIN;
+      cmd.rect = rects[n];
+      rl_push(out, cmd);
+    }
+
+    /* Push children (and CLIP_END marker if clipping) */
     {
       lk_ix child;
       int child_count = 0;
@@ -178,6 +220,11 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       while (child) {
         child_count++;
         child = t->nodes[child].next_sibling;
+      }
+
+      /* Push CLIP_END marker first so it pops AFTER all children */
+      if (clips) {
+        stack[sp++] = (n | CLIP_END_MARKER);
       }
 
       if (child_count > 0) {
