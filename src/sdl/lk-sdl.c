@@ -29,6 +29,7 @@ struct lk_window {
   int width;
   int height;
   int running;
+  lk_i32 mouse_x, mouse_y;
 };
 
 static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
@@ -266,6 +267,95 @@ lk_ui *lk_window_ui(lk_window *win) {
   return win ? win->ui : NULL;
 }
 
+void lk_window_set_event_handler(lk_window *win, lk_event_handler_fn fn,
+                                  void *ud) {
+  if (win && win->ui) {
+    lk_ui_set_event_handler(win->ui, fn, ud);
+  }
+}
+
+static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
+  switch (k) {
+  case SDLK_TAB:       return LKK_TAB;
+  case SDLK_RETURN:    return LKK_RETURN;
+  case SDLK_ESCAPE:    return LKK_ESCAPE;
+  case SDLK_BACKSPACE: return LKK_BACKSPACE;
+  case SDLK_DELETE:    return LKK_DELETE;
+  case SDLK_SPACE:     return LKK_SPACE;
+  case SDLK_LEFT:      return LKK_LEFT;
+  case SDLK_RIGHT:     return LKK_RIGHT;
+  case SDLK_UP:        return LKK_UP;
+  case SDLK_DOWN:      return LKK_DOWN;
+  case SDLK_HOME:      return LKK_HOME;
+  case SDLK_END:       return LKK_END;
+  default:             return LKK_UNKNOWN;
+  }
+}
+
+static lk_u8 sdl_to_lk_mods(SDL_Keymod m) {
+  lk_u8 r = 0;
+  if (m & SDL_KMOD_SHIFT) r |= (lk_u8)LK_MOD_SHIFT;
+  if (m & SDL_KMOD_CTRL)  r |= (lk_u8)LK_MOD_CTRL;
+  if (m & SDL_KMOD_ALT)   r |= (lk_u8)LK_MOD_ALT;
+  if (m & SDL_KMOD_GUI)   r |= (lk_u8)LK_MOD_GUI;
+  return r;
+}
+
+static int sdl_to_lk_event(const SDL_Event *sdl, lk_event *out) {
+  memset(out, 0, sizeof(*out));
+  switch (sdl->type) {
+  case SDL_EVENT_MOUSE_MOTION:
+    out->type = LK_EVENT_POINTER_MOVE;
+    out->data.pointer.x = (lk_i32)sdl->motion.x;
+    out->data.pointer.y = (lk_i32)sdl->motion.y;
+    return 1;
+  case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    out->type = LK_EVENT_POINTER_DOWN;
+    out->data.pointer.x = (lk_i32)sdl->button.x;
+    out->data.pointer.y = (lk_i32)sdl->button.y;
+    out->data.pointer.button = (lk_u8)sdl->button.button;
+    return 1;
+  case SDL_EVENT_MOUSE_BUTTON_UP:
+    out->type = LK_EVENT_POINTER_UP;
+    out->data.pointer.x = (lk_i32)sdl->button.x;
+    out->data.pointer.y = (lk_i32)sdl->button.y;
+    out->data.pointer.button = (lk_u8)sdl->button.button;
+    return 1;
+  case SDL_EVENT_KEY_DOWN:
+    out->type = LK_EVENT_KEY_DOWN;
+    out->data.key.keycode = sdl_to_lk_keycode(sdl->key.key);
+    out->data.key.repeat = sdl->key.repeat ? 1 : 0;
+    out->mods = sdl_to_lk_mods(sdl->key.mod);
+    return 1;
+  case SDL_EVENT_KEY_UP:
+    out->type = LK_EVENT_KEY_UP;
+    out->data.key.keycode = sdl_to_lk_keycode(sdl->key.key);
+    out->mods = sdl_to_lk_mods(sdl->key.mod);
+    return 1;
+  case SDL_EVENT_TEXT_INPUT: {
+    size_t len = strlen(sdl->text.text);
+    out->type = LK_EVENT_TEXT;
+    if (len > 31) len = 31;
+    memcpy(out->data.text.buf, sdl->text.text, len);
+    out->data.text.buf[len] = '\0';
+    out->data.text.len = (lk_u8)len;
+    return 1;
+  }
+  case SDL_EVENT_MOUSE_WHEEL:
+    out->type = LK_EVENT_WHEEL;
+    out->data.wheel.dx = (lk_i32)sdl->wheel.x;
+    out->data.wheel.dy = (lk_i32)sdl->wheel.y;
+    return 1;
+  case SDL_EVENT_WINDOW_RESIZED:
+    out->type = LK_EVENT_WINDOW_RESIZE;
+    out->data.window.w = sdl->window.data1;
+    out->data.window.h = sdl->window.data2;
+    return 1;
+  default:
+    return 0;
+  }
+}
+
 void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
   if (!win || !frame) {
     return;
@@ -274,31 +364,26 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
   win->running = 1;
 
   while (win->running) {
-    SDL_Event ev;
+    SDL_Event sdl_ev;
     lk_tree *tree;
     const lk_tree *cur;
     lk_layout_cfg lcfg;
     lk_u32 i;
+    int have_rects;
 
-    while (SDL_PollEvent(&ev)) {
-      if (ev.type == SDL_EVENT_QUIT) {
-        win->running = 0;
-      } else if (ev.type == SDL_EVENT_WINDOW_RESIZED) {
-        win->width = ev.window.data1;
-        win->height = ev.window.data2;
-      }
-    }
-
-    if (!win->running) {
-      break;
-    }
-
+    /* 1. Build frame */
     tree = lk_ui_begin_frame(win->ui);
     frame(tree, ud);
     lk_ui_end_frame(win->ui);
     cur = lk_ui_tree(win->ui);
 
     if (!cur || cur->root == 0) {
+      /* Poll events even with empty tree to handle quit */
+      while (SDL_PollEvent(&sdl_ev)) {
+        if (sdl_ev.type == SDL_EVENT_QUIT) {
+          win->running = 0;
+        }
+      }
       SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
       SDL_RenderClear(win->sdl_ren);
       SDL_RenderPresent(win->sdl_ren);
@@ -306,6 +391,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       continue;
     }
 
+    /* 2. Layout */
     if (cur->node_count > win->rects_cap) {
       if (win->rects) {
         lk_sys_dealloc(NULL, win->rects);
@@ -316,29 +402,104 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           NULL, (lk_u32)(sizeof(lk_rect) * win->rects_cap));
     }
 
-    if (!win->rects) {
+    have_rects = 0;
+    if (win->rects) {
+      memset(&lcfg, 0, sizeof(lcfg));
+
+      if (win->font) {
+        lcfg.measure_text = sdl_measure_text;
+        lcfg.measure_ud = win->font;
+      } else {
+        lcfg.measure_text = lk_measure_text_stub;
+        lcfg.measure_ud = NULL;
+      }
+
+      lcfg.viewport_w = win->width;
+      lcfg.viewport_h = win->height;
+
+      if (lk_layout(cur, &lcfg, win->rects)) {
+        have_rects = 1;
+      }
+    }
+
+    /* 3. Poll events (after layout so we have rects for hit-testing) */
+    while (SDL_PollEvent(&sdl_ev)) {
+      lk_event lk_ev;
+
+      if (sdl_ev.type == SDL_EVENT_QUIT) {
+        win->running = 0;
+        break;
+      }
+
+      if (!sdl_to_lk_event(&sdl_ev, &lk_ev)) {
+        continue;
+      }
+
+      /* Track mouse position */
+      if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
+          lk_ev.type == LK_EVENT_POINTER_DOWN ||
+          lk_ev.type == LK_EVENT_POINTER_UP) {
+        win->mouse_x = lk_ev.data.pointer.x;
+        win->mouse_y = lk_ev.data.pointer.y;
+      }
+
+      /* Set target */
+      if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
+          lk_ev.type == LK_EVENT_POINTER_DOWN ||
+          lk_ev.type == LK_EVENT_POINTER_UP) {
+        if (have_rects) {
+          lk_ev.target = lk_hit_test(cur, win->rects,
+                                      lk_ev.data.pointer.x,
+                                      lk_ev.data.pointer.y);
+        }
+      } else if (lk_ev.type == LK_EVENT_WHEEL) {
+        if (have_rects) {
+          lk_ev.target = lk_hit_test(cur, win->rects,
+                                      win->mouse_x, win->mouse_y);
+        }
+      } else if (lk_ev.type == LK_EVENT_KEY_DOWN ||
+                 lk_ev.type == LK_EVENT_KEY_UP ||
+                 lk_ev.type == LK_EVENT_TEXT) {
+        lk_ev.target = lk_focus_current(win->ui, cur);
+      } else if (lk_ev.type == LK_EVENT_WINDOW_RESIZE) {
+        win->width = lk_ev.data.window.w;
+        win->height = lk_ev.data.window.h;
+        lk_ev.target = cur->root;
+      }
+
+      /* Route through tree */
+      if (lk_ev.target != 0) {
+        lk_event_route(win->ui, &lk_ev);
+      }
+
+      /* Built-in behaviors (only if not already handled) */
+      if (!lk_ev.handled) {
+        if (lk_ev.type == LK_EVENT_KEY_DOWN &&
+            lk_ev.data.key.keycode == LKK_TAB) {
+          if (lk_ev.mods & (lk_u8)LK_MOD_SHIFT) {
+            lk_focus_prev(win->ui, cur);
+          } else {
+            lk_focus_next(win->ui, cur);
+          }
+        }
+
+        if (lk_ev.type == LK_EVENT_POINTER_DOWN && lk_ev.target != 0) {
+          lk_node_id clicked_id = cur->nodes[lk_ev.target].id;
+          lk_focus_set(win->ui, cur, clicked_id);
+        }
+      }
+    }
+
+    if (!win->running) {
+      break;
+    }
+
+    if (!have_rects) {
       SDL_Delay(16);
       continue;
     }
 
-    memset(&lcfg, 0, sizeof(lcfg));
-
-    if (win->font) {
-      lcfg.measure_text = sdl_measure_text;
-      lcfg.measure_ud = win->font;
-    } else {
-      lcfg.measure_text = lk_measure_text_stub;
-      lcfg.measure_ud = NULL;
-    }
-
-    lcfg.viewport_w = win->width;
-    lcfg.viewport_h = win->height;
-
-    if (!lk_layout(cur, &lcfg, win->rects)) {
-      SDL_Delay(16);
-      continue;
-    }
-
+    /* 4. Render */
     lk_render_build(cur, win->rects, &win->rl);
 
     SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
@@ -401,6 +562,6 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     }
 
     SDL_RenderPresent(win->sdl_ren);
-    SDL_Delay(16); /* TODO delta time tracking */
+    SDL_Delay(16);
   }
 }

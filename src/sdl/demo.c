@@ -1,5 +1,15 @@
 #include "lk-sdl.h"
+#include <stdio.h>
 #include <string.h>
+
+static int my_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  (void)ud;
+  if (event->phase == LK_PHASE_TARGET &&
+      event->type == LK_EVENT_POINTER_DOWN) {
+    printf("Button clicked! (node_ix=%u)\n", (unsigned)node_ix);
+  }
+  return 0;
+}
 
 static void my_frame(lk_tree *t, void *ud) {
   lk_ix w, col, lbl, btn;
@@ -16,6 +26,7 @@ static void my_frame(lk_tree *t, void *ud) {
   btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
   lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Click Me"));
   lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(8));
+  lk_tree_add_prop(t, btn, UIP_FOCUSABLE, lk_v_bool(1));
 
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, col);
@@ -43,6 +54,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  lk_window_set_event_handler(win, my_event_handler, NULL);
   lk_window_run(win, my_frame, NULL);
   lk_window_destroy(win);
 
