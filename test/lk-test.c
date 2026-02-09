@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "lk-data.h"
-#include "lk-memory.h"
+#include <lk.h>
+#include "core/lk-memory.h"
 
 /* ---- minimal test harness ---- */
 
@@ -3386,6 +3386,182 @@ static void test_accessor_command_fields(void) {
 }
 
 /* ================================================================
+ * Binding-friendly API tests
+ * ================================================================ */
+
+static void test_intern_cstr(void) {
+  lk_intern *it = lk_intern_new(NULL, NULL);
+  lk_node_id id1, id2;
+  const char *s;
+  lk_str sv;
+
+  BEGIN_TEST("intern: cid/cstr roundtrip");
+
+  /* Intern via C string */
+  id1 = lk_intern_cid(it, "hello");
+  CHECK(id1 != 0);
+
+  /* Retrieve as null-terminated C string */
+  s = lk_intern_cstr(it, id1);
+  CHECK(strcmp(s, "hello") == 0);
+
+  /* Same string returns same id */
+  id2 = lk_intern_cid(it, "hello");
+  CHECK_EQ(id1, id2);
+
+  /* lk_intern_str still works correctly */
+  sv = lk_intern_str(it, id1);
+  CHECK_EQ(sv.len, 5);
+  CHECK(memcmp(sv.ptr, "hello", 5) == 0);
+
+  /* Intern via lk_str also null-terminated */
+  id2 = lk_intern_id(it, lk_str_c("world"));
+  s = lk_intern_cstr(it, id2);
+  CHECK(strcmp(s, "world") == 0);
+
+  /* Edge cases */
+  CHECK_EQ(lk_intern_cid(it, NULL), 0);
+  CHECK(strcmp(lk_intern_cstr(it, 0), "") == 0);
+  CHECK(strcmp(lk_intern_cstr(it, 9999), "") == 0);
+  CHECK(strcmp(lk_intern_cstr(NULL, 1), "") == 0);
+
+  END_TEST();
+  lk_intern_destroy(it);
+}
+
+static void test_add_node_c_and_text_cstr(void) {
+  lk_tree *t;
+  lk_tree_cfg cfg;
+  lk_ix w, lbl;
+  const char *txt;
+
+  BEGIN_TEST("tree: add_node_c + text_cstr");
+
+  memset(&cfg, 0, sizeof(cfg));
+  t = lk_tree_create(&cfg);
+
+  w = lk_tree_add_node_c(t, "main", UIK_WINDOW);
+  CHECK(w != 0);
+
+  lbl = lk_tree_add_node_c(t, "lbl", UIK_LABEL);
+  CHECK(lbl != 0);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hello World"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, lbl);
+
+  /* Verify text via cstr accessor */
+  txt = lk_node_text_cstr(t, lbl);
+  CHECK(strcmp(txt, "Hello World") == 0);
+
+  /* No text returns empty string */
+  txt = lk_node_text_cstr(t, w);
+  CHECK(strcmp(txt, "") == 0);
+
+  /* Null-safe */
+  CHECK_EQ(lk_tree_add_node_c(t, NULL, UIK_LABEL), 0);
+  CHECK(strcmp(lk_node_text_cstr(NULL, 1), "") == 0);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_command_arg_typed(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("command: typed arg accessors");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_c(t, "w", UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_c(t, "btn", UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(42));
+  }
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(cur,
+               lk_intern_cid(ui->intern, "btn"));
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(lk_command_arg_tag(&q->cmds[0], 0), UIV_I32);
+    CHECK_EQ((lk_u32)lk_command_arg_i32(&q->cmds[0], 0), 42);
+    /* Wrong type returns 0 */
+    CHECK_EQ(lk_command_arg_str_id(&q->cmds[0], 0), 0);
+    /* OOB returns defaults */
+    CHECK_EQ(lk_command_arg_tag(&q->cmds[0], 4), UIV_NONE);
+    CHECK_EQ((lk_u32)lk_command_arg_i32(&q->cmds[0], 4), 0);
+    /* NULL-safe */
+    CHECK_EQ(lk_command_arg_tag(NULL, 0), UIV_NONE);
+    CHECK_EQ((lk_u32)lk_command_arg_i32(NULL, 0), 0);
+    CHECK_EQ(lk_command_arg_str_id(NULL, 0), 0);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_event_init(void) {
+  lk_event ev;
+  lk_u8 *raw;
+  lk_u32 i;
+  int all_zero;
+
+  BEGIN_TEST("event: init helpers");
+
+  /* Pointer event */
+  memset(&ev, 0xFF, sizeof(ev));
+  lk_event_init_pointer(&ev, LK_EVENT_POINTER_DOWN, 100, 200, 2);
+  CHECK_EQ(ev.type, LK_EVENT_POINTER_DOWN);
+  CHECK_EQ((lk_u32)ev.data.pointer.x, 100);
+  CHECK_EQ((lk_u32)ev.data.pointer.y, 200);
+  CHECK_EQ(ev.data.pointer.button, 2);
+  CHECK_EQ(ev.phase, 0);
+  CHECK_EQ(ev.handled, 0);
+  CHECK_EQ(ev.target, 0);
+  CHECK_EQ(ev.mods, 0);
+
+  /* Key event */
+  memset(&ev, 0xFF, sizeof(ev));
+  lk_event_init_key(&ev, LK_EVENT_KEY_DOWN, LKK_RETURN, LK_MOD_CTRL);
+  CHECK_EQ(ev.type, LK_EVENT_KEY_DOWN);
+  CHECK_EQ(ev.data.key.keycode, LKK_RETURN);
+  CHECK_EQ(ev.mods, LK_MOD_CTRL);
+  CHECK_EQ(ev.phase, 0);
+  CHECK_EQ(ev.handled, 0);
+  CHECK_EQ(ev.target, 0);
+  CHECK_EQ(ev.data.key.repeat, 0);
+
+  /* Verify rest of union is zeroed (pointer init) */
+  lk_event_init_pointer(&ev, LK_EVENT_POINTER_MOVE, 0, 0, 0);
+  raw = (lk_u8 *)&ev;
+  all_zero = 1;
+  for (i = 1; i < sizeof(ev); i++) {
+    if (raw[i] != 0) {
+      all_zero = 0;
+    }
+  }
+  /* type byte is LK_EVENT_POINTER_MOVE (1), rest should be 0 */
+  CHECK_EQ(raw[0], LK_EVENT_POINTER_MOVE);
+  CHECK(all_zero);
+
+  END_TEST();
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -3534,6 +3710,13 @@ int main(void) {
   test_accessor_tree_fields();
   test_accessor_changeset();
   test_accessor_command_fields();
+
+  /* binding-friendly API */
+  printf("\nlk binding API tests:\n");
+  test_intern_cstr();
+  test_add_node_c_and_text_cstr();
+  test_command_arg_typed();
+  test_event_init();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

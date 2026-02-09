@@ -1,7 +1,7 @@
 #ifndef LK_MEMORY_H
 #define LK_MEMORY_H
 
-#include "lk-data.h"
+#include <lk.h>
 
 void* lk_sys_alloc(void *ud, lk_u32 bytes);
 void lk_sys_dealloc(void *ud, void *ptr);

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "lk-data.h"
+#include <lk.h>
 #include "lk-memory.h"
 
 static lk_u32 lk_hash_bytes(const char *p, lk_u32 n) {
@@ -310,7 +310,7 @@ lk_node_id lk_intern_id(lk_intern *it, lk_str s) {
     idx = (idx + 1) & mask;
   }
 
-  if (!it_pool_reserve(it, s.len)) {
+  if (!it_pool_reserve(it, s.len + 1)) {
     return 0;
   }
 
@@ -321,7 +321,8 @@ lk_node_id lk_intern_id(lk_intern *it, lk_str s) {
   {
     lk_u32 off = it->pool_len;
     memcpy(it->pool + off, s.ptr, s.len);
-    it->pool_len += s.len;
+    it->pool[off + s.len] = '\0';
+    it->pool_len += s.len + 1;
 
     {
       struct lk_intern_entry *e = &it->tab[idx];
@@ -365,4 +366,23 @@ lk_str lk_intern_str(const lk_intern *it, lk_node_id id) {
 
     return s;
   }
+}
+
+lk_node_id lk_intern_cid(lk_intern *it, const char *s) {
+  if (!s) {
+    return 0;
+  }
+  return lk_intern_id(it, lk_str_c(s));
+}
+
+const char *lk_intern_cstr(const lk_intern *it, lk_node_id id) {
+  struct lk_intern_entry *e;
+  if (!it || id == 0 || id > it->by_id_len) {
+    return "";
+  }
+  e = it->by_id[id - 1];
+  if (!e) {
+    return "";
+  }
+  return it->pool + e->str_off;
 }

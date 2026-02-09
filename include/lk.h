@@ -1,9 +1,29 @@
-#ifndef LK_DATA_H
-#define LK_DATA_H
+#ifndef LK_H
+#define LK_H
 
 #include <stddef.h>
 
-#include "lk-int.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+ * Fixed-width integer types for C89.
+ *
+ * unsigned char   is >= 8 bits on all conforming implementations.
+ * unsigned short  is >= 16 bits on all conforming implementations.
+ * unsigned int    is >= 16 bits by the standard, but 32 bits on every
+ *                 platform we realistically target (ILP32, LP64, LLP64).
+ * int             same — 32 bits everywhere relevant.
+ *
+ * If you ever need to port to a platform where unsigned int is not 32 bits,
+ * add a check here.
+ */
+
+typedef unsigned char  lk_u8;
+typedef unsigned short lk_u16;
+typedef unsigned int   lk_u32;
+typedef int            lk_i32;
 
 /**
  ** String view (no ownership)
@@ -28,6 +48,8 @@ void lk_intern_destroy(lk_intern *it);
 
 lk_node_id lk_intern_id(lk_intern *it, lk_str s); /* return stable id */
 lk_str lk_intern_str(const lk_intern *it, lk_node_id id);
+lk_node_id lk_intern_cid(lk_intern *it, const char *s);
+const char *lk_intern_cstr(const lk_intern *it, lk_node_id id);
 
 typedef enum lk_kind {
   UIK_WINDOW = 1,
@@ -155,6 +177,9 @@ lk_ix lk_tree_add_node(lk_tree *t, lk_node_id id, lk_kind kind);
    NULL). */
 lk_ix lk_tree_add_node_s(lk_tree *t, lk_str id_str, lk_kind kind);
 
+/* Create node by C string id (no lk_str needed). */
+lk_ix lk_tree_add_node_c(lk_tree *t, const char *id_str, lk_kind kind);
+
 /* Set root node index. */
 void lk_tree_set_root(lk_tree *t, lk_ix root);
 
@@ -227,7 +252,7 @@ typedef struct lk_validate_opts {
   int forbid_duplicate_ids;
   int forbid_cycles;
   int forbid_multiple_parents;
-  
+
   int check_prop_schema;
 } lk_validate_opts;
 
@@ -459,6 +484,7 @@ int lk_node_has_prop(const lk_tree *t, lk_ix n, lk_prop_key key);
 int lk_node_prop_bool(const lk_tree *t, lk_ix n, lk_prop_key key);
 lk_str lk_node_text(const lk_tree *t, lk_ix n);
 lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n);
+const char *lk_node_text_cstr(const lk_tree *t, lk_ix n);
 
 
 /**
@@ -478,6 +504,9 @@ lk_u32 lk_tree_node_count(const lk_tree *t);
 lk_ix lk_tree_root(const lk_tree *t);
 lk_intern *lk_tree_intern(const lk_tree *t);
 
+/* UI accessors */
+lk_intern *lk_ui_intern(const lk_ui *ui);
+
 /* Changeset accessors */
 lk_u32 lk_changeset_count(const lk_changeset *cs);
 const lk_change *lk_changeset_get(const lk_changeset *cs, lk_u32 idx);
@@ -490,6 +519,9 @@ const lk_command *lk_command_queue_get(const lk_command_queue *q, lk_u32 idx);
 lk_u32 lk_command_name(const lk_command *cmd);
 lk_u8 lk_command_arg_count(const lk_command *cmd);
 lk_value lk_command_arg(const lk_command *cmd, lk_u8 idx);
+lk_u8  lk_command_arg_tag(const lk_command *cmd, lk_u8 idx);
+lk_i32 lk_command_arg_i32(const lk_command *cmd, lk_u8 idx);
+lk_u32 lk_command_arg_str_id(const lk_command *cmd, lk_u8 idx);
 lk_ix lk_command_source_node(const lk_command *cmd);
 lk_u32 lk_command_source_ptype(const lk_command *cmd);
 
@@ -519,6 +551,10 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects);
 /* Stub text measurer: 8px per char, 16px tall. */
 void lk_measure_text_stub(void *ud, lk_str text,
                            lk_i32 *out_w, lk_i32 *out_h);
+
+/* Convenience: layout with stub text measurer (for bindings). */
+int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w,
+                      lk_i32 viewport_h, lk_rect *rects);
 
 
 /**
@@ -596,6 +632,11 @@ const lk_widget_def *lk_widget_get(lk_kind kind);
 lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects,
                    lk_i32 x, lk_i32 y);
 
+void lk_event_init_pointer(lk_event *ev, lk_u8 type,
+                            lk_i32 x, lk_i32 y, lk_u8 button);
+void lk_event_init_key(lk_event *ev, lk_u8 type,
+                        lk_u16 keycode, lk_u8 mods);
+
 void lk_event_route(lk_ui *ui, lk_event *event);
 
 void lk_ui_set_event_handler(lk_ui *ui, lk_event_handler_fn fn, void *ud);
@@ -657,4 +698,8 @@ typedef struct lk_hti {
 lk_hti lk_hti_iterator(lk_ht *ht);
 int lk_hti_next(lk_hti *hti);
 
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* LK_H */

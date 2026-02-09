@@ -1,6 +1,6 @@
 #include <string.h>
 
-#include "lk-data.h"
+#include <lk.h>
 #include "lk-memory.h"
 
 /* ---- Command queue operations ---- */

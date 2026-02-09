@@ -1,6 +1,6 @@
 #include <string.h>
 
-#include "lk-data.h"
+#include <lk.h>
 #include "lk-memory.h"
 
 static int node_is_focusable(const lk_tree *t, lk_ix n) {

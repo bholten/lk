@@ -1,6 +1,6 @@
 #include <memory.h>
 
-#include "lk-data.h"
+#include <lk.h>
 #include "lk-memory.h"
 
 static int lk_tree_reserve_nodes(lk_tree *t, lk_u32 need) {
