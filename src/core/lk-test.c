@@ -2675,6 +2675,117 @@ static void test_tab_cycles_focus(void) {
 }
 
 /* ================================================================
+ * Tests: widget registry
+ * ================================================================ */
+
+static void test_widget_get_defaults(void) {
+  const lk_widget_def *def;
+
+  BEGIN_TEST("widget: get defaults returns valid defs");
+
+  def = lk_widget_get(UIK_BUTTON);
+  CHECK(def != NULL);
+  CHECK(def->measure != NULL);
+  CHECK(def->render != NULL);
+  CHECK(def->layout == NULL); /* leaf */
+
+  def = lk_widget_get(UIK_WINDOW);
+  CHECK(def != NULL);
+  CHECK(def->measure != NULL);
+  CHECK(def->layout != NULL);
+  CHECK(def->render != NULL);
+  CHECK(def->clips == 1);
+
+  def = lk_widget_get(UIK_COLUMN);
+  CHECK(def != NULL);
+  CHECK(def->layout != NULL);
+  CHECK(def->render == NULL); /* invisible container */
+  CHECK(def->clips == 0);
+
+  END_TEST();
+}
+
+static void test_widget_register_custom(void) {
+  lk_widget_def custom;
+  const lk_widget_def *got;
+
+  BEGIN_TEST("widget: register custom kind");
+
+  memset(&custom, 0, sizeof(custom));
+  custom.clips = 1;
+
+  /* Use a kind slot beyond the built-ins */
+  lk_widget_register((lk_kind)10, &custom);
+  got = lk_widget_get((lk_kind)10);
+
+  CHECK(got != NULL);
+  CHECK(got->clips == 1);
+  CHECK(got->measure == NULL);
+  CHECK(got->render == NULL);
+
+  /* Clean up: reset slot to zero */
+  memset(&custom, 0, sizeof(custom));
+  lk_widget_register((lk_kind)10, &custom);
+
+  END_TEST();
+}
+
+static void test_widget_override_render(void) {
+  /* Override LABEL's render to emit nothing; verify render output differs */
+  lk_tree *t;
+  lk_rect *r;
+  lk_render_list rl;
+  lk_widget_def override;
+  const lk_widget_def *orig;
+  lk_u32 count_before;
+  lk_u32 count_after;
+  lk_ix w, col, lbl;
+
+  BEGIN_TEST("widget: override render changes output");
+
+  /* Build a tree: window > column > label */
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, &rl);
+    count_before = rl.count;
+
+    /* Override LABEL to emit nothing */
+    orig = lk_widget_get(UIK_LABEL);
+    override = *orig;
+    override.render = NULL;
+    lk_widget_register(UIK_LABEL, &override);
+
+    rl.count = 0;
+    lk_render_build(t, r, &rl);
+    count_after = rl.count;
+
+    CHECK(count_after < count_before);
+
+    /* Restore original */
+    lk_widget_register(UIK_LABEL, orig);
+
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  lk_tree_destroy(t);
+
+  END_TEST();
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -2790,6 +2901,12 @@ int main(void) {
   printf("\nlk integrated event tests:\n");
   test_hit_route_integrated();
   test_tab_cycles_focus();
+
+  /* widget registry */
+  printf("\nlk widget registry tests:\n");
+  test_widget_get_defaults();
+  test_widget_register_custom();
+  test_widget_override_render();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
