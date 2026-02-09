@@ -462,6 +462,39 @@ lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n);
 
 
 /**
+ * Binding-safe accessors — expose struct fields through function calls.
+ * All null-safe with bounds checking; return 0/NULL on failure.
+ **/
+
+/* Node field accessors (tree + index -> field) */
+lk_node_id lk_node_id_get(const lk_tree *t, lk_ix n);
+lk_u16 lk_node_kind_get(const lk_tree *t, lk_ix n);
+lk_ix lk_node_parent(const lk_tree *t, lk_ix n);
+lk_ix lk_node_first_child(const lk_tree *t, lk_ix n);
+lk_ix lk_node_next_sibling(const lk_tree *t, lk_ix n);
+
+/* Tree accessors */
+lk_u32 lk_tree_node_count(const lk_tree *t);
+lk_ix lk_tree_root(const lk_tree *t);
+lk_intern *lk_tree_intern(const lk_tree *t);
+
+/* Changeset accessors */
+lk_u32 lk_changeset_count(const lk_changeset *cs);
+const lk_change *lk_changeset_get(const lk_changeset *cs, lk_u32 idx);
+
+/* Command queue accessors */
+lk_u32 lk_command_queue_count(const lk_command_queue *q);
+const lk_command *lk_command_queue_get(const lk_command_queue *q, lk_u32 idx);
+
+/* Command field accessors */
+lk_u32 lk_command_name(const lk_command *cmd);
+lk_u8 lk_command_arg_count(const lk_command *cmd);
+lk_value lk_command_arg(const lk_command *cmd, lk_u8 idx);
+lk_ix lk_command_source_node(const lk_command *cmd);
+lk_u32 lk_command_source_ptype(const lk_command *cmd);
+
+
+/**
  * Layout
  **/
 

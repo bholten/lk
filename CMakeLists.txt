@@ -23,6 +23,7 @@ set(LK_SOURCES
   src/core/lk-event.c
   src/core/lk-widget.c
   src/core/lk-command.c
+  src/core/lk-api.c
 )
 
 add_library(lk_core STATIC ${LK_SOURCES})
