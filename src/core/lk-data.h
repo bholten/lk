@@ -105,6 +105,15 @@ typedef struct lk_node {
   lk_u16 props_len;
 } lk_node;
 
+/**
+ * Presentation — attaches semantic meaning to a node.
+ **/
+typedef struct lk_presentation {
+  lk_ix node;       /* which node this is attached to */
+  lk_u32 ptype;     /* interned presentation type */
+  lk_value pvalue;   /* semantic value */
+} lk_presentation;
+
 typedef struct lk_tree {
   lk_intern *intern;
   lk_u8 owns_intern; /* 1 if tree created the intern table */
@@ -114,6 +123,9 @@ typedef struct lk_tree {
   lk_prop *props;
   lk_u32 prop_cap;
   lk_u32 prop_count;
+  lk_presentation *pres;
+  lk_u32 pres_cap;
+  lk_u32 pres_count;
   lk_ix root;
   void *(*alloc)(void *ud, lk_u32 bytes);
   void (*dealloc)(void *ud, void *ptr);
@@ -156,6 +168,13 @@ void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child);
  * desired.
  */
 void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v);
+
+/* Presentations — attach semantic meaning to a node. */
+void lk_tree_add_presentation(lk_tree *t, lk_ix node,
+                               lk_u32 ptype, lk_value pvalue);
+void lk_tree_add_presentation_s(lk_tree *t, lk_ix node,
+                                 const char *ptype, lk_value pvalue);
+const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node);
 
 /* Value constructors. */
 lk_value lk_v_none(void);
@@ -316,6 +335,40 @@ typedef int (*lk_event_handler_fn)(lk_event *event, lk_ix node_ix,
 
 
 /**
+ * Commands — named actions emitted by translators.
+ **/
+
+#define LK_CMD_MAX_ARGS 4
+
+typedef struct lk_command {
+  lk_u32 name;                     /* interned command name */
+  lk_value args[LK_CMD_MAX_ARGS];
+  lk_u8 arg_count;
+  lk_ix source_node;               /* node that triggered this */
+  lk_u32 source_ptype;             /* matched presentation type (0 if none) */
+} lk_command;
+
+typedef struct lk_command_queue {
+  lk_command *cmds;
+  lk_u32 count;
+  lk_u32 cap;
+} lk_command_queue;
+
+typedef void (*lk_command_handler_fn)(const lk_command *cmd, void *ud);
+
+/**
+ * Translators — map (event_type, ptype?, node_kind?) to command name.
+ **/
+
+typedef struct lk_translator {
+  lk_u8 event_type;     /* lk_event_type to match (0 = any) */
+  lk_u32 ptype;         /* presentation type to match (0 = any) */
+  lk_u16 node_kind;     /* lk_kind to match (0 = any) */
+  lk_u32 command_name;  /* interned command name to emit */
+} lk_translator;
+
+
+/**
  * lk_ui — Double-buffered UI context with tree diffing.
  *
  * Owns two trees (prev, next) sharing a single intern table.
@@ -352,6 +405,21 @@ typedef struct lk_ui {
   lk_event_handler_fn event_handler;
   void *event_ud;
   lk_node_id focused_id;  /* 0 = no focus */
+
+  /* Translators */
+  lk_translator *translators;
+  lk_u32 translator_count;
+  lk_u32 translator_cap;
+
+  /* Command queue (current frame) */
+  lk_command_queue cmd_queue;
+  lk_command_handler_fn cmd_handler;
+  void *cmd_handler_ud;
+
+  /* Command log (append-only, cleared explicitly) */
+  lk_command *cmd_log;
+  lk_u32 cmd_log_count;
+  lk_u32 cmd_log_cap;
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -504,6 +572,31 @@ void lk_focus_clear(lk_ui *ui);
 lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t);
 lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t);
 lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t);
+
+
+/**
+ * Translator + command API
+ **/
+
+void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type,
+                           lk_u32 ptype, lk_u16 node_kind,
+                           lk_u32 command_name);
+void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type,
+                              const char *ptype, lk_u16 node_kind,
+                              const char *command_name);
+void lk_ui_clear_translators(lk_ui *ui);
+
+void lk_ui_set_command_handler(lk_ui *ui, lk_command_handler_fn fn, void *ud);
+
+const lk_command_queue *lk_ui_commands(const lk_ui *ui);
+void lk_ui_clear_commands(lk_ui *ui);
+
+void lk_ui_dump_commands(const lk_ui *ui, lk_write_fn wr, void *wr_ud);
+const lk_command *lk_ui_command_log(const lk_ui *ui, lk_u32 *out_count);
+void lk_ui_clear_command_log(lk_ui *ui);
+
+/* Internal: translator dispatch (called from event routing) */
+void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event);
 
 
 /**

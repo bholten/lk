@@ -71,6 +71,40 @@ static int lk_tree_reserve_props(lk_tree *t, lk_u32 need) {
   return 1;
 }
 
+static int lk_tree_reserve_pres(lk_tree *t, lk_u32 need) {
+  lk_presentation *np;
+  lk_u32 new_cap;
+
+  if (need <= t->pres_cap) {
+    return 1;
+  }
+
+  new_cap = t->pres_cap ? t->pres_cap : 16;
+
+  while (new_cap < need) {
+    new_cap *= 2;
+  }
+
+  np = (lk_presentation *)lk_alloc(t, (lk_u32)(sizeof(lk_presentation) * new_cap));
+
+  if (!np) {
+    return 0;
+  }
+
+  if (t->pres && t->pres_count) {
+    memcpy(np, t->pres, sizeof(lk_presentation) * t->pres_count);
+  }
+
+  if (t->pres) {
+    lk_dealloc(t, t->pres);
+  }
+
+  t->pres = np;
+  t->pres_cap = new_cap;
+
+  return 1;
+}
+
 lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
   lk_tree *t;
   lk_tree_cfg d;
@@ -148,6 +182,10 @@ void lk_tree_destroy(lk_tree *t) {
     lk_dealloc(t, t->props);
   }
 
+  if (t->pres) {
+    lk_dealloc(t, t->pres);
+  }
+
   lk_dealloc(t, t);
 }
 
@@ -158,6 +196,7 @@ void lk_tree_reset(lk_tree *t) {
 
   t->node_count = 1;
   t->prop_count = 0;
+  t->pres_count = 0;
   t->root = 0;
 
   if (t->nodes) {
@@ -263,6 +302,53 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
   t->props[t->prop_count].value = v;
   t->prop_count++;
   n->props_len++;
+}
+
+/* ---- Presentation API ---- */
+
+void lk_tree_add_presentation(lk_tree *t, lk_ix node,
+                               lk_u32 ptype, lk_value pvalue) {
+  lk_presentation *p;
+
+  if (!t || node == 0 || node >= t->node_count) {
+    return;
+  }
+
+  if (!lk_tree_reserve_pres(t, t->pres_count + 1)) {
+    return;
+  }
+
+  p = &t->pres[t->pres_count++];
+  p->node = node;
+  p->ptype = ptype;
+  p->pvalue = pvalue;
+}
+
+void lk_tree_add_presentation_s(lk_tree *t, lk_ix node,
+                                 const char *ptype, lk_value pvalue) {
+  if (!t || !t->intern || !ptype) {
+    return;
+  }
+
+  lk_tree_add_presentation(t, node,
+                            lk_intern_id(t->intern, lk_str_c(ptype)),
+                            pvalue);
+}
+
+const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node) {
+  lk_u32 i;
+
+  if (!t || node == 0) {
+    return NULL;
+  }
+
+  for (i = 0; i < t->pres_count; i++) {
+    if (t->pres[i].node == node) {
+      return &t->pres[i];
+    }
+  }
+
+  return NULL;
 }
 
 static void push_diag(lk_diag *diags, lk_u32 cap, lk_u32 *len, lk_diag_kind k,
@@ -599,6 +685,62 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
       }
     }
     wr_cstr(wr, ud, " }");
+  }
+
+  /* Dump presentations on this node */
+  {
+    lk_u32 pi;
+    int has_pres = 0;
+
+    for (pi = 0; pi < t->pres_count; pi++) {
+      if (t->pres[pi].node == n) {
+        if (!has_pres) {
+          wr_cstr(wr, ud, " :pres {");
+          has_pres = 1;
+        }
+
+        wr_cstr(wr, ud, " ");
+
+        if (t->intern && t->pres[pi].ptype) {
+          lk_str ps = lk_intern_str(t->intern, t->pres[pi].ptype);
+
+          if (ps.ptr && ps.len) {
+            wr(ud, ps.ptr, ps.len);
+          }
+        }
+
+        wr_cstr(wr, ud, "=");
+
+        switch (t->pres[pi].pvalue.tag) {
+        case UIV_BOOL:
+          wr_cstr(wr, ud, t->pres[pi].pvalue.as.b ? "true" : "false");
+          break;
+        case UIV_I32:
+          wr_u32(wr, ud, (lk_u32)t->pres[pi].pvalue.as.i);
+          break;
+        case UIV_STR:
+          wr_cstr(wr, ud, "\"");
+
+          if (t->intern && t->pres[pi].pvalue.as.str_id) {
+            lk_str sv = lk_intern_str(t->intern, t->pres[pi].pvalue.as.str_id);
+
+            if (sv.ptr && sv.len) {
+              wr(ud, sv.ptr, sv.len);
+            }
+          }
+
+          wr_cstr(wr, ud, "\"");
+          break;
+        default:
+          wr_cstr(wr, ud, "null");
+          break;
+        }
+      }
+    }
+
+    if (has_pres) {
+      wr_cstr(wr, ud, " }");
+    }
   }
 
   if (node->first_child) {

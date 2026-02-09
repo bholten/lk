@@ -2786,6 +2786,439 @@ static void test_widget_override_render(void) {
 }
 
 /* ================================================================
+ * Presentation tests
+ * ================================================================ */
+
+static void test_pres_add_and_get(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, btn;
+  const lk_presentation *p;
+
+  BEGIN_TEST("pres: add and get");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(42));
+
+  p = lk_tree_get_presentation(t, btn);
+  CHECK(p != NULL);
+  if (p) {
+    CHECK_EQ(p->ptype, lk_intern_id(t->intern, lk_str_c("item")));
+    CHECK_EQ(p->pvalue.tag, UIV_I32);
+    CHECK_EQ(p->pvalue.as.i, 42);
+    CHECK_EQ(p->node, btn);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_pres_none_returns_null(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w;
+  const lk_presentation *p;
+
+  BEGIN_TEST("pres: no presentation returns NULL");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+
+  p = lk_tree_get_presentation(t, w);
+  CHECK(p == NULL);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_pres_survives_frame(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_changeset *cs;
+
+  BEGIN_TEST("pres: same pres across frames = no UPDATED");
+
+  /* Frame 1: button with presentation */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(5));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Frame 2: identical tree + presentation */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(5));
+  }
+  cs = lk_ui_end_frame(ui);
+
+  CHECK_EQ(cs->count, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_pres_change_triggers_updated(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_changeset *cs;
+
+  BEGIN_TEST("pres: changed pvalue triggers UPDATED");
+
+  /* Frame 1 */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(5));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Frame 2: different pvalue */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(99));
+  }
+  cs = lk_ui_end_frame(ui);
+
+  CHECK(cs_has(cs, ui, LK_CHANGE_UPDATED, "btn"));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Command / Translator tests
+ * ================================================================ */
+
+static void test_translator_fires_command(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: fires command on match");
+
+  /* Register translator: POINTER_DOWN + ptype "item" -> "Select" */
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+
+  /* Build tree with presented button */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(7));
+  }
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+
+  /* Route pointer_down to the button */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK(q != NULL);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name,
+             lk_intern_id(ui->intern, lk_str_c("Select")));
+    CHECK_EQ(q->cmds[0].args[0].tag, UIV_I32);
+    CHECK_EQ(q->cmds[0].args[0].as.i, 7);
+    CHECK_EQ(q->cmds[0].source_ptype,
+             lk_intern_id(ui->intern, lk_str_c("item")));
+  }
+  CHECK_EQ(ev.handled, 1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_no_match(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: no match = empty queue");
+
+  /* Translator for KEY_DOWN, but we'll send POINTER_DOWN */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, "Select");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_walks_ancestors(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+  lk_ix btn_ix;
+
+  BEGIN_TEST("translator: walks ancestors for pres");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, "ListClick");
+
+  /* Presentation is on parent column, event targets child button */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, col);
+    lk_tree_append_child(t, col, btn);
+    lk_tree_add_presentation_s(t, col, "list", lk_v_i32(10));
+  }
+  lk_ui_end_frame(ui);
+
+  btn_ix = lk_tree_find_by_id(lk_ui_tree(ui),
+            lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = btn_ix;
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  CHECK_EQ(ev.handled, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].args[0].as.i, 10);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_ptype_and_kind(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: match ptype + node_kind");
+
+  /* Only match BUTTON nodes with ptype "action" */
+  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, "DoAction");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "action", lk_v_i32(3));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name,
+             lk_intern_id(ui->intern, lk_str_c("DoAction")));
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static int g_handler_called = 0;
+static lk_u32 g_handler_cmd_name = 0;
+
+static void test_cmd_handler_cb(const lk_command *cmd, void *ud) {
+  (void)ud;
+  g_handler_called = 1;
+  g_handler_cmd_name = cmd->name;
+}
+
+static void test_command_handler_fires(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+
+  BEGIN_TEST("translator: command handler fires");
+
+  g_handler_called = 0;
+  g_handler_cmd_name = 0;
+
+  lk_ui_set_command_handler(ui, test_cmd_handler_cb, NULL);
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Pick");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ(g_handler_called, 1);
+  CHECK_EQ(g_handler_cmd_name,
+           lk_intern_id(ui->intern, lk_str_c("Pick")));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Introspection tests
+ * ================================================================ */
+
+static void test_command_log_accumulates(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command *log;
+  lk_u32 log_count;
+
+  BEGIN_TEST("introspect: command log accumulates");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+    lk_ix b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, b1);
+    lk_tree_append_child(t, w, b2);
+    lk_tree_add_presentation_s(t, b1, "item", lk_v_i32(1));
+    lk_tree_add_presentation_s(t, b2, "item", lk_v_i32(2));
+  }
+  lk_ui_end_frame(ui);
+
+  /* First click */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("b1")));
+  lk_event_route(ui, &ev);
+
+  /* Clear queue between events (simulate frame boundary) */
+  lk_ui_clear_commands(ui);
+
+  /* Second click */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("b2")));
+  lk_event_route(ui, &ev);
+
+  log = lk_ui_command_log(ui, &log_count);
+  CHECK_EQ(log_count, 2);
+  if (log_count >= 2) {
+    CHECK_EQ(log[0].args[0].as.i, 1);
+    CHECK_EQ(log[1].args[0].as.i, 2);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Simple write-to-buffer callback for dump tests */
+typedef struct {
+  char buf[512];
+  lk_u32 len;
+} test_buf;
+
+static void test_buf_write(void *ud, const char *bytes, lk_u32 len) {
+  test_buf *b = (test_buf *)ud;
+  lk_u32 avail = (lk_u32)sizeof(b->buf) - b->len;
+
+  if (len > avail) {
+    len = avail;
+  }
+
+  if (len > 0) {
+    memcpy(b->buf + b->len, bytes, len);
+    b->len += len;
+  }
+}
+
+static void test_dump_commands_output(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  test_buf buf;
+
+  BEGIN_TEST("introspect: dump_commands output");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, "Activate");
+
+  memset(&buf, 0, sizeof(buf));
+  lk_ui_dump_commands(ui, test_buf_write, &buf);
+
+  CHECK(buf.len > 0);
+  /* Should contain "translators" and "Select" */
+  CHECK(buf.len > 20);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -2907,6 +3340,26 @@ int main(void) {
   test_widget_get_defaults();
   test_widget_register_custom();
   test_widget_override_render();
+
+  /* presentations */
+  printf("\nlk presentation tests:\n");
+  test_pres_add_and_get();
+  test_pres_none_returns_null();
+  test_pres_survives_frame();
+  test_pres_change_triggers_updated();
+
+  /* command / translator */
+  printf("\nlk command/translator tests:\n");
+  test_translator_fires_command();
+  test_translator_no_match();
+  test_translator_walks_ancestors();
+  test_translator_ptype_and_kind();
+  test_command_handler_fires();
+
+  /* introspection */
+  printf("\nlk introspection tests:\n");
+  test_command_log_accumulates();
+  test_dump_commands_output();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
