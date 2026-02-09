@@ -1,7 +1,7 @@
 #ifndef LK_SDL_H
 #define LK_SDL_H
 
-#include "core/lk-data.h"
+#include <lk.h>
 
 typedef struct lk_window lk_window;
 

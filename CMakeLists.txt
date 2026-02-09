@@ -28,15 +28,25 @@ set(LK_SOURCES
 
 add_library(lk_core STATIC ${LK_SOURCES})
 
-target_include_directories(lk_core PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
+# Shared library for language bindings (Python, etc.)
+add_library(lk_shared SHARED ${LK_SOURCES})
+target_include_directories(lk_shared
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(lk_shared PRIVATE -Wall -Wextra -pedantic)
+set_target_properties(lk_shared PROPERTIES OUTPUT_NAME "lk")
+
+target_include_directories(lk_core
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_compile_options(lk_core PRIVATE -Wall -Wextra -pedantic)
 
-add_executable(lk_test src/core/lk-test.c)
+add_executable(lk_test test/lk-test.c)
 target_link_libraries(lk_test PRIVATE lk_core)
 target_include_directories(lk_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_options(lk_test PRIVATE -Wall -Wextra -pedantic)

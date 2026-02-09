@@ -6,7 +6,9 @@
  * All null-safe with bounds checking.
  */
 
-#include "lk-data.h"
+#include <string.h>
+
+#include <lk.h>
 
 /* ---- Node field accessors ---- */
 
@@ -126,6 +128,33 @@ lk_value lk_command_arg(const lk_command *cmd, lk_u8 idx) {
   return cmd->args[idx];
 }
 
+lk_u8 lk_command_arg_tag(const lk_command *cmd, lk_u8 idx) {
+  if (!cmd || idx >= cmd->arg_count || idx >= LK_CMD_MAX_ARGS) {
+    return UIV_NONE;
+  }
+  return (lk_u8)cmd->args[idx].tag;
+}
+
+lk_i32 lk_command_arg_i32(const lk_command *cmd, lk_u8 idx) {
+  if (!cmd || idx >= cmd->arg_count || idx >= LK_CMD_MAX_ARGS) {
+    return 0;
+  }
+  if (cmd->args[idx].tag != UIV_I32) {
+    return 0;
+  }
+  return (lk_i32)cmd->args[idx].as.i;
+}
+
+lk_u32 lk_command_arg_str_id(const lk_command *cmd, lk_u8 idx) {
+  if (!cmd || idx >= cmd->arg_count || idx >= LK_CMD_MAX_ARGS) {
+    return 0;
+  }
+  if (cmd->args[idx].tag != UIV_STR) {
+    return 0;
+  }
+  return cmd->args[idx].as.str_id;
+}
+
 lk_ix lk_command_source_node(const lk_command *cmd) {
   if (!cmd) {
     return 0;
@@ -138,4 +167,71 @@ lk_u32 lk_command_source_ptype(const lk_command *cmd) {
     return 0;
   }
   return cmd->source_ptype;
+}
+
+/* ---- UI accessors ---- */
+
+lk_intern *lk_ui_intern(const lk_ui *ui) {
+  if (!ui) {
+    return NULL;
+  }
+  return ui->intern;
+}
+
+/* ---- Binding-friendly const char* accessors ---- */
+
+lk_ix lk_tree_add_node_c(lk_tree *t, const char *id_str, lk_kind kind) {
+  if (!id_str) {
+    return 0;
+  }
+  return lk_tree_add_node_s(t, lk_str_c(id_str), kind);
+}
+
+const char *lk_node_text_cstr(const lk_tree *t, lk_ix n) {
+  lk_u32 sid;
+  if (!t || n == 0 || n >= t->node_count) {
+    return "";
+  }
+  sid = lk_node_text_id(t, n);
+  if (sid == 0) {
+    return "";
+  }
+  return lk_intern_cstr(t->intern, sid);
+}
+
+/* ---- Event init helpers ---- */
+
+void lk_event_init_pointer(lk_event *ev, lk_u8 type,
+                            lk_i32 x, lk_i32 y, lk_u8 button) {
+  if (!ev) {
+    return;
+  }
+  memset(ev, 0, sizeof(*ev));
+  ev->type = type;
+  ev->data.pointer.x = x;
+  ev->data.pointer.y = y;
+  ev->data.pointer.button = button;
+}
+
+void lk_event_init_key(lk_event *ev, lk_u8 type,
+                        lk_u16 keycode, lk_u8 mods) {
+  if (!ev) {
+    return;
+  }
+  memset(ev, 0, sizeof(*ev));
+  ev->type = type;
+  ev->data.key.keycode = keycode;
+  ev->mods = mods;
+}
+
+/* ---- Layout convenience ---- */
+
+int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w,
+                      lk_i32 viewport_h, lk_rect *rects) {
+  lk_layout_cfg cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.viewport_w = viewport_w;
+  cfg.viewport_h = viewport_h;
+  return lk_layout(t, &cfg, rects);
 }

@@ -1,8 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "lk-data.h"
-#include "lk-int.h"
+#include <lk.h>
 
 lk_str lk_str_c(const char *cstr) {
   lk_str s;

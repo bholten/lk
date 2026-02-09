@@ -1,6 +1,6 @@
 #include <string.h>
 
-#include "lk-data.h"
+#include <lk.h>
 #include "lk-memory.h"
 
 static void *ui_alloc(lk_ui *ui, lk_u32 bytes) {

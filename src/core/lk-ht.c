@@ -1,7 +1,6 @@
 #include <stdlib.h>
 
-#include "lk-data.h"
-#include "lk-int.h"
+#include <lk.h>
 
 #define INITIAL_CAPACITY 64
 

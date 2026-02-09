@@ -1,6 +1,6 @@
 #include <string.h>
 
-#include "lk-data.h"
+#include <lk.h>
 #include "lk-memory.h"
 
 void lk_measure_text_stub(void *ud, lk_str text, lk_i32 *out_w, lk_i32 *out_h) {
