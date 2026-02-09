@@ -259,6 +259,63 @@ int lk_tree_validate_schema(const lk_tree *t,
 
 
 /**
+ * Events — types
+ **/
+
+typedef enum lk_event_type {
+  LK_EVENT_NONE = 0,
+  LK_EVENT_POINTER_MOVE,
+  LK_EVENT_POINTER_DOWN,
+  LK_EVENT_POINTER_UP,
+  LK_EVENT_KEY_DOWN,
+  LK_EVENT_KEY_UP,
+  LK_EVENT_TEXT,
+  LK_EVENT_WHEEL,
+  LK_EVENT_WINDOW_RESIZE,
+  LK_EVENT_WINDOW_CLOSE,
+  LK_EVENT__COUNT
+} lk_event_type;
+
+typedef enum lk_event_phase {
+  LK_PHASE_CAPTURE = 1,
+  LK_PHASE_TARGET,
+  LK_PHASE_BUBBLE
+} lk_event_phase;
+
+#define LK_MOD_SHIFT 0x01u
+#define LK_MOD_CTRL  0x02u
+#define LK_MOD_ALT   0x04u
+#define LK_MOD_GUI   0x08u
+
+typedef enum lk_keycode {
+  LKK_UNKNOWN = 0,
+  LKK_TAB, LKK_RETURN, LKK_ESCAPE, LKK_BACKSPACE, LKK_DELETE,
+  LKK_SPACE,
+  LKK_LEFT, LKK_RIGHT, LKK_UP, LKK_DOWN,
+  LKK_HOME, LKK_END,
+  LKK__COUNT
+} lk_keycode;
+
+typedef struct lk_event {
+  lk_u8 type;       /* lk_event_type */
+  lk_u8 phase;      /* lk_event_phase (set during routing) */
+  lk_u8 mods;       /* LK_MOD_* bit flags */
+  lk_u8 handled;    /* set to 1 to stop propagation */
+  lk_ix target;     /* target node (from hit-test or focus) */
+  union {
+    struct { lk_i32 x, y; lk_u8 button; } pointer;
+    struct { lk_u16 keycode; lk_u8 repeat; } key;
+    struct { char buf[32]; lk_u8 len; } text;
+    struct { lk_i32 dx, dy; } wheel;
+    struct { lk_i32 w, h; } window;
+  } data;
+} lk_event;
+
+typedef int (*lk_event_handler_fn)(lk_event *event, lk_ix node_ix,
+                                    void *ud);
+
+
+/**
  * lk_ui — Double-buffered UI context with tree diffing.
  *
  * Owns two trees (prev, next) sharing a single intern table.
@@ -292,6 +349,9 @@ typedef struct lk_ui {
   void *(*alloc)(void *ud, lk_u32 bytes);
   void (*dealloc)(void *ud, void *ptr);
   void *alloc_ud;
+  lk_event_handler_fn event_handler;
+  void *event_ud;
+  lk_node_id focused_id;  /* 0 = no focus */
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -383,6 +443,24 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
 
 /* Free the cmds array. Safe to call on a zeroed struct. */
 void lk_render_list_destroy(lk_render_list *rl);
+
+
+/**
+ * Events — function declarations
+ **/
+
+lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects,
+                   lk_i32 x, lk_i32 y);
+
+void lk_event_route(lk_ui *ui, lk_event *event);
+
+void lk_ui_set_event_handler(lk_ui *ui, lk_event_handler_fn fn, void *ud);
+
+int lk_focus_set(lk_ui *ui, const lk_tree *t, lk_node_id id);
+void lk_focus_clear(lk_ui *ui);
+lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t);
+lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t);
+lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t);
 
 
 /**

@@ -1820,6 +1820,861 @@ static void test_render_build_reuse(void) {
 }
 
 /* ================================================================
+ * Tests: hit testing
+ * ================================================================ */
+
+static void test_hit_single_button(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, btn;
+  lk_rect *r;
+
+  BEGIN_TEST("hit: point inside single button");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(8));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    lk_ix hit = lk_hit_test(t, r, 10, 10);
+    CHECK_EQ(hit, btn);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_hit_outside(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, btn;
+  lk_rect *r;
+
+  BEGIN_TEST("hit: point outside all nodes");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    lk_ix hit = lk_hit_test(t, r, 900, 700);
+    CHECK_EQ(hit, 0u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_hit_parent_padding(void) {
+  /* Hit point in column padding area (not child) returns column */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, btn;
+  lk_rect *r;
+
+  BEGIN_TEST("hit: parent padding area returns parent");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(50));
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* (5, 5) is inside window and column but outside button */
+    lk_ix hit = lk_hit_test(t, r, 5, 5);
+    CHECK_EQ(hit, col);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_hit_deepest_child(void) {
+  /* Nested: window > column > row > button; click inside returns button */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, row, btn;
+  lk_rect *r;
+
+  BEGIN_TEST("hit: deepest child wins");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, row);
+  lk_tree_append_child(t, row, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    lk_ix hit = lk_hit_test(t, r, 5, 5);
+    CHECK_EQ(hit, btn);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_hit_later_sibling(void) {
+  /* Two siblings in a row; click in second returns second */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, b1, b2;
+  lk_rect *r;
+
+  BEGIN_TEST("hit: later sibling wins overlap");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+  lk_tree_add_prop(t, b1, UIP_W, lk_v_i32(100));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_TEXT, lk_v_cstr(t->intern, "B"));
+  lk_tree_add_prop(t, b2, UIP_W, lk_v_i32(100));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, b1);
+  lk_tree_append_child(t, row, b2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* b2 starts at x=100 */
+    lk_ix hit = lk_hit_test(t, r, 150, 300);
+    CHECK_EQ(hit, b2);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_hit_empty_tree(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_rect rects[2];
+
+  BEGIN_TEST("hit: empty tree returns 0");
+
+  memset(rects, 0, sizeof(rects));
+  CHECK_EQ(lk_hit_test(t, rects, 10, 10), 0u);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+/* ================================================================
+ * Tests: focus management
+ * ================================================================ */
+
+static void test_focus_set_focusable(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, btn;
+  lk_node_id btn_id;
+  int ok;
+
+  BEGIN_TEST("focus: set on focusable node succeeds");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+  btn_id = t->nodes[btn].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  ok = lk_focus_set(ui, cur, btn_id);
+  CHECK_EQ((unsigned)ok, 1u);
+  CHECK(lk_focus_current(ui, cur) != 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_set_not_focusable(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, lbl;
+  lk_node_id lbl_id;
+  int ok;
+
+  BEGIN_TEST("focus: set on non-focusable node fails");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, lbl);
+  lbl_id = t->nodes[lbl].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  ok = lk_focus_set(ui, cur, lbl_id);
+  CHECK_EQ((unsigned)ok, 0u);
+  CHECK_EQ(lk_focus_current(ui, cur), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_set_disabled(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, btn;
+  lk_node_id btn_id;
+  int ok;
+
+  BEGIN_TEST("focus: set on disabled node fails");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, btn, UIP_DISABLED, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+  btn_id = t->nodes[btn].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  ok = lk_focus_set(ui, cur, btn_id);
+  CHECK_EQ((unsigned)ok, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_clear(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, btn;
+  lk_node_id btn_id;
+
+  BEGIN_TEST("focus: clear sets focus to 0");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+  btn_id = t->nodes[btn].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  lk_focus_set(ui, cur, btn_id);
+  CHECK(lk_focus_current(ui, cur) != 0);
+
+  lk_focus_clear(ui);
+  CHECK_EQ(lk_focus_current(ui, cur), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_next_wraps(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, b1, b2, b3;
+  lk_node_id id1, id2, id3, r;
+
+  BEGIN_TEST("focus: next wraps around 3 buttons");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_FOCUSABLE, lk_v_bool(1));
+  b3 = lk_tree_add_node_s(t, lk_str_c("b3"), UIK_BUTTON);
+  lk_tree_add_prop(t, b3, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  lk_tree_append_child(t, col, b2);
+  lk_tree_append_child(t, col, b3);
+  id1 = t->nodes[b1].id;
+  id2 = t->nodes[b2].id;
+  id3 = t->nodes[b3].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+
+  /* No focus -> first */
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id1);
+
+  /* first -> second */
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id2);
+
+  /* second -> third */
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id3);
+
+  /* third -> wraps to first */
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_prev_wraps(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, b1, b2, b3;
+  lk_node_id id1, id2, id3, r;
+
+  BEGIN_TEST("focus: prev wraps around");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_FOCUSABLE, lk_v_bool(1));
+  b3 = lk_tree_add_node_s(t, lk_str_c("b3"), UIK_BUTTON);
+  lk_tree_add_prop(t, b3, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  lk_tree_append_child(t, col, b2);
+  lk_tree_append_child(t, col, b3);
+  id1 = t->nodes[b1].id;
+  id2 = t->nodes[b2].id;
+  id3 = t->nodes[b3].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+
+  /* No focus -> last */
+  r = lk_focus_prev(ui, cur);
+  CHECK_EQ(r, id3);
+
+  /* last -> second */
+  r = lk_focus_prev(ui, cur);
+  CHECK_EQ(r, id2);
+
+  /* second -> first */
+  r = lk_focus_prev(ui, cur);
+  CHECK_EQ(r, id1);
+
+  /* first -> wraps to last */
+  r = lk_focus_prev(ui, cur);
+  CHECK_EQ(r, id3);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_next_skips_disabled(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, b1, b2, b3;
+  lk_node_id id1, id3, r;
+
+  BEGIN_TEST("focus: next skips disabled");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, b2, UIP_DISABLED, lk_v_bool(1));
+  b3 = lk_tree_add_node_s(t, lk_str_c("b3"), UIK_BUTTON);
+  lk_tree_add_prop(t, b3, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  lk_tree_append_child(t, col, b2);
+  lk_tree_append_child(t, col, b3);
+  id1 = t->nodes[b1].id;
+  id3 = t->nodes[b3].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id1);
+  /* from b1, next should skip disabled b2, go to b3 */
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id3);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_removed_clears(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, b1;
+  lk_node_id b1_id;
+
+  BEGIN_TEST("focus: removed node clears focus");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  b1_id = t->nodes[b1].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  lk_focus_set(ui, cur, b1_id);
+  CHECK(lk_focus_current(ui, cur) != 0);
+
+  /* Next frame: remove b1 */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  CHECK_EQ(lk_focus_current(ui, cur), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Tests: event routing
+ * ================================================================ */
+
+#define ROUTE_LOG_CAP 32
+
+typedef struct route_log_entry {
+  lk_ix node_ix;
+  lk_u8 phase;
+} route_log_entry;
+
+typedef struct route_log {
+  route_log_entry entries[ROUTE_LOG_CAP];
+  int count;
+} route_log;
+
+static int route_log_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  route_log *log = (route_log *)ud;
+  if (log->count < ROUTE_LOG_CAP) {
+    log->entries[log->count].node_ix = node_ix;
+    log->entries[log->count].phase = event->phase;
+    log->count++;
+  }
+  return 0;
+}
+
+static int route_stop_capture_handler(lk_event *event, lk_ix node_ix,
+                                       void *ud) {
+  route_log *log = (route_log *)ud;
+  if (log->count < ROUTE_LOG_CAP) {
+    log->entries[log->count].node_ix = node_ix;
+    log->entries[log->count].phase = event->phase;
+    log->count++;
+  }
+  if (event->phase == LK_PHASE_CAPTURE) {
+    event->handled = 1;
+  }
+  return 0;
+}
+
+static int route_stop_target_handler(lk_event *event, lk_ix node_ix,
+                                      void *ud) {
+  route_log *log = (route_log *)ud;
+  if (log->count < ROUTE_LOG_CAP) {
+    log->entries[log->count].node_ix = node_ix;
+    log->entries[log->count].phase = event->phase;
+    log->count++;
+  }
+  if (event->phase == LK_PHASE_TARGET) {
+    event->handled = 1;
+  }
+  return 0;
+}
+
+static int route_stop_bubble_handler(lk_event *event, lk_ix node_ix,
+                                      void *ud) {
+  route_log *log = (route_log *)ud;
+  if (log->count < ROUTE_LOG_CAP) {
+    log->entries[log->count].node_ix = node_ix;
+    log->entries[log->count].phase = event->phase;
+    log->count++;
+  }
+  if (event->phase == LK_PHASE_BUBBLE) {
+    event->handled = 1;
+  }
+  return 0;
+}
+
+static void test_route_full_traversal(void) {
+  /* window > column > button; target = button
+   * expect: capture(window), capture(column), target(button),
+   *         bubble(column), bubble(window)
+   */
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, btn;
+  lk_event ev;
+  route_log log;
+
+  BEGIN_TEST("route: capture + target + bubble full path");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  /* btn index is the same after end_frame swap */
+  btn = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
+  w = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("w")));
+  col = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("col")));
+
+  memset(&log, 0, sizeof(log));
+  lk_ui_set_event_handler(ui, route_log_handler, &log);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = btn;
+
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ(log.count, 5);
+  CHECK_EQ(log.entries[0].node_ix, w);
+  CHECK_EQ((unsigned)log.entries[0].phase, (unsigned)LK_PHASE_CAPTURE);
+  CHECK_EQ(log.entries[1].node_ix, col);
+  CHECK_EQ((unsigned)log.entries[1].phase, (unsigned)LK_PHASE_CAPTURE);
+  CHECK_EQ(log.entries[2].node_ix, btn);
+  CHECK_EQ((unsigned)log.entries[2].phase, (unsigned)LK_PHASE_TARGET);
+  CHECK_EQ(log.entries[3].node_ix, col);
+  CHECK_EQ((unsigned)log.entries[3].phase, (unsigned)LK_PHASE_BUBBLE);
+  CHECK_EQ(log.entries[4].node_ix, w);
+  CHECK_EQ((unsigned)log.entries[4].phase, (unsigned)LK_PHASE_BUBBLE);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_route_stop_capture(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, btn;
+  lk_event ev;
+  route_log log;
+
+  BEGIN_TEST("route: handled in capture stops before target");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  btn = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  memset(&log, 0, sizeof(log));
+  lk_ui_set_event_handler(ui, route_stop_capture_handler, &log);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = btn;
+
+  lk_event_route(ui, &ev);
+
+  /* Should stop after first capture node (window) */
+  CHECK_EQ(log.count, 1);
+  CHECK_EQ((unsigned)log.entries[0].phase, (unsigned)LK_PHASE_CAPTURE);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_route_stop_target(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, btn;
+  lk_event ev;
+  route_log log;
+
+  BEGIN_TEST("route: handled at target stops bubble");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  btn = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  memset(&log, 0, sizeof(log));
+  lk_ui_set_event_handler(ui, route_stop_target_handler, &log);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = btn;
+
+  lk_event_route(ui, &ev);
+
+  /* 2 capture + 1 target = 3 entries, no bubble */
+  CHECK_EQ(log.count, 3);
+  CHECK_EQ((unsigned)log.entries[2].phase, (unsigned)LK_PHASE_TARGET);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_route_stop_bubble(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, btn;
+  lk_event ev;
+  route_log log;
+
+  BEGIN_TEST("route: handled mid-bubble stops further");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  btn = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  memset(&log, 0, sizeof(log));
+  lk_ui_set_event_handler(ui, route_stop_bubble_handler, &log);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = btn;
+
+  lk_event_route(ui, &ev);
+
+  /* 2 capture + 1 target + 1 bubble (col) = 4, stops before window bubble */
+  CHECK_EQ(log.count, 4);
+  CHECK_EQ((unsigned)log.entries[3].phase, (unsigned)LK_PHASE_BUBBLE);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_route_no_handler(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("route: no handler installed, no crash");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = w;
+
+  lk_event_route(ui, &ev);
+  CHECK(1); /* just verify no crash */
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_route_target_is_root(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w;
+  lk_event ev;
+  route_log log;
+
+  BEGIN_TEST("route: target is root, no capture/bubble");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  w = cur->root;
+
+  memset(&log, 0, sizeof(log));
+  lk_ui_set_event_handler(ui, route_log_handler, &log);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = w;
+
+  lk_event_route(ui, &ev);
+
+  /* Only target phase for root */
+  CHECK_EQ(log.count, 1);
+  CHECK_EQ(log.entries[0].node_ix, w);
+  CHECK_EQ((unsigned)log.entries[0].phase, (unsigned)LK_PHASE_TARGET);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Tests: integrated event tests
+ * ================================================================ */
+
+static void test_hit_route_integrated(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_rect *r;
+  lk_ix w, col, btn, hit;
+  lk_event ev;
+  route_log log;
+
+  BEGIN_TEST("integrated: hit-test + route fires handler");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Click"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(8));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  r = run_layout((lk_tree *)cur, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    hit = lk_hit_test(cur, r, 10, 10);
+    CHECK(hit != 0);
+
+    memset(&log, 0, sizeof(log));
+    lk_ui_set_event_handler(ui, route_log_handler, &log);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = hit;
+
+    lk_event_route(ui, &ev);
+    CHECK(log.count > 0);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tab_cycles_focus(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_tree *cur;
+  lk_ix w, col, b1, b2, b3;
+  lk_node_id id1, id2, id3;
+  lk_node_id r;
+
+  BEGIN_TEST("integrated: tab cycles through 3 focusable buttons");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_FOCUSABLE, lk_v_bool(1));
+  b3 = lk_tree_add_node_s(t, lk_str_c("b3"), UIK_BUTTON);
+  lk_tree_add_prop(t, b3, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  lk_tree_append_child(t, col, b2);
+  lk_tree_append_child(t, col, b3);
+  id1 = t->nodes[b1].id;
+  id2 = t->nodes[b2].id;
+  id3 = t->nodes[b3].id;
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id1);
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id2);
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id3);
+  r = lk_focus_next(ui, cur);
+  CHECK_EQ(r, id1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -1901,6 +2756,40 @@ int main(void) {
   test_render_button_with_padding();
   test_render_larger_tree();
   test_render_build_reuse();
+
+  /* hit testing */
+  printf("\nlk hit-test tests:\n");
+  test_hit_single_button();
+  test_hit_outside();
+  test_hit_parent_padding();
+  test_hit_deepest_child();
+  test_hit_later_sibling();
+  test_hit_empty_tree();
+
+  /* focus management */
+  printf("\nlk focus tests:\n");
+  test_focus_set_focusable();
+  test_focus_set_not_focusable();
+  test_focus_set_disabled();
+  test_focus_clear();
+  test_focus_next_wraps();
+  test_focus_prev_wraps();
+  test_focus_next_skips_disabled();
+  test_focus_removed_clears();
+
+  /* event routing */
+  printf("\nlk event routing tests:\n");
+  test_route_full_traversal();
+  test_route_stop_capture();
+  test_route_stop_target();
+  test_route_stop_bubble();
+  test_route_no_handler();
+  test_route_target_is_root();
+
+  /* integrated */
+  printf("\nlk integrated event tests:\n");
+  test_hit_route_integrated();
+  test_tab_cycles_focus();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

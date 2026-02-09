@@ -329,6 +329,18 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
   ui->prev = ui->next;
   ui->next = tmp;
 
+  /* Clear focus if the focused node was removed */
+  if (ui->focused_id != 0) {
+    lk_u32 fi;
+    for (fi = 0; fi < ui->changeset.count; fi++) {
+      if (ui->changeset.changes[fi].kind == LK_CHANGE_REMOVED &&
+          ui->changeset.changes[fi].id == ui->focused_id) {
+        ui->focused_id = 0;
+        break;
+      }
+    }
+  }
+
   return &ui->changeset;
 }
 
