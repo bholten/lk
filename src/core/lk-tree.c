@@ -652,6 +652,86 @@ lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id) {
   return 0;
 }
 
+/* ---- Public prop helpers ---- */
+
+lk_i32 lk_node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key,
+                         lk_i32 def) {
+  const lk_node *nd = &t->nodes[n];
+  lk_u32 i;
+
+  for (i = 0; i < nd->props_len; i++) {
+    const lk_prop *p = &t->props[nd->props_off + i];
+
+    if ((lk_prop_key)p->key == key && p->value.tag == UIV_I32) {
+      return (lk_i32)p->value.as.i;
+    }
+  }
+
+  return def;
+}
+
+int lk_node_has_prop(const lk_tree *t, lk_ix n, lk_prop_key key) {
+  const lk_node *nd = &t->nodes[n];
+  lk_u32 i;
+
+  for (i = 0; i < nd->props_len; i++) {
+    if ((lk_prop_key)t->props[nd->props_off + i].key == key) {
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+int lk_node_prop_bool(const lk_tree *t, lk_ix n, lk_prop_key key) {
+  const lk_node *nd = &t->nodes[n];
+  lk_u32 i;
+
+  for (i = 0; i < nd->props_len; i++) {
+    const lk_prop *p = &t->props[nd->props_off + i];
+
+    if ((lk_prop_key)p->key == key && p->value.tag == UIV_BOOL) {
+      return p->value.as.b ? 1 : 0;
+    }
+  }
+
+  return 0;
+}
+
+lk_str lk_node_text(const lk_tree *t, lk_ix n) {
+  const lk_node *nd = &t->nodes[n];
+  lk_str empty;
+  lk_u32 i;
+
+  empty.ptr = "";
+  empty.len = 0;
+
+  for (i = 0; i < nd->props_len; i++) {
+    const lk_prop *p = &t->props[nd->props_off + i];
+
+    if ((lk_prop_key)p->key == UIP_TEXT && p->value.tag == UIV_STR) {
+      return lk_intern_str(t->intern, p->value.as.str_id);
+    }
+  }
+
+  return empty;
+}
+
+lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n) {
+  const lk_node *nd = &t->nodes[n];
+  lk_u32 i;
+
+  for (i = 0; i < nd->props_len; i++) {
+    const lk_prop *p = &t->props[nd->props_off + i];
+
+    if ((lk_prop_key)p->key == UIP_TEXT && p->value.tag == UIV_STR) {
+      return p->value.as.str_id;
+    }
+  }
+
+  return 0;
+}
+
 /* Schema (lots of TODOs) */
 /* TODO implement later for schema checks */
 lk_kind_schema *ui_default_schema(lk_u32 *out_count) {

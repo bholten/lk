@@ -382,6 +382,18 @@ const lk_tree *lk_ui_tree(const lk_ui *ui);
 
 
 /**
+ * Node prop query helpers
+ **/
+
+lk_i32 lk_node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key,
+                         lk_i32 def);
+int lk_node_has_prop(const lk_tree *t, lk_ix n, lk_prop_key key);
+int lk_node_prop_bool(const lk_tree *t, lk_ix n, lk_prop_key key);
+lk_str lk_node_text(const lk_tree *t, lk_ix n);
+lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n);
+
+
+/**
  * Layout
  **/
 
@@ -441,8 +453,39 @@ typedef struct lk_render_list {
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     lk_render_list *out);
 
+/* Push a command to the render list (grows as needed). Returns 1 on
+ * success, 0 on allocation failure. */
+int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd);
+
 /* Free the cmds array. Safe to call on a zeroed struct. */
 void lk_render_list_destroy(lk_render_list *rl);
+
+
+/**
+ * Widget definition — per-kind vtable for measure, layout, render.
+ **/
+
+#define LK_KIND_MAX 32
+
+typedef struct lk_widget_def {
+  void (*measure)(const lk_tree *t, lk_ix n,
+                  const lk_size *sizes, const lk_layout_cfg *cfg,
+                  lk_i32 *out_w, lk_i32 *out_h);
+
+  /* Position children within content rect (parent rect minus padding).
+   * Returns 1 if children need recursive layout, 0 for leaves. */
+  int (*layout)(const lk_tree *t, lk_ix n,
+                const lk_size *sizes, const lk_rect *content,
+                lk_rect *rects);
+
+  void (*render)(const lk_tree *t, lk_ix n,
+                 const lk_rect *rect, lk_render_list *out);
+
+  lk_u8 clips; /* 1 if this node clips children */
+} lk_widget_def;
+
+void lk_widget_register(lk_kind kind, const lk_widget_def *def);
+const lk_widget_def *lk_widget_get(lk_kind kind);
 
 
 /**

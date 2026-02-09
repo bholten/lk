@@ -3,57 +3,7 @@
 #include "lk-data.h"
 #include "lk-memory.h"
 
-/**Hardcoded MVP theme colors **/
-static lk_color color_window_bg(void) {
-  lk_color c;
-  c.r = 30; c.g = 30; c.b = 30; c.a = 255;
-  return c;
-}
-
-static lk_color color_button_bg(void) {
-  lk_color c;
-  c.r = 60; c.g = 60; c.b = 60; c.a = 255;
-  return c;
-}
-
-static lk_color color_text(void) {
-  lk_color c;
-  c.r = 220; c.g = 220; c.b = 220; c.a = 255;
-  return c;
-}
-
-static lk_i32 node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key,
-                            lk_i32 def) {
-  const lk_node *nd = &t->nodes[n];
-  lk_u32 i;
-
-  for (i = 0; i < nd->props_len; i++) {
-    const lk_prop *p = &t->props[nd->props_off + i];
-
-    if ((lk_prop_key)p->key == key && p->value.tag == UIV_I32) {
-      return (lk_i32)p->value.as.i;
-    }
-  }
-
-  return def;
-}
-
-static lk_u32 node_text_id(const lk_tree *t, lk_ix n) {
-  const lk_node *nd = &t->nodes[n];
-  lk_u32 i;
-
-  for (i = 0; i < nd->props_len; i++) {
-    const lk_prop *p = &t->props[nd->props_off + i];
-
-    if ((lk_prop_key)p->key == UIP_TEXT && p->value.tag == UIV_STR) {
-      return p->value.as.str_id;
-    }
-  }
-
-  return 0;
-}
-
-static int rl_push(lk_render_list *rl, lk_render_cmd cmd) {
+int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
   if (rl->count >= rl->cap) {
     lk_u32 new_cap = rl->cap == 0 ? 64 : rl->cap * 2;
     lk_render_cmd *new_cmds = (lk_render_cmd *)lk_sys_alloc(
@@ -80,12 +30,6 @@ static int rl_push(lk_render_list *rl, lk_render_cmd cmd) {
  * never reach 2^31 so this is safe.
  */
 #define CLIP_END_MARKER 0x80000000u
-
-/* Return 1 if this node should clip its children. */
-static int node_clips(const lk_tree *t, lk_ix n) {
-  (void)t;
-  return t->nodes[n].kind == UIK_WINDOW;
-}
 
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     lk_render_list *out) {
@@ -125,6 +69,7 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     lk_ix n;
     const lk_node *nd;
     lk_kind kind;
+    const lk_widget_def *def;
     int clips;
 
     /* Check for CLIP_END sentinel */
@@ -132,71 +77,18 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       lk_render_cmd cmd;
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_CLIP_END;
-      rl_push(out, cmd);
+      lk_render_list_push(out, cmd);
       continue;
     }
 
     n = raw;
     nd = &t->nodes[n];
     kind = (lk_kind)nd->kind;
-    clips = node_clips(t, n);
+    def = lk_widget_get(kind);
+    clips = (def && def->clips) ? 1 : 0;
 
-    switch (kind) {
-    case UIK_WINDOW: {
-      lk_render_cmd cmd;
-      memset(&cmd, 0, sizeof(cmd));
-      cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect = rects[n];
-      cmd.color = color_window_bg();
-      rl_push(out, cmd);
-      break;
-    }
-
-    case UIK_LABEL: {
-      lk_u32 sid = node_text_id(t, n);
-
-      if (sid != 0) {
-        lk_render_cmd cmd;
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.op = LK_ROP_DRAW_TEXT;
-        cmd.rect = rects[n];
-        cmd.color = color_text();
-        cmd.str_id = sid;
-        rl_push(out, cmd);
-      }
-
-      break;
-    }
-
-    case UIK_BUTTON: {
-      lk_i32 pad = node_prop_i32(t, n, UIP_PADDING, 0);
-      lk_u32 sid = node_text_id(t, n);
-      lk_render_cmd cmd;
-
-      memset(&cmd, 0, sizeof(cmd));
-      cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect = rects[n];
-      cmd.color = color_button_bg();
-      rl_push(out, cmd);
-
-      if (sid != 0) {
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.op = LK_ROP_DRAW_TEXT;
-        cmd.rect.x = rects[n].x + pad;
-        cmd.rect.y = rects[n].y + pad;
-        cmd.rect.w = rects[n].w - pad * 2;
-        cmd.rect.h = rects[n].h - pad * 2;
-        cmd.color = color_text();
-        cmd.str_id = sid;
-        rl_push(out, cmd);
-      }
-
-      break;
-    }
-
-    default:
-      /* COLUMN, ROW, SPACER — invisible containers, emit nothing */
-      break;
+    if (def && def->render) {
+      def->render(t, n, &rects[n], out);
     }
 
     /* Emit CLIP_BEGIN after own render commands, before children */
@@ -205,7 +97,7 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_CLIP_BEGIN;
       cmd.rect = rects[n];
-      rl_push(out, cmd);
+      lk_render_list_push(out, cmd);
     }
 
     /* Push children (and CLIP_END marker if clipping) */

@@ -3,29 +3,12 @@
 #include "lk-data.h"
 #include "lk-memory.h"
 
-/* ---- Prop helpers ---- */
-
-static int node_prop_bool(const lk_tree *t, lk_ix n, lk_prop_key key) {
-  const lk_node *nd = &t->nodes[n];
-  lk_u32 i;
-
-  for (i = 0; i < nd->props_len; i++) {
-    const lk_prop *p = &t->props[nd->props_off + i];
-
-    if ((lk_prop_key)p->key == key && p->value.tag == UIV_BOOL) {
-      return p->value.as.b ? 1 : 0;
-    }
-  }
-
-  return 0;
-}
-
 static int node_is_focusable(const lk_tree *t, lk_ix n) {
-  return node_prop_bool(t, n, UIP_FOCUSABLE);
+  return lk_node_prop_bool(t, n, UIP_FOCUSABLE);
 }
 
 static int node_is_disabled(const lk_tree *t, lk_ix n) {
-  return node_prop_bool(t, n, UIP_DISABLED);
+  return lk_node_prop_bool(t, n, UIP_DISABLED);
 }
 
 /* ---- Hit testing ---- */

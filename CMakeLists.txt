@@ -21,6 +21,7 @@ set(LK_SOURCES
   src/core/lk-layout.c
   src/core/lk-render.c
   src/core/lk-event.c
+  src/core/lk-widget.c
 )
 
 add_library(lk_core STATIC ${LK_SOURCES})
