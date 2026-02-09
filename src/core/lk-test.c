@@ -3219,6 +3219,173 @@ static void test_dump_commands_output(void) {
 }
 
 /* ================================================================
+ * Accessor tests
+ * ================================================================ */
+
+static void test_accessor_node_fields(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, btn;
+  lk_node_id w_id, col_id, btn_id;
+
+  BEGIN_TEST("accessor: node id/kind/parent/child/sibling");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  w_id = t->nodes[w].id;
+  col_id = t->nodes[col].id;
+  btn_id = t->nodes[btn].id;
+
+  CHECK_EQ(lk_node_id_get(t, w), w_id);
+  CHECK_EQ(lk_node_id_get(t, col), col_id);
+  CHECK_EQ(lk_node_id_get(t, btn), btn_id);
+
+  CHECK_EQ(lk_node_kind_get(t, w), (lk_u16)UIK_WINDOW);
+  CHECK_EQ(lk_node_kind_get(t, col), (lk_u16)UIK_COLUMN);
+  CHECK_EQ(lk_node_kind_get(t, btn), (lk_u16)UIK_BUTTON);
+
+  CHECK_EQ(lk_node_parent(t, col), w);
+  CHECK_EQ(lk_node_parent(t, btn), col);
+  CHECK_EQ(lk_node_parent(t, w), 0u);
+
+  CHECK_EQ(lk_node_first_child(t, w), col);
+  CHECK_EQ(lk_node_first_child(t, col), btn);
+  CHECK_EQ(lk_node_first_child(t, btn), 0u);
+
+  CHECK_EQ(lk_node_next_sibling(t, col), 0u);
+  CHECK_EQ(lk_node_next_sibling(t, btn), 0u);
+
+  /* null/bounds safety */
+  CHECK_EQ(lk_node_id_get(NULL, w), 0u);
+  CHECK_EQ(lk_node_id_get(t, 0), 0u);
+  CHECK_EQ(lk_node_id_get(t, 999), 0u);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_accessor_tree_fields(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w;
+
+  BEGIN_TEST("accessor: tree node_count/root/intern");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+
+  CHECK_EQ(lk_tree_node_count(t), t->node_count);
+  CHECK_EQ(lk_tree_root(t), w);
+  CHECK(lk_tree_intern(t) != NULL);
+  CHECK(lk_tree_intern(t) == t->intern);
+
+  /* null safety */
+  CHECK_EQ(lk_tree_node_count(NULL), 0u);
+  CHECK_EQ(lk_tree_root(NULL), 0u);
+  CHECK(lk_tree_intern(NULL) == NULL);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_accessor_changeset(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_changeset *cs;
+  const lk_change *ch;
+
+  BEGIN_TEST("accessor: changeset count/get");
+
+  /* Frame 1: add a tree */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+  }
+  cs = lk_ui_end_frame(ui);
+
+  CHECK(lk_changeset_count(cs) >= 2);
+  ch = lk_changeset_get(cs, 0);
+  CHECK(ch != NULL);
+
+  /* out-of-bounds returns NULL */
+  CHECK(lk_changeset_get(cs, 999) == NULL);
+  CHECK_EQ(lk_changeset_count(NULL), 0u);
+  CHECK(lk_changeset_get(NULL, 0) == NULL);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_accessor_command_fields(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+  const lk_command *cmd;
+  lk_value arg;
+  lk_u32 select_id;
+  lk_u32 item_id;
+
+  BEGIN_TEST("accessor: command name/arg_count/arg/source");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  select_id = lk_intern_id(ui->intern, lk_str_c("Select"));
+  item_id = lk_intern_id(ui->intern, lk_str_c("item"));
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(42));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(lk_command_queue_count(q), 1u);
+
+  cmd = lk_command_queue_get(q, 0);
+  CHECK(cmd != NULL);
+  if (cmd) {
+    CHECK_EQ(lk_command_name(cmd), select_id);
+    CHECK_EQ(lk_command_arg_count(cmd), 1u);
+
+    arg = lk_command_arg(cmd, 0);
+    CHECK_EQ(arg.tag, UIV_I32);
+    CHECK_EQ(arg.as.i, 42u);
+
+    CHECK(lk_command_source_node(cmd) != 0);
+    CHECK_EQ(lk_command_source_ptype(cmd), item_id);
+  }
+
+  /* out-of-bounds arg returns NONE */
+  arg = lk_command_arg(cmd, 5);
+  CHECK_EQ(arg.tag, UIV_NONE);
+
+  /* null safety */
+  CHECK_EQ(lk_command_name(NULL), 0u);
+  CHECK_EQ(lk_command_arg_count(NULL), 0u);
+  CHECK_EQ(lk_command_queue_count(NULL), 0u);
+  CHECK(lk_command_queue_get(NULL, 0) == NULL);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -3360,6 +3527,13 @@ int main(void) {
   printf("\nlk introspection tests:\n");
   test_command_log_accumulates();
   test_dump_commands_output();
+
+  /* accessors */
+  printf("\nlk accessor tests:\n");
+  test_accessor_node_fields();
+  test_accessor_tree_fields();
+  test_accessor_changeset();
+  test_accessor_command_fields();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

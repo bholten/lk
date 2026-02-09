@@ -371,6 +371,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     lk_u32 i;
     int have_rects;
 
+    /* 0. Clear per-frame command queue */
+    lk_ui_clear_commands(win->ui);
+
     /* 1. Build frame */
     tree = lk_ui_begin_frame(win->ui);
     frame(tree, ud);
