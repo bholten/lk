@@ -290,7 +290,7 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   int depth, i;
   lk_ix n;
 
-  if (!ui || !event || !ui->event_handler) {
+  if (!ui || !event) {
     return;
   }
 
@@ -314,28 +314,36 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
     path[depth - 1 - i] = tmp;
   }
 
-  /* Capture phase: root to target-parent */
-  event->phase = LK_PHASE_CAPTURE;
-  for (i = 0; i < depth - 1; i++) {
-    ui->event_handler(event, path[i], ui->event_ud);
+  /* Event handler routing (capture/target/bubble) */
+  if (ui->event_handler) {
+    /* Capture phase: root to target-parent */
+    event->phase = LK_PHASE_CAPTURE;
+    for (i = 0; i < depth - 1; i++) {
+      ui->event_handler(event, path[i], ui->event_ud);
+      if (event->handled) {
+        return;
+      }
+    }
+
+    /* Target phase */
+    event->phase = LK_PHASE_TARGET;
+    ui->event_handler(event, path[depth - 1], ui->event_ud);
     if (event->handled) {
       return;
     }
-  }
 
-  /* Target phase */
-  event->phase = LK_PHASE_TARGET;
-  ui->event_handler(event, path[depth - 1], ui->event_ud);
-  if (event->handled) {
-    return;
-  }
-
-  /* Bubble phase: target-parent to root */
-  event->phase = LK_PHASE_BUBBLE;
-  for (i = depth - 2; i >= 0; i--) {
-    ui->event_handler(event, path[i], ui->event_ud);
-    if (event->handled) {
-      return;
+    /* Bubble phase: target-parent to root */
+    event->phase = LK_PHASE_BUBBLE;
+    for (i = depth - 2; i >= 0; i--) {
+      ui->event_handler(event, path[i], ui->event_ud);
+      if (event->handled) {
+        return;
+      }
     }
+  }
+
+  /* Translator dispatch: if no handler consumed the event */
+  if (!event->handled) {
+    lk_translate_event(ui, t, event);
   }
 }

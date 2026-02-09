@@ -116,6 +116,81 @@ static int props_equal(const lk_tree *a, const lk_node *na, const lk_tree *b,
   return 1;
 }
 
+static int value_equal(const lk_value *a, const lk_value *b) {
+  if (a->tag != b->tag) {
+    return 0;
+  }
+
+  switch (a->tag) {
+  case UIV_NONE: return 1;
+  case UIV_BOOL: return a->as.b == b->as.b;
+  case UIV_I32:  return a->as.i == b->as.i;
+  case UIV_STR:  return a->as.str_id == b->as.str_id;
+  }
+
+  return 0;
+}
+
+static int pres_equal(const lk_tree *prev, lk_ix prev_ix,
+                      const lk_tree *next, lk_ix next_ix) {
+  lk_u32 pi, ni;
+  lk_u32 prev_count = 0;
+  lk_u32 next_count = 0;
+
+  for (pi = 0; pi < prev->pres_count; pi++) {
+    if (prev->pres[pi].node == prev_ix) {
+      prev_count++;
+    }
+  }
+
+  for (ni = 0; ni < next->pres_count; ni++) {
+    if (next->pres[ni].node == next_ix) {
+      next_count++;
+    }
+  }
+
+  if (prev_count != next_count) {
+    return 0;
+  }
+
+  if (prev_count == 0) {
+    return 1;
+  }
+
+  /* Compare presentations in order of appearance */
+  pi = 0;
+  ni = 0;
+
+  while (pi < prev->pres_count && ni < next->pres_count) {
+    /* Find next pres for prev_ix */
+    while (pi < prev->pres_count && prev->pres[pi].node != prev_ix) {
+      pi++;
+    }
+
+    /* Find next pres for next_ix */
+    while (ni < next->pres_count && next->pres[ni].node != next_ix) {
+      ni++;
+    }
+
+    if (pi >= prev->pres_count || ni >= next->pres_count) {
+      break;
+    }
+
+    if (prev->pres[pi].ptype != next->pres[ni].ptype) {
+      return 0;
+    }
+
+    if (!value_equal(&prev->pres[pi].pvalue, &next->pres[ni].pvalue)) {
+      return 0;
+    }
+
+    pi++;
+    ni++;
+  }
+
+  return 1;
+}
+
 static void diff_node(lk_ui *ui, lk_ix prev_ix, lk_ix next_ix) {
   lk_node *pn = &ui->prev->nodes[prev_ix];
   lk_node *nn = &ui->next->nodes[next_ix];
@@ -125,7 +200,8 @@ static void diff_node(lk_ui *ui, lk_ix prev_ix, lk_ix next_ix) {
   lk_ix *next_arr = NULL;
   lk_u8 *matched = NULL;
 
-  if (pn->kind != nn->kind || !props_equal(ui->prev, pn, ui->next, nn)) {
+  if (pn->kind != nn->kind || !props_equal(ui->prev, pn, ui->next, nn) ||
+      !pres_equal(ui->prev, prev_ix, ui->next, next_ix)) {
     cs_push(ui, LK_CHANGE_UPDATED, nn->id, next_ix);
   }
 
@@ -296,6 +372,18 @@ void lk_ui_destroy(lk_ui *ui) {
 
   if (ui->changeset.changes) {
     ui_dealloc(ui, ui->changeset.changes);
+  }
+
+  if (ui->translators) {
+    ui_dealloc(ui, ui->translators);
+  }
+
+  if (ui->cmd_queue.cmds) {
+    ui_dealloc(ui, ui->cmd_queue.cmds);
+  }
+
+  if (ui->cmd_log) {
+    ui_dealloc(ui, ui->cmd_log);
   }
 
   ui->dealloc(ui->alloc_ud, ui);
