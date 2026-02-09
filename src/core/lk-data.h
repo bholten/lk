@@ -49,8 +49,18 @@ typedef enum lk_prop_key {
   UIP_PADDING, /* int px */
   UIP_GAP, /* int px */
 
+  UIP_ALIGN, /* i32: lk_align — cross-axis alignment */
+  UIP_JUSTIFY, /* i32: lk_align — main-axis alignment */
+
   UIP__COUNT
 } lk_prop_key;
+
+typedef enum lk_align {
+  LK_ALIGN_START = 0,
+  LK_ALIGN_CENTER,
+  LK_ALIGN_END,
+  LK_ALIGN_STRETCH /* default behavior for cross-axis */
+} lk_align;
 
 typedef enum lk_value_tag {
   UIV_NONE = 0,
@@ -346,7 +356,9 @@ typedef struct lk_color { lk_u8 r, g, b, a; } lk_color;
 
 typedef enum lk_render_op {
   LK_ROP_FILL_RECT = 1,
-  LK_ROP_DRAW_TEXT
+  LK_ROP_DRAW_TEXT,
+  LK_ROP_CLIP_BEGIN,
+  LK_ROP_CLIP_END
 } lk_render_op;
 
 typedef struct lk_render_cmd {

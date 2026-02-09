@@ -1426,6 +1426,188 @@ static void test_layout_nested_column_row_labels(void) {
 }
 
 /* ================================================================
+ * Tests: alignment
+ * ================================================================ */
+
+static void test_layout_column_align_center(void) {
+  /* column with align=center: children get intrinsic width, centered */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column align=center");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_ALIGN, lk_v_i32(LK_ALIGN_CENTER));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* "Hi" = 2*8 = 16px wide, centered in 800: x = (800-16)/2 = 392 */
+    CHECK_RECT(r[l1], 392, 0, 16, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_column_align_end(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column align=end");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_ALIGN, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* "Hi" = 16px wide, end-aligned: x = 800 - 16 = 784 */
+    CHECK_RECT(r[l1], 784, 0, 16, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_column_justify_center(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column justify=center");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_CENTER));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* label 16px tall, remaining = 600-16=584, center: y = 584/2 = 292 */
+    CHECK_RECT(r[l1], 0, 292, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_column_justify_end(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: column justify=end");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* label 16px tall, remaining = 584, end: y = 584 */
+    CHECK_RECT(r[l1], 0, 584, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_row_align_center(void) {
+  /* row with align=center: children get intrinsic height, centered */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: row align=center");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(t, row, UIP_ALIGN, lk_v_i32(LK_ALIGN_CENTER));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* "X" = 8px wide, 16px tall. row = 800x600.
+     * align=center: y = (600-16)/2 = 292
+     */
+    CHECK_RECT(r[l1], 0, 292, 8, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_layout_row_justify_end(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("layout: row justify=end");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(t, row, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* "X" = 8px wide. justify=end: x = 800 - 8 = 792 */
+    CHECK_RECT(r[l1], 792, 0, 8, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+/* ================================================================
  * Tests: render list
  * ================================================================ */
 
@@ -1452,7 +1634,7 @@ static void test_render_window_only(void) {
   lk_rect *r;
   lk_render_list rl;
 
-  BEGIN_TEST("render: window only -> 1 FILL_RECT");
+  BEGIN_TEST("render: window only -> FILL_RECT + CLIP_BEGIN + CLIP_END");
 
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   lk_tree_set_root(t, w);
@@ -1462,10 +1644,13 @@ static void test_render_window_only(void) {
   if (r) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, r, &rl);
-    CHECK_EQ(rl.count, 1u);
+    CHECK_EQ(rl.count, 3u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
     CHECK_EQ((unsigned)rl.cmds[0].rect.w, 800u);
     CHECK_EQ((unsigned)rl.cmds[0].rect.h, 600u);
+    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_CLIP_BEGIN);
+    CHECK_EQ((unsigned)rl.cmds[1].rect.w, 800u);
+    CHECK_EQ((unsigned)rl.cmds[2].op, (unsigned)LK_ROP_CLIP_END);
     lk_render_list_destroy(&rl);
     free(r);
   }
@@ -1481,7 +1666,7 @@ static void test_render_window_column_label(void) {
   lk_render_list rl;
   lk_str resolved;
 
-  BEGIN_TEST("render: window > column > label -> FILL_RECT + DRAW_TEXT");
+  BEGIN_TEST("render: window > column > label -> FILL+CLIP+TEXT+CLIP_END");
 
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
@@ -1496,11 +1681,14 @@ static void test_render_window_column_label(void) {
   if (r) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, r, &rl);
-    CHECK_EQ(rl.count, 2u);
+    /* FILL_RECT + CLIP_BEGIN + DRAW_TEXT + CLIP_END */
+    CHECK_EQ(rl.count, 4u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
-    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_DRAW_TEXT);
+    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_CLIP_BEGIN);
+    CHECK_EQ((unsigned)rl.cmds[2].op, (unsigned)LK_ROP_DRAW_TEXT);
+    CHECK_EQ((unsigned)rl.cmds[3].op, (unsigned)LK_ROP_CLIP_END);
     /* verify str_id resolves to "Hello" */
-    resolved = lk_intern_str(t->intern, rl.cmds[1].str_id);
+    resolved = lk_intern_str(t->intern, rl.cmds[2].str_id);
     CHECK(lk_str_cmp(resolved, lk_str_c("Hello")));
     lk_render_list_destroy(&rl);
     free(r);
@@ -1516,7 +1704,7 @@ static void test_render_button_with_padding(void) {
   lk_rect *r;
   lk_render_list rl;
 
-  BEGIN_TEST("render: button with padding -> FILL_RECT + FILL_RECT + DRAW_TEXT");
+  BEGIN_TEST("render: button with padding -> FILL+CLIP+FILL+TEXT+CLIP_END");
 
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
@@ -1532,16 +1720,18 @@ static void test_render_button_with_padding(void) {
   if (r) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, r, &rl);
-    /* window FILL_RECT + button FILL_RECT + button DRAW_TEXT */
-    CHECK_EQ(rl.count, 3u);
+    /* window FILL + CLIP_BEGIN + button FILL + button TEXT + CLIP_END */
+    CHECK_EQ(rl.count, 5u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
-    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_FILL_RECT);
-    CHECK_EQ((unsigned)rl.cmds[2].op, (unsigned)LK_ROP_DRAW_TEXT);
+    CHECK_EQ((unsigned)rl.cmds[1].op, (unsigned)LK_ROP_CLIP_BEGIN);
+    CHECK_EQ((unsigned)rl.cmds[2].op, (unsigned)LK_ROP_FILL_RECT);
+    CHECK_EQ((unsigned)rl.cmds[3].op, (unsigned)LK_ROP_DRAW_TEXT);
+    CHECK_EQ((unsigned)rl.cmds[4].op, (unsigned)LK_ROP_CLIP_END);
     /* text rect should be inset by padding from button rect */
-    CHECK_EQ((unsigned)rl.cmds[2].rect.x, (unsigned)(rl.cmds[1].rect.x + 8));
-    CHECK_EQ((unsigned)rl.cmds[2].rect.y, (unsigned)(rl.cmds[1].rect.y + 8));
-    CHECK_EQ((unsigned)rl.cmds[2].rect.w, (unsigned)(rl.cmds[1].rect.w - 16));
-    CHECK_EQ((unsigned)rl.cmds[2].rect.h, (unsigned)(rl.cmds[1].rect.h - 16));
+    CHECK_EQ((unsigned)rl.cmds[3].rect.x, (unsigned)(rl.cmds[2].rect.x + 8));
+    CHECK_EQ((unsigned)rl.cmds[3].rect.y, (unsigned)(rl.cmds[2].rect.y + 8));
+    CHECK_EQ((unsigned)rl.cmds[3].rect.w, (unsigned)(rl.cmds[2].rect.w - 16));
+    CHECK_EQ((unsigned)rl.cmds[3].rect.h, (unsigned)(rl.cmds[2].rect.h - 16));
     lk_render_list_destroy(&rl);
     free(r);
   }
@@ -1578,8 +1768,8 @@ static void test_render_larger_tree(void) {
   if (r) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, r, &rl);
-    /* 1 window FILL + 2 label DRAW_TEXT + 1 btn FILL + 1 btn DRAW_TEXT = 5 */
-    CHECK_EQ(rl.count, 5u);
+    /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT + CLIP_END = 7 */
+    CHECK_EQ(rl.count, 7u);
     lk_render_list_destroy(&rl);
     free(r);
   }
@@ -1610,15 +1800,15 @@ static void test_render_build_reuse(void) {
   if (r) {
     memset(&rl, 0, sizeof(rl));
 
-    /* first build */
+    /* first build: FILL + CLIP_BEGIN + TEXT + CLIP_END = 4 */
     lk_render_build(t, r, &rl);
-    CHECK_EQ(rl.count, 2u);
+    CHECK_EQ(rl.count, 4u);
     cap_after_first = rl.cap;
     CHECK(cap_after_first > 0);
 
     /* second build on same list — count resets, cap stays */
     lk_render_build(t, r, &rl);
-    CHECK_EQ(rl.count, 2u);
+    CHECK_EQ(rl.count, 4u);
     CHECK_EQ(rl.cap, cap_after_first);
 
     lk_render_list_destroy(&rl);
@@ -1693,6 +1883,15 @@ int main(void) {
   test_layout_empty_tree();
   test_layout_spacer_explicit_h();
   test_layout_nested_column_row_labels();
+
+  /* alignment */
+  printf("\nlk alignment tests:\n");
+  test_layout_column_align_center();
+  test_layout_column_align_end();
+  test_layout_column_justify_center();
+  test_layout_column_justify_end();
+  test_layout_row_align_center();
+  test_layout_row_justify_end();
 
   /* render list */
   printf("\nlk render tests:\n");

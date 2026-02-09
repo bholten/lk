@@ -295,6 +295,8 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
       lk_i32 spacer_extra;
       lk_i32 pos;
       int spacer_idx;
+      lk_i32 align = node_prop_i32(t, n, UIP_ALIGN, LK_ALIGN_STRETCH);
+      lk_i32 justify = node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
 
       child = nd->first_child;
 
@@ -329,7 +331,16 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
         spacer_extra = 0;
       }
 
+      /* Compute justify offset for main axis */
       pos = cy;
+      if (spacer_count == 0 && remaining > 0) {
+        if (justify == LK_ALIGN_CENTER) {
+          pos = cy + remaining / 2;
+        } else if (justify == LK_ALIGN_END) {
+          pos = cy + remaining;
+        }
+      }
+
       spacer_idx = 0;
       child = nd->first_child;
 
@@ -339,6 +350,7 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
             (ck == UIK_SPACER && !node_has_prop(t, child, UIP_H));
         lk_i32 child_h;
         lk_i32 child_w;
+        lk_i32 child_x;
 
         if (is_flex_spacer) {
           child_h = spacer_each + (spacer_idx < spacer_extra ? 1 : 0);
@@ -349,11 +361,23 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
 
         if (node_has_prop(t, child, UIP_W)) {
           child_w = sizes[child].w;
-        } else {
+        } else if (align == LK_ALIGN_STRETCH) {
           child_w = cw;
+        } else {
+          child_w = sizes[child].w;
         }
 
-        rects[child].x = cx;
+        /* Cross-axis (horizontal) alignment */
+        child_x = cx;
+        if (!node_has_prop(t, child, UIP_W) && align != LK_ALIGN_STRETCH) {
+          if (align == LK_ALIGN_CENTER) {
+            child_x = cx + (cw - child_w) / 2;
+          } else if (align == LK_ALIGN_END) {
+            child_x = cx + cw - child_w;
+          }
+        }
+
+        rects[child].x = child_x;
         rects[child].y = pos;
         rects[child].w = child_w;
         rects[child].h = child_h;
@@ -393,6 +417,8 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
       lk_i32 spacer_extra;
       lk_i32 pos;
       int spacer_idx;
+      lk_i32 align = node_prop_i32(t, n, UIP_ALIGN, LK_ALIGN_STRETCH);
+      lk_i32 justify = node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
 
       child = nd->first_child;
 
@@ -427,7 +453,16 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
         spacer_extra = 0;
       }
 
+      /* Compute justify offset for main axis */
       pos = cx;
+      if (spacer_count == 0 && remaining > 0) {
+        if (justify == LK_ALIGN_CENTER) {
+          pos = cx + remaining / 2;
+        } else if (justify == LK_ALIGN_END) {
+          pos = cx + remaining;
+        }
+      }
+
       spacer_idx = 0;
       child = nd->first_child;
 
@@ -436,6 +471,7 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
         int is_flex_spacer =
             (ck == UIK_SPACER && !node_has_prop(t, child, UIP_W));
         lk_i32 child_w, child_h;
+        lk_i32 child_y;
 
         if (is_flex_spacer) {
           child_w = spacer_each + (spacer_idx < spacer_extra ? 1 : 0);
@@ -446,12 +482,24 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
 
         if (node_has_prop(t, child, UIP_H)) {
           child_h = sizes[child].h;
-        } else {
+        } else if (align == LK_ALIGN_STRETCH) {
           child_h = ch;
+        } else {
+          child_h = sizes[child].h;
+        }
+
+        /* Cross-axis (vertical) alignment */
+        child_y = cy;
+        if (!node_has_prop(t, child, UIP_H) && align != LK_ALIGN_STRETCH) {
+          if (align == LK_ALIGN_CENTER) {
+            child_y = cy + (ch - child_h) / 2;
+          } else if (align == LK_ALIGN_END) {
+            child_y = cy + ch - child_h;
+          }
         }
 
         rects[child].x = pos;
-        rects[child].y = cy;
+        rects[child].y = child_y;
         rects[child].w = child_w;
         rects[child].h = child_h;
 
