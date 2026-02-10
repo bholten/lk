@@ -3,6 +3,11 @@
 #include <lk.h>
 #include "lk-memory.h"
 
+/* lk-state.c */
+lk_state *lk_state_create(void *(*)(void *, lk_u32), void (*)(void *, void *), void *);
+void lk_state_destroy(lk_state *st);
+void lk_state_gc(lk_state *st, const lk_changeset *cs);
+
 static void *ui_alloc(lk_ui *ui, lk_u32 bytes) {
   return ui->alloc(ui->alloc_ud, bytes);
 }
@@ -350,6 +355,12 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
     return NULL;
   }
 
+  ui->state = lk_state_create(al, de, ud);
+  if (!ui->state) {
+    lk_ui_destroy(ui);
+    return NULL;
+  }
+
   return ui;
 }
 
@@ -368,6 +379,10 @@ void lk_ui_destroy(lk_ui *ui) {
 
   if (ui->intern) {
     lk_intern_destroy(ui->intern);
+  }
+
+  if (ui->state) {
+    lk_state_destroy(ui->state);
   }
 
   if (ui->changeset.changes) {
@@ -429,9 +444,18 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
     }
   }
 
+  /* GC retained state for removed nodes */
+  if (ui->state) {
+    lk_state_gc(ui->state, &ui->changeset);
+  }
+
   return &ui->changeset;
 }
 
 const lk_tree *lk_ui_tree(const lk_ui *ui) {
   return ui->prev;
+}
+
+lk_state *lk_ui_state(lk_ui *ui) {
+  return ui ? ui->state : NULL;
 }

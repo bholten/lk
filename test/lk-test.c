@@ -3562,6 +3562,218 @@ static void test_event_init(void) {
 }
 
 /* ================================================================
+ * State store tests
+ * ================================================================ */
+
+static void test_state_set_get(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_value v;
+  lk_node_id nid;
+
+  BEGIN_TEST("state: set and get");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+  nid = lk_intern_cid(lk_ui_intern(ui), "my_node");
+
+  CHECK(lk_state_set(st, nid, LKS_SCROLL_Y, lk_v_i32(42)));
+  v = lk_state_get(st, nid, LKS_SCROLL_Y);
+  CHECK_EQ(v.tag, UIV_I32);
+  CHECK_EQ(v.as.i, 42);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_state_overwrite(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_value v;
+  lk_node_id nid;
+
+  BEGIN_TEST("state: overwrite existing");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+  nid = lk_intern_cid(lk_ui_intern(ui), "nd");
+
+  lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(10));
+  lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(77));
+  v = lk_state_get(st, nid, LKS_CURSOR_POS);
+  CHECK_EQ(v.tag, UIV_I32);
+  CHECK_EQ(v.as.i, 77);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_state_missing_key(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_value v;
+  lk_node_id nid;
+
+  BEGIN_TEST("state: missing key returns NONE");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+  nid = lk_intern_cid(lk_ui_intern(ui), "nd");
+
+  v = lk_state_get(st, nid, LKS_SCROLL_X);
+  CHECK_EQ(v.tag, UIV_NONE);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_state_gc_on_removal(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_tree *t;
+  lk_ix win, btn;
+  lk_value v;
+  lk_node_id btn_id;
+
+  BEGIN_TEST("state: GC on node removal");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+
+  /* Frame 1: window > button */
+  t = lk_ui_begin_frame(ui);
+  win = lk_tree_add_node_c(t, "win", UIK_WINDOW);
+  btn = lk_tree_add_node_c(t, "btn", UIK_BUTTON);
+  lk_tree_set_root(t, win);
+  lk_tree_append_child(t, win, btn);
+  lk_ui_end_frame(ui);
+
+  /* Set state on button */
+  btn_id = lk_intern_cid(lk_ui_intern(ui), "btn");
+  lk_state_set(st, btn_id, LKS_SCROLL_Y, lk_v_i32(99));
+
+  /* Frame 2: remove the button */
+  t = lk_ui_begin_frame(ui);
+  win = lk_tree_add_node_c(t, "win", UIK_WINDOW);
+  lk_tree_set_root(t, win);
+  lk_ui_end_frame(ui);
+
+  /* State should be GC'd */
+  v = lk_state_get(st, btn_id, LKS_SCROLL_Y);
+  CHECK_EQ(v.tag, UIV_NONE);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_state_multiple_keys(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_value v;
+  lk_node_id nid;
+
+  BEGIN_TEST("state: multiple keys on one node");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+  nid = lk_intern_cid(lk_ui_intern(ui), "nd");
+
+  lk_state_set(st, nid, LKS_SCROLL_X, lk_v_i32(10));
+  lk_state_set(st, nid, LKS_SCROLL_Y, lk_v_i32(20));
+  lk_state_set(st, nid, LKS_EXPANDED, lk_v_bool(1));
+
+  v = lk_state_get(st, nid, LKS_SCROLL_X);
+  CHECK_EQ(v.tag, UIV_I32);
+  CHECK_EQ(v.as.i, 10);
+
+  v = lk_state_get(st, nid, LKS_SCROLL_Y);
+  CHECK_EQ(v.tag, UIV_I32);
+  CHECK_EQ(v.as.i, 20);
+
+  v = lk_state_get(st, nid, LKS_EXPANDED);
+  CHECK_EQ(v.tag, UIV_BOOL);
+  CHECK_EQ(v.as.b, 1);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_state_gc_preserves_other(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_tree *t;
+  lk_ix win, a, b;
+  lk_value v;
+  lk_node_id a_id, b_id;
+
+  BEGIN_TEST("state: GC preserves other nodes");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+
+  /* Frame 1: window > a, b */
+  t = lk_ui_begin_frame(ui);
+  win = lk_tree_add_node_c(t, "win", UIK_WINDOW);
+  a = lk_tree_add_node_c(t, "a", UIK_LABEL);
+  b = lk_tree_add_node_c(t, "b", UIK_LABEL);
+  lk_tree_set_root(t, win);
+  lk_tree_append_child(t, win, a);
+  lk_tree_append_child(t, win, b);
+  lk_ui_end_frame(ui);
+
+  a_id = lk_intern_cid(lk_ui_intern(ui), "a");
+  b_id = lk_intern_cid(lk_ui_intern(ui), "b");
+  lk_state_set(st, a_id, LKS_SCROLL_Y, lk_v_i32(11));
+  lk_state_set(st, b_id, LKS_SCROLL_Y, lk_v_i32(22));
+
+  /* Frame 2: remove "a", keep "b" */
+  t = lk_ui_begin_frame(ui);
+  win = lk_tree_add_node_c(t, "win", UIK_WINDOW);
+  b = lk_tree_add_node_c(t, "b", UIK_LABEL);
+  lk_tree_set_root(t, win);
+  lk_tree_append_child(t, win, b);
+  lk_ui_end_frame(ui);
+
+  v = lk_state_get(st, a_id, LKS_SCROLL_Y);
+  CHECK_EQ(v.tag, UIV_NONE);
+
+  v = lk_state_get(st, b_id, LKS_SCROLL_Y);
+  CHECK_EQ(v.tag, UIV_I32);
+  CHECK_EQ(v.as.i, 22);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_state_remove_node_manual(void) {
+  lk_ui *ui;
+  lk_state *st;
+  lk_value v;
+  lk_node_id nid;
+
+  BEGIN_TEST("state: remove_node clears all keys");
+
+  ui = lk_ui_create(NULL);
+  st = lk_ui_state(ui);
+  nid = lk_intern_cid(lk_ui_intern(ui), "nd");
+
+  lk_state_set(st, nid, LKS_SCROLL_X, lk_v_i32(5));
+  lk_state_set(st, nid, LKS_SCROLL_Y, lk_v_i32(6));
+
+  lk_state_remove_node(st, nid);
+
+  v = lk_state_get(st, nid, LKS_SCROLL_X);
+  CHECK_EQ(v.tag, UIV_NONE);
+
+  v = lk_state_get(st, nid, LKS_SCROLL_Y);
+  CHECK_EQ(v.tag, UIV_NONE);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -3717,6 +3929,16 @@ int main(void) {
   test_add_node_c_and_text_cstr();
   test_command_arg_typed();
   test_event_init();
+
+  /* state store */
+  printf("\nlk state store tests:\n");
+  test_state_set_get();
+  test_state_overwrite();
+  test_state_missing_key();
+  test_state_gc_on_removal();
+  test_state_multiple_keys();
+  test_state_gc_preserves_other();
+  test_state_remove_node_manual();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
