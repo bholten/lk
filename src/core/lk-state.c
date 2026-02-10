@@ -1,7 +1,7 @@
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 /*
  * lk_state — retained per-node state store.
@@ -35,18 +35,24 @@ static lk_u32 state_hash(lk_node_id node, lk_u16 key) {
   lk_u8 b;
 
   b = (lk_u8)(node & 0xFF);
-  h ^= b; h *= 16777619u;
+  h ^= b;
+  h *= 16777619u;
   b = (lk_u8)((node >> 8) & 0xFF);
-  h ^= b; h *= 16777619u;
+  h ^= b;
+  h *= 16777619u;
   b = (lk_u8)((node >> 16) & 0xFF);
-  h ^= b; h *= 16777619u;
+  h ^= b;
+  h *= 16777619u;
   b = (lk_u8)((node >> 24) & 0xFF);
-  h ^= b; h *= 16777619u;
+  h ^= b;
+  h *= 16777619u;
 
   b = (lk_u8)(key & 0xFF);
-  h ^= b; h *= 16777619u;
+  h ^= b;
+  h *= 16777619u;
   b = (lk_u8)((key >> 8) & 0xFF);
-  h ^= b; h *= 16777619u;
+  h ^= b;
+  h *= 16777619u;
 
   return h;
 }
@@ -57,8 +63,8 @@ static int state_grow(lk_state *st, lk_u32 new_cap) {
   lk_state_entry *new_tab;
   lk_u32 i;
 
-  new_tab = (lk_state_entry *)st->alloc(st->alloc_ud,
-             (lk_u32)(sizeof(lk_state_entry) * new_cap));
+  new_tab = (lk_state_entry *)st->alloc(
+      st->alloc_ud, (lk_u32)(sizeof(lk_state_entry) * new_cap));
   if (!new_tab) {
     return 0;
   }
@@ -73,7 +79,8 @@ static int state_grow(lk_state *st, lk_u32 new_cap) {
   if (old_tab) {
     for (i = 0; i < old_cap; i++) {
       if (old_tab[i].used) {
-        lk_u32 idx = state_hash(old_tab[i].node, old_tab[i].key) & (new_cap - 1);
+        lk_u32 idx =
+            state_hash(old_tab[i].node, old_tab[i].key) & (new_cap - 1);
         while (new_tab[idx].used) {
           idx = (idx + 1) & (new_cap - 1);
         }
@@ -98,12 +105,15 @@ static int state_ensure(lk_state *st) {
 }
 
 lk_state *lk_state_create(void *(*al)(void *, lk_u32),
-                           void (*de)(void *, void *),
-                           void *ud) {
+                          void (*de)(void *, void *), void *ud) {
   lk_state *st;
 
-  if (!al) { al = lk_sys_alloc; }
-  if (!de) { de = lk_sys_dealloc; }
+  if (!al) {
+    al = lk_sys_alloc;
+  }
+  if (!de) {
+    de = lk_sys_dealloc;
+  }
 
   st = (lk_state *)al(ud, (lk_u32)sizeof(lk_state));
   if (!st) {

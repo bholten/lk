@@ -1,7 +1,7 @@
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 static int node_is_focusable(const lk_tree *t, lk_ix n) {
   return lk_node_prop_bool(t, n, UIP_FOCUSABLE);
@@ -14,12 +14,10 @@ static int node_is_disabled(const lk_tree *t, lk_ix n) {
 /* ---- Hit testing ---- */
 
 static int rect_contains(const lk_rect *r, lk_i32 x, lk_i32 y) {
-  return x >= r->x && x < r->x + r->w &&
-         y >= r->y && y < r->y + r->h;
+  return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
 }
 
-lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects,
-                   lk_i32 x, lk_i32 y) {
+lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
   lk_ix *stack;
   lk_u32 sp;
   lk_ix best;
@@ -131,8 +129,7 @@ lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t) {
 /* Collect all focusable+enabled nodes in DFS pre-order into buf.
  * Returns count of focusable nodes found.
  */
-static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf,
-                                 lk_u32 buf_cap) {
+static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
   lk_ix *stack;
   lk_u32 sp, count;
 

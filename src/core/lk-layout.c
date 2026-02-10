@@ -1,7 +1,7 @@
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 void lk_measure_text_stub(void *ud, lk_str text, lk_i32 *out_w, lk_i32 *out_h) {
   (void)ud;
@@ -130,8 +130,7 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
       lk_ix *kids;
       int nk = 0;
       kids = (lk_ix *)lk_sys_alloc(
-          NULL,
-          (lk_u32)(sizeof(lk_ix) * (child_count > 0 ? child_count : 1)));
+          NULL, (lk_u32)(sizeof(lk_ix) * (child_count > 0 ? child_count : 1)));
 
       if (kids) {
         child = nd->first_child;

@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 static lk_u32 lk_hash_bytes(const char *p, lk_u32 n) {
   lk_u32 h = 2166136261u;

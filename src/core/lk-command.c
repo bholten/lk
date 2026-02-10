@@ -1,18 +1,17 @@
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 /* ---- Command queue operations ---- */
 
-static int cmd_queue_push(lk_command_queue *q,
-                          void *(*alloc)(void *, lk_u32), void *alloc_ud,
-                          void (*dealloc)(void *, void *),
+static int cmd_queue_push(lk_command_queue *q, void *(*alloc)(void *, lk_u32),
+                          void *alloc_ud, void (*dealloc)(void *, void *),
                           const lk_command *cmd) {
   if (q->count >= q->cap) {
     lk_u32 new_cap = q->cap ? q->cap * 2 : 8;
-    lk_command *nc = (lk_command *)alloc(alloc_ud,
-                       (lk_u32)(sizeof(lk_command) * new_cap));
+    lk_command *nc =
+        (lk_command *)alloc(alloc_ud, (lk_u32)(sizeof(lk_command) * new_cap));
 
     if (!nc) {
       return 0;
@@ -37,8 +36,8 @@ static int cmd_queue_push(lk_command_queue *q,
 static int log_push(lk_ui *ui, const lk_command *cmd) {
   if (ui->cmd_log_count >= ui->cmd_log_cap) {
     lk_u32 new_cap = ui->cmd_log_cap ? ui->cmd_log_cap * 2 : 16;
-    lk_command *nc = (lk_command *)ui->alloc(ui->alloc_ud,
-                       (lk_u32)(sizeof(lk_command) * new_cap));
+    lk_command *nc = (lk_command *)ui->alloc(
+        ui->alloc_ud, (lk_u32)(sizeof(lk_command) * new_cap));
 
     if (!nc) {
       return 0;
@@ -62,9 +61,8 @@ static int log_push(lk_ui *ui, const lk_command *cmd) {
 
 /* ---- Translator management ---- */
 
-void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type,
-                           lk_u32 ptype, lk_u16 node_kind,
-                           lk_u32 command_name) {
+void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
+                          lk_u16 node_kind, lk_u32 command_name) {
   lk_translator *tr;
 
   if (!ui) {
@@ -73,16 +71,15 @@ void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type,
 
   if (ui->translator_count >= ui->translator_cap) {
     lk_u32 new_cap = ui->translator_cap ? ui->translator_cap * 2 : 8;
-    lk_translator *nt = (lk_translator *)ui->alloc(ui->alloc_ud,
-                           (lk_u32)(sizeof(lk_translator) * new_cap));
+    lk_translator *nt = (lk_translator *)ui->alloc(
+        ui->alloc_ud, (lk_u32)(sizeof(lk_translator) * new_cap));
 
     if (!nt) {
       return;
     }
 
     if (ui->translators && ui->translator_count) {
-      memcpy(nt, ui->translators,
-             sizeof(lk_translator) * ui->translator_count);
+      memcpy(nt, ui->translators, sizeof(lk_translator) * ui->translator_count);
     }
 
     if (ui->translators) {
@@ -100,9 +97,8 @@ void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type,
   tr->command_name = command_name;
 }
 
-void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type,
-                              const char *ptype, lk_u16 node_kind,
-                              const char *command_name) {
+void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
+                            lk_u16 node_kind, const char *command_name) {
   lk_u32 pt;
   lk_u32 cn;
 
@@ -292,8 +288,7 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
             continue;
           }
 
-          if (tr->node_kind != 0 &&
-              tr->node_kind != t->nodes[node].kind) {
+          if (tr->node_kind != 0 && tr->node_kind != t->nodes[node].kind) {
             continue;
           }
 
@@ -308,8 +303,8 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
             cmd.source_node = node;
             cmd.source_ptype = pres->ptype;
 
-            cmd_queue_push(&ui->cmd_queue, ui->alloc,
-                           ui->alloc_ud, ui->dealloc, &cmd);
+            cmd_queue_push(&ui->cmd_queue, ui->alloc, ui->alloc_ud, ui->dealloc,
+                           &cmd);
             log_push(ui, &cmd);
 
             if (ui->cmd_handler) {

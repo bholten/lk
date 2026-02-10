@@ -20,10 +20,10 @@ extern "C" {
  * add a check here.
  */
 
-typedef unsigned char  lk_u8;
+typedef unsigned char lk_u8;
 typedef unsigned short lk_u16;
-typedef unsigned int   lk_u32;
-typedef int            lk_i32;
+typedef unsigned int lk_u32;
+typedef int lk_i32;
 
 /**
  ** String view (no ownership)
@@ -44,7 +44,7 @@ typedef lk_u32 lk_node_id;
 typedef struct lk_intern lk_intern;
 typedef struct lk_state lk_state;
 
-lk_intern *lk_intern_new(void*(alloc)(void*, lk_u32), void *alloc_ud);
+lk_intern *lk_intern_new(void *(alloc)(void *, lk_u32), void *alloc_ud);
 void lk_intern_destroy(lk_intern *it);
 
 lk_node_id lk_intern_id(lk_intern *it, lk_str s); /* return stable id */
@@ -63,16 +63,16 @@ typedef enum lk_kind {
 } lk_kind;
 
 typedef enum lk_prop_key {
-  UIP_TEXT = 1, /* string */
+  UIP_TEXT = 1,  /* string */
   UIP_FOCUSABLE, /* bool */
-  UIP_DISABLED, /* bool */
+  UIP_DISABLED,  /* bool */
 
-  UIP_W, /* int px */
-  UIP_H, /* int px */
+  UIP_W,       /* int px */
+  UIP_H,       /* int px */
   UIP_PADDING, /* int px */
-  UIP_GAP, /* int px */
+  UIP_GAP,     /* int px */
 
-  UIP_ALIGN, /* i32: lk_align — cross-axis alignment */
+  UIP_ALIGN,   /* i32: lk_align — cross-axis alignment */
   UIP_JUSTIFY, /* i32: lk_align — main-axis alignment */
 
   UIP__COUNT
@@ -118,13 +118,13 @@ typedef struct lk_prop {
   lk_value value;
 } lk_prop;
 
-
 /* Arena storage */
 /* Each node stores:
  *   - id: stable node id
  *   - kind: enum
  *   - parent: index (0 means none/root)
- *   - first_child / next_sibling: adjacency (compact, no per-node dynamic arrays)
+ *   - first_child / next_sibling: adjacency (compact, no per-node dynamic
+ * arrays)
  *   - props: slice into props arena
  */
 typedef lk_u32 lk_ix;
@@ -143,9 +143,9 @@ typedef struct lk_node {
  * Presentation — attaches semantic meaning to a node.
  **/
 typedef struct lk_presentation {
-  lk_ix node;       /* which node this is attached to */
-  lk_u32 ptype;     /* interned presentation type */
-  lk_value pvalue;   /* semantic value */
+  lk_ix node;      /* which node this is attached to */
+  lk_u32 ptype;    /* interned presentation type */
+  lk_value pvalue; /* semantic value */
 } lk_presentation;
 
 typedef struct lk_tree {
@@ -198,7 +198,6 @@ void lk_tree_set_root(lk_tree *t, lk_ix root);
 /* Append child to parent's child list (preserves insertion order). */
 void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child);
 
-
 /* Set/append a prop on a node.
  *
  * Phase 0: allows duplicates; validation can flag duplicates later if
@@ -207,10 +206,10 @@ void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child);
 void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v);
 
 /* Presentations — attach semantic meaning to a node. */
-void lk_tree_add_presentation(lk_tree *t, lk_ix node,
-                               lk_u32 ptype, lk_value pvalue);
-void lk_tree_add_presentation_s(lk_tree *t, lk_ix node,
-                                 const char *ptype, lk_value pvalue);
+void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
+                              lk_value pvalue);
+void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
+                                lk_value pvalue);
 const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node);
 
 /* Value constructors. */
@@ -220,13 +219,8 @@ lk_value lk_v_i32(lk_i32 i);
 lk_value lk_v_str(lk_intern *it, lk_str s);
 lk_value lk_v_cstr(lk_intern *it, const char *cstr);
 
-
 /* Validation */
-typedef enum lk_diag_kind {
-  UID_NONE = 0,
-  UID_ERROR,
-  UID_WARN
-} lk_diag_kind;
+typedef enum lk_diag_kind { UID_NONE = 0, UID_ERROR, UID_WARN } lk_diag_kind;
 
 typedef enum lk_diag_code {
   UIDC_OK = 0,
@@ -289,14 +283,13 @@ lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id);
  */
 
 typedef struct lk_prop_rule {
-  lk_u16 key; /* lk_prop_key */
+  lk_u16 key;         /* lk_prop_key */
   lk_u8 expected_tag; /* value tag */
-  lk_u8 required; /* 0/1 */
+  lk_u8 required;     /* 0/1 */
 } lk_prop_rule;
 
-
 typedef struct lk_kind_schema {
-  lk_u16 kind; /* lk_kind */
+  lk_u16 kind;               /* lk_kind */
   const lk_prop_rule *rules; /* array */
   lk_u16 rule_count;
 } lk_kind_schema;
@@ -305,14 +298,9 @@ typedef struct lk_kind_schema {
 lk_kind_schema lk_default_schema(lk_u32 *out_count);
 
 /* Optionally validate against a schema table. */
-int lk_tree_validate_schema(const lk_tree *t,
-                            const lk_kind_schema* schema,
-                            lk_u32 schema_count,
-                            lk_diag* diags,
-                            lk_u32 diags_cap,
-                            lk_u32* out_diags_len);
-
-
+int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,
+                            lk_u32 schema_count, lk_diag *diags,
+                            lk_u32 diags_cap, lk_u32 *out_diags_len);
 
 /**
  * Events — types
@@ -339,37 +327,56 @@ typedef enum lk_event_phase {
 } lk_event_phase;
 
 #define LK_MOD_SHIFT 0x01u
-#define LK_MOD_CTRL  0x02u
-#define LK_MOD_ALT   0x04u
-#define LK_MOD_GUI   0x08u
+#define LK_MOD_CTRL 0x02u
+#define LK_MOD_ALT 0x04u
+#define LK_MOD_GUI 0x08u
 
 typedef enum lk_keycode {
   LKK_UNKNOWN = 0,
-  LKK_TAB, LKK_RETURN, LKK_ESCAPE, LKK_BACKSPACE, LKK_DELETE,
+  LKK_TAB,
+  LKK_RETURN,
+  LKK_ESCAPE,
+  LKK_BACKSPACE,
+  LKK_DELETE,
   LKK_SPACE,
-  LKK_LEFT, LKK_RIGHT, LKK_UP, LKK_DOWN,
-  LKK_HOME, LKK_END,
+  LKK_LEFT,
+  LKK_RIGHT,
+  LKK_UP,
+  LKK_DOWN,
+  LKK_HOME,
+  LKK_END,
   LKK__COUNT
 } lk_keycode;
 
 typedef struct lk_event {
-  lk_u8 type;       /* lk_event_type */
-  lk_u8 phase;      /* lk_event_phase (set during routing) */
-  lk_u8 mods;       /* LK_MOD_* bit flags */
-  lk_u8 handled;    /* set to 1 to stop propagation */
-  lk_ix target;     /* target node (from hit-test or focus) */
+  lk_u8 type;    /* lk_event_type */
+  lk_u8 phase;   /* lk_event_phase (set during routing) */
+  lk_u8 mods;    /* LK_MOD_* bit flags */
+  lk_u8 handled; /* set to 1 to stop propagation */
+  lk_ix target;  /* target node (from hit-test or focus) */
   union {
-    struct { lk_i32 x, y; lk_u8 button; } pointer;
-    struct { lk_u16 keycode; lk_u8 repeat; } key;
-    struct { char buf[32]; lk_u8 len; } text;
-    struct { lk_i32 dx, dy; } wheel;
-    struct { lk_i32 w, h; } window;
+    struct {
+      lk_i32 x, y;
+      lk_u8 button;
+    } pointer;
+    struct {
+      lk_u16 keycode;
+      lk_u8 repeat;
+    } key;
+    struct {
+      char buf[32];
+      lk_u8 len;
+    } text;
+    struct {
+      lk_i32 dx, dy;
+    } wheel;
+    struct {
+      lk_i32 w, h;
+    } window;
   } data;
 } lk_event;
 
-typedef int (*lk_event_handler_fn)(lk_event *event, lk_ix node_ix,
-                                    void *ud);
-
+typedef int (*lk_event_handler_fn)(lk_event *event, lk_ix node_ix, void *ud);
 
 /**
  * Commands — named actions emitted by translators.
@@ -378,11 +385,11 @@ typedef int (*lk_event_handler_fn)(lk_event *event, lk_ix node_ix,
 #define LK_CMD_MAX_ARGS 4
 
 typedef struct lk_command {
-  lk_u32 name;                     /* interned command name */
+  lk_u32 name; /* interned command name */
   lk_value args[LK_CMD_MAX_ARGS];
   lk_u8 arg_count;
-  lk_ix source_node;               /* node that triggered this */
-  lk_u32 source_ptype;             /* matched presentation type (0 if none) */
+  lk_ix source_node;   /* node that triggered this */
+  lk_u32 source_ptype; /* matched presentation type (0 if none) */
 } lk_command;
 
 typedef struct lk_command_queue {
@@ -398,12 +405,11 @@ typedef void (*lk_command_handler_fn)(const lk_command *cmd, void *ud);
  **/
 
 typedef struct lk_translator {
-  lk_u8 event_type;     /* lk_event_type to match (0 = any) */
-  lk_u32 ptype;         /* presentation type to match (0 = any) */
-  lk_u16 node_kind;     /* lk_kind to match (0 = any) */
-  lk_u32 command_name;  /* interned command name to emit */
+  lk_u8 event_type;    /* lk_event_type to match (0 = any) */
+  lk_u32 ptype;        /* presentation type to match (0 = any) */
+  lk_u16 node_kind;    /* lk_kind to match (0 = any) */
+  lk_u32 command_name; /* interned command name to emit */
 } lk_translator;
-
 
 /**
  * lk_ui — Double-buffered UI context with tree diffing.
@@ -420,7 +426,7 @@ typedef enum lk_change_kind {
 } lk_change_kind;
 
 typedef struct lk_change {
-  lk_u8 kind; /* lk_change_kind */
+  lk_u8 kind;    /* lk_change_kind */
   lk_node_id id; /* node identity */
   lk_ix node_ix; /* index in current tree (0 for REMOVED) */
 } lk_change;
@@ -441,8 +447,8 @@ typedef struct lk_ui {
   void *alloc_ud;
   lk_event_handler_fn event_handler;
   void *event_ud;
-  lk_node_id focused_id;  /* 0 = no focus */
-  lk_state *state;        /* retained per-node state */
+  lk_node_id focused_id; /* 0 = no focus */
+  lk_state *state;       /* retained per-node state */
 
   /* Translators */
   lk_translator *translators;
@@ -486,19 +492,16 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui);
    begin_frame). */
 const lk_tree *lk_ui_tree(const lk_ui *ui);
 
-
 /**
  * Node prop query helpers
  **/
 
-lk_i32 lk_node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key,
-                         lk_i32 def);
+lk_i32 lk_node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key, lk_i32 def);
 int lk_node_has_prop(const lk_tree *t, lk_ix n, lk_prop_key key);
 int lk_node_prop_bool(const lk_tree *t, lk_ix n, lk_prop_key key);
 lk_str lk_node_text(const lk_tree *t, lk_ix n);
 lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n);
 const char *lk_node_text_cstr(const lk_tree *t, lk_ix n);
-
 
 /**
  * Binding-safe accessors — expose struct fields through function calls.
@@ -528,9 +531,9 @@ lk_intern *lk_ui_intern(const lk_ui *ui);
 
 lk_state *lk_ui_state(lk_ui *ui);
 
-int      lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v);
+int lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v);
 lk_value lk_state_get(const lk_state *st, lk_node_id node, lk_u16 key);
-void     lk_state_remove_node(lk_state *st, lk_node_id node);
+void lk_state_remove_node(lk_state *st, lk_node_id node);
 
 /* Changeset accessors */
 lk_u32 lk_changeset_count(const lk_changeset *cs);
@@ -544,22 +547,25 @@ const lk_command *lk_command_queue_get(const lk_command_queue *q, lk_u32 idx);
 lk_u32 lk_command_name(const lk_command *cmd);
 lk_u8 lk_command_arg_count(const lk_command *cmd);
 lk_value lk_command_arg(const lk_command *cmd, lk_u8 idx);
-lk_u8  lk_command_arg_tag(const lk_command *cmd, lk_u8 idx);
+lk_u8 lk_command_arg_tag(const lk_command *cmd, lk_u8 idx);
 lk_i32 lk_command_arg_i32(const lk_command *cmd, lk_u8 idx);
 lk_u32 lk_command_arg_str_id(const lk_command *cmd, lk_u8 idx);
 lk_ix lk_command_source_node(const lk_command *cmd);
 lk_u32 lk_command_source_ptype(const lk_command *cmd);
 
-
 /**
  * Layout
  **/
 
-typedef struct lk_rect { lk_i32 x, y, w, h; } lk_rect;
-typedef struct lk_size { lk_i32 w, h; } lk_size;
+typedef struct lk_rect {
+  lk_i32 x, y, w, h;
+} lk_rect;
+typedef struct lk_size {
+  lk_i32 w, h;
+} lk_size;
 
-typedef void (*lk_measure_text_fn)(void *ud, lk_str text,
-                                    lk_i32 *out_w, lk_i32 *out_h);
+typedef void (*lk_measure_text_fn)(void *ud, lk_str text, lk_i32 *out_w,
+                                   lk_i32 *out_h);
 
 typedef struct lk_layout_cfg {
   lk_measure_text_fn measure_text;
@@ -574,19 +580,19 @@ typedef struct lk_layout_cfg {
 int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects);
 
 /* Stub text measurer: 8px per char, 16px tall. */
-void lk_measure_text_stub(void *ud, lk_str text,
-                           lk_i32 *out_w, lk_i32 *out_h);
+void lk_measure_text_stub(void *ud, lk_str text, lk_i32 *out_w, lk_i32 *out_h);
 
 /* Convenience: layout with stub text measurer (for bindings). */
-int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w,
-                      lk_i32 viewport_h, lk_rect *rects);
-
+int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,
+                     lk_rect *rects);
 
 /**
  * Render list — flat display list for renderer consumption.
  **/
 
-typedef struct lk_color { lk_u8 r, g, b, a; } lk_color;
+typedef struct lk_color {
+  lk_u8 r, g, b, a;
+} lk_color;
 
 typedef enum lk_render_op {
   LK_ROP_FILL_RECT = 1,
@@ -622,7 +628,6 @@ int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd);
 /* Free the cmds array. Safe to call on a zeroed struct. */
 void lk_render_list_destroy(lk_render_list *rl);
 
-
 /**
  * Widget definition — per-kind vtable for measure, layout, render.
  **/
@@ -630,18 +635,16 @@ void lk_render_list_destroy(lk_render_list *rl);
 #define LK_KIND_MAX 32
 
 typedef struct lk_widget_def {
-  void (*measure)(const lk_tree *t, lk_ix n,
-                  const lk_size *sizes, const lk_layout_cfg *cfg,
-                  lk_i32 *out_w, lk_i32 *out_h);
+  void (*measure)(const lk_tree *t, lk_ix n, const lk_size *sizes,
+                  const lk_layout_cfg *cfg, lk_i32 *out_w, lk_i32 *out_h);
 
   /* Position children within content rect (parent rect minus padding).
    * Returns 1 if children need recursive layout, 0 for leaves. */
-  int (*layout)(const lk_tree *t, lk_ix n,
-                const lk_size *sizes, const lk_rect *content,
-                lk_rect *rects);
+  int (*layout)(const lk_tree *t, lk_ix n, const lk_size *sizes,
+                const lk_rect *content, lk_rect *rects);
 
-  void (*render)(const lk_tree *t, lk_ix n,
-                 const lk_rect *rect, lk_render_list *out);
+  void (*render)(const lk_tree *t, lk_ix n, const lk_rect *rect,
+                 lk_render_list *out);
 
   lk_u8 clips; /* 1 if this node clips children */
 } lk_widget_def;
@@ -649,18 +652,15 @@ typedef struct lk_widget_def {
 void lk_widget_register(lk_kind kind, const lk_widget_def *def);
 const lk_widget_def *lk_widget_get(lk_kind kind);
 
-
 /**
  * Events — function declarations
  **/
 
-lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects,
-                   lk_i32 x, lk_i32 y);
+lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y);
 
-void lk_event_init_pointer(lk_event *ev, lk_u8 type,
-                            lk_i32 x, lk_i32 y, lk_u8 button);
-void lk_event_init_key(lk_event *ev, lk_u8 type,
-                        lk_u16 keycode, lk_u8 mods);
+void lk_event_init_pointer(lk_event *ev, lk_u8 type, lk_i32 x, lk_i32 y,
+                           lk_u8 button);
+void lk_event_init_key(lk_event *ev, lk_u8 type, lk_u16 keycode, lk_u8 mods);
 
 void lk_event_route(lk_ui *ui, lk_event *event);
 
@@ -672,17 +672,14 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t);
 lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t);
 lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t);
 
-
 /**
  * Translator + command API
  **/
 
-void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type,
-                           lk_u32 ptype, lk_u16 node_kind,
-                           lk_u32 command_name);
-void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type,
-                              const char *ptype, lk_u16 node_kind,
-                              const char *command_name);
+void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
+                          lk_u16 node_kind, lk_u32 command_name);
+void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
+                            lk_u16 node_kind, const char *command_name);
 void lk_ui_clear_translators(lk_ui *ui);
 
 void lk_ui_set_command_handler(lk_ui *ui, lk_command_handler_fn fn, void *ud);
@@ -696,7 +693,6 @@ void lk_ui_clear_command_log(lk_ui *ui);
 
 /* Internal: translator dispatch (called from event routing) */
 void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event);
-
 
 /**
  * lk_ht - Hash Table
