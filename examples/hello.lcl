@@ -8,11 +8,21 @@ proc view {tree} {
     lk::prop $tree $lbl "text" "Hello from Lcl!"
 
     lk::set_root $tree $w
+
     lk::append_child $tree $w $col
     lk::append_child $tree $col $lbl
 }
 
 let win [lk::window_create "Hello Lcl" 800 600]
+
+lk::window_set_event_handler $win [lambda {ev node} {
+    if [== [get $ev "type"] "key_down"] {
+        puts $ev
+        return 1
+    }
+
+    return 0
+}]
 
 lk::window_run $win $view
 lk::window_destroy $win

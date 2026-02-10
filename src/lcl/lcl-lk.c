@@ -8,6 +8,7 @@
  * C89 (matches lk + lcl).
  */
 
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -865,14 +866,173 @@ static int c_lk_intern_id(lcl_interp *interp, int argc, lcl_value **argv,
 
 #ifdef LK_HAVE_SDL
 
-/* Frame callback bridge */
-struct lcl_lk_ctx {
+/* ---- Wrapper struct: holds lk_window + Lcl event handler ---- */
+
+struct lcl_lk_window {
+  lk_window *win;
+  lcl_interp *interp;
+  lcl_value *event_handler; /* NULL if not set */
+};
+
+/* ---- Enum-to-string reverse tables ---- */
+
+static const char *event_type_str(lk_u8 t) {
+  switch (t) {
+  case LK_EVENT_POINTER_MOVE:  return "pointer_move";
+  case LK_EVENT_POINTER_DOWN:  return "pointer_down";
+  case LK_EVENT_POINTER_UP:    return "pointer_up";
+  case LK_EVENT_KEY_DOWN:      return "key_down";
+  case LK_EVENT_KEY_UP:        return "key_up";
+  case LK_EVENT_TEXT:          return "text";
+  case LK_EVENT_WHEEL:         return "wheel";
+  case LK_EVENT_WINDOW_RESIZE: return "window_resize";
+  case LK_EVENT_WINDOW_CLOSE:  return "window_close";
+  default:                     return "unknown";
+  }
+}
+
+static const char *event_phase_str(lk_u8 p) {
+  switch (p) {
+  case LK_PHASE_CAPTURE: return "capture";
+  case LK_PHASE_TARGET:  return "target";
+  case LK_PHASE_BUBBLE:  return "bubble";
+  default:               return "unknown";
+  }
+}
+
+/* ---- Marshal lk_event to Lcl dict ---- */
+
+static lcl_value *event_to_dict(const lk_event *ev) {
+  lcl_value *dict = lcl_dict_new();
+  lcl_value *v;
+
+  v = lcl_string_new(event_type_str(ev->type));
+  lcl_dict_put(&dict, "type", v);
+  lcl_ref_dec(v);
+
+  v = lcl_string_new(event_phase_str(ev->phase));
+  lcl_dict_put(&dict, "phase", v);
+  lcl_ref_dec(v);
+
+  v = lcl_int_new((long)ev->mods);
+  lcl_dict_put(&dict, "mods", v);
+  lcl_ref_dec(v);
+
+  v = lcl_int_new((long)ev->handled);
+  lcl_dict_put(&dict, "handled", v);
+  lcl_ref_dec(v);
+
+  v = lcl_int_new((long)ev->target);
+  lcl_dict_put(&dict, "target", v);
+  lcl_ref_dec(v);
+
+  /* Type-specific fields */
+  switch (ev->type) {
+  case LK_EVENT_POINTER_MOVE:
+  case LK_EVENT_POINTER_DOWN:
+  case LK_EVENT_POINTER_UP:
+    v = lcl_int_new((long)ev->data.pointer.x);
+    lcl_dict_put(&dict, "x", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)ev->data.pointer.y);
+    lcl_dict_put(&dict, "y", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)ev->data.pointer.button);
+    lcl_dict_put(&dict, "button", v);
+    lcl_ref_dec(v);
+    break;
+
+  case LK_EVENT_KEY_DOWN:
+  case LK_EVENT_KEY_UP:
+    v = lcl_int_new((long)ev->data.key.keycode);
+    lcl_dict_put(&dict, "keycode", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)ev->data.key.repeat);
+    lcl_dict_put(&dict, "repeat", v);
+    lcl_ref_dec(v);
+    break;
+
+  case LK_EVENT_TEXT:
+    v = lcl_string_new(ev->data.text.buf);
+    lcl_dict_put(&dict, "text", v);
+    lcl_ref_dec(v);
+    break;
+
+  case LK_EVENT_WHEEL:
+    v = lcl_int_new((long)ev->data.wheel.dx);
+    lcl_dict_put(&dict, "dx", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)ev->data.wheel.dy);
+    lcl_dict_put(&dict, "dy", v);
+    lcl_ref_dec(v);
+    break;
+
+  case LK_EVENT_WINDOW_RESIZE:
+    v = lcl_int_new((long)ev->data.window.w);
+    lcl_dict_put(&dict, "w", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)ev->data.window.h);
+    lcl_dict_put(&dict, "h", v);
+    lcl_ref_dec(v);
+    break;
+
+  default:
+    break;
+  }
+
+  return dict;
+}
+
+/* ---- C event handler bridge ---- */
+
+static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  struct lcl_lk_window *lw = (struct lcl_lk_window *)ud;
+  lcl_value *ev_dict;
+  lcl_value *args[2];
+  lcl_value *result = NULL;
+  int rc;
+
+  if (!lw->event_handler) {
+    return 0;
+  }
+
+  ev_dict = event_to_dict(event);
+  args[0] = ev_dict;
+  args[1] = lcl_int_new((long)node_ix);
+
+  rc = lcl_call_proc(lw->interp, lw->event_handler, 2, args, &result);
+
+  if (rc == LCL_RC_OK && result) {
+    long handled;
+    if (lcl_value_to_int(result, &handled) == LCL_OK && handled) {
+      event->handled = 1;
+    }
+  }
+
+  if (result) {
+    lcl_ref_dec(result);
+  }
+
+  lcl_ref_dec(args[1]);
+  lcl_ref_dec(ev_dict);
+
+  return 0;
+}
+
+/* ---- Frame callback bridge ---- */
+
+struct lcl_lk_frame_ctx {
   lcl_interp *interp;
   lcl_value *view_fn;
 };
 
 static void lcl_lk_frame(lk_tree *t, void *ud) {
-  struct lcl_lk_ctx *ctx = (struct lcl_lk_ctx *)ud;
+  struct lcl_lk_frame_ctx *ctx = (struct lcl_lk_frame_ctx *)ud;
   lcl_value *tree_val = lcl_opaque_new(t, LK_TREE_TYPE, NULL);
   lcl_value *args[1];
   lcl_value *result = NULL;
@@ -886,8 +1046,29 @@ static void lcl_lk_frame(lk_tree *t, void *ud) {
   lcl_ref_dec(tree_val);
 }
 
-static void win_finalizer(void *ptr) {
-  lk_window_destroy((lk_window *)ptr);
+/* ---- Finalizer ---- */
+
+static void lcl_lk_window_finalizer(void *ptr) {
+  struct lcl_lk_window *lw = (struct lcl_lk_window *)ptr;
+
+  if (lw->event_handler) {
+    lcl_ref_dec(lw->event_handler);
+  }
+
+  lk_window_destroy(lw->win);
+  free(lw);
+}
+
+/* ---- Helper: extract lcl_lk_window from opaque ---- */
+
+static struct lcl_lk_window *get_lk_window(lcl_interp *interp,
+                                            lcl_value *val) {
+  struct lcl_lk_window *lw = NULL;
+  if (lcl_opaque_get(val, LK_WIN_TYPE, (void **)&lw) != LCL_OK) {
+    lcl_set_error(interp, "expected lk_window opaque");
+    return NULL;
+  }
+  return lw;
 }
 
 /* lk::window_create [title, ?w, ?h, ?font, ?size] -> opaque<lk_window> */
@@ -895,6 +1076,7 @@ static int c_lk_window_create(lcl_interp *interp, int argc, lcl_value **argv,
                                lcl_value **out) {
   lk_window_cfg cfg;
   lk_window *win;
+  struct lcl_lk_window *lw;
 
   if (argc < 1 || argc > 5) {
     lcl_set_error(interp, "lk::window_create: expected 1-5 arguments");
@@ -910,42 +1092,78 @@ static int c_lk_window_create(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc >= 2) {
     long w;
-    if (lcl_value_to_int(argv[1], &w) == LCL_OK) cfg.width = (int)w;
+
+    if (lcl_value_to_int(argv[1], &w) == LCL_OK) {
+      cfg.width = (int)w;
+    }
   }
+
   if (argc >= 3) {
     long h;
-    if (lcl_value_to_int(argv[2], &h) == LCL_OK) cfg.height = (int)h;
+
+    if (lcl_value_to_int(argv[2], &h) == LCL_OK) {
+      cfg.height = (int)h;
+    }
   }
+
   if (argc >= 4) {
     cfg.font_path = lcl_value_to_string(argv[3]);
   }
+
   if (argc >= 5) {
     long sz;
-    if (lcl_value_to_int(argv[4], &sz) == LCL_OK) cfg.font_size = (int)sz;
+
+    if (lcl_value_to_int(argv[4], &sz) == LCL_OK) {
+      cfg.font_size = (int)sz;
+    }
   }
 
   win = lk_window_create(&cfg);
+
   if (!win) {
     lcl_set_error(interp, "lk::window_create: failed to create window");
     return LCL_RC_ERR;
   }
-  *out = lcl_opaque_new(win, LK_WIN_TYPE, win_finalizer);
+
+  lw = (struct lcl_lk_window *)malloc(sizeof(*lw));
+
+  if (!lw) {
+    lk_window_destroy(win);
+    lcl_set_error(interp, "lk::window_create: allocation failed");
+    return LCL_RC_ERR;
+  }
+
+  lw->win = win;
+  lw->interp = interp;
+  lw->event_handler = NULL;
+
+  *out = lcl_opaque_new(lw, LK_WIN_TYPE, lcl_lk_window_finalizer);
+
   return LCL_RC_OK;
 }
 
 /* lk::window_destroy [win] -> "" */
 static int c_lk_window_destroy(lcl_interp *interp, int argc, lcl_value **argv,
                                 lcl_value **out) {
-  lk_window *win;
+  struct lcl_lk_window *lw;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::window_destroy: expected 1 argument");
     return LCL_RC_ERR;
   }
-  if (lcl_opaque_get(argv[0], LK_WIN_TYPE, (void **)&win) != LCL_OK) {
-    lcl_set_error(interp, "lk::window_destroy: expected lk_window opaque");
-    return LCL_RC_ERR;
+
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) return LCL_RC_ERR;
+
+  if (lw->event_handler) {
+    lcl_ref_dec(lw->event_handler);
+    lw->event_handler = NULL;
   }
-  lk_window_destroy(win);
+
+  lk_window_destroy(lw->win);
+  lw->win = NULL;
+
   *out = lcl_string_new("");
   return LCL_RC_OK;
 }
@@ -953,30 +1171,34 @@ static int c_lk_window_destroy(lcl_interp *interp, int argc, lcl_value **argv,
 /* lk::window_run [win, view_proc] -> "" (blocks until close) */
 static int c_lk_window_run(lcl_interp *interp, int argc, lcl_value **argv,
                             lcl_value **out) {
-  lk_window *win;
-  struct lcl_lk_ctx ctx;
+  struct lcl_lk_window *lw;
+  struct lcl_lk_frame_ctx frame_ctx;
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::window_run: expected 2 arguments");
     return LCL_RC_ERR;
   }
 
-  if (lcl_opaque_get(argv[0], LK_WIN_TYPE, (void **)&win) != LCL_OK) {
-    lcl_set_error(interp, "lk::window_run: expected lk_window opaque");
-    return LCL_RC_ERR;
-  }
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) return LCL_RC_ERR;
 
   if (!lcl_is_callable(argv[1])) {
     lcl_set_error(interp, "lk::window_run: expected callable view proc");
     return LCL_RC_ERR;
   }
 
-  ctx.interp = interp;
-  ctx.view_fn = lcl_ref_inc(argv[1]);
+  /* Install event handler bridge if a handler has been set */
+  if (lw->event_handler) {
+    lk_window_set_event_handler(lw->win, lcl_lk_event_handler, lw);
+  }
 
-  lk_window_run(win, lcl_lk_frame, &ctx);
+  frame_ctx.interp = interp;
+  frame_ctx.view_fn = lcl_ref_inc(argv[1]);
 
-  lcl_ref_dec(ctx.view_fn);
+  lk_window_run(lw->win, lcl_lk_frame, &frame_ctx);
+
+  lcl_ref_dec(frame_ctx.view_fn);
 
   *out = lcl_string_new("");
 
@@ -986,49 +1208,55 @@ static int c_lk_window_run(lcl_interp *interp, int argc, lcl_value **argv,
 /* lk::window_ui [win] -> opaque<lk_ui> */
 static int c_lk_window_ui(lcl_interp *interp, int argc, lcl_value **argv,
                            lcl_value **out) {
-  lk_window *win;
+  struct lcl_lk_window *lw;
   lk_ui *ui;
 
   if (argc != 1) {
     lcl_set_error(interp, "lk::window_ui: expected 1 argument");
     return LCL_RC_ERR;
   }
-  if (lcl_opaque_get(argv[0], LK_WIN_TYPE, (void **)&win) != LCL_OK) {
-    lcl_set_error(interp, "lk::window_ui: expected lk_window opaque");
-    return LCL_RC_ERR;
-  }
 
-  ui = lk_window_ui(win);
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) return LCL_RC_ERR;
+
+  ui = lk_window_ui(lw->win);
   /* UI is owned by window, no finalizer */
   *out = lcl_opaque_new(ui, LK_UI_TYPE, NULL);
+
   return LCL_RC_OK;
 }
 
 /* lk::window_set_event_handler [win, handler_proc] -> "" */
 static int c_lk_window_set_event_handler(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
-  lk_window *win;
-  (void)interp;
+  struct lcl_lk_window *lw;
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::window_set_event_handler: expected 2 arguments");
     return LCL_RC_ERR;
   }
-  if (lcl_opaque_get(argv[0], LK_WIN_TYPE, (void **)&win) != LCL_OK) {
-    lcl_set_error(interp, "lk::window_set_event_handler: expected lk_window opaque");
-    return LCL_RC_ERR;
-  }
+
+  lw = get_lk_window(interp, argv[0]);
+  if (!lw) return LCL_RC_ERR;
+
   if (!lcl_is_callable(argv[1])) {
     lcl_set_error(interp, "lk::window_set_event_handler: expected callable");
     return LCL_RC_ERR;
   }
 
-  /* TODO: implement Lcl-side event handler bridge.
-   * This requires storing the interp + callback and creating a C
-   * event handler that marshals lk_event fields into an Lcl dict
-   * and calls the proc. Left as a stub for Phase 4. */
-  *out = lcl_string_new("");
+  /* Release previous handler if any */
+  if (lw->event_handler) {
+    lcl_ref_dec(lw->event_handler);
+  }
 
+  lw->event_handler = lcl_ref_inc(argv[1]);
+
+  /* If already running, install immediately; otherwise window_run
+   * will install it before entering the loop. */
+  lk_window_set_event_handler(lw->win, lcl_lk_event_handler, lw);
+
+  *out = lcl_string_new("");
   return LCL_RC_OK;
 }
 

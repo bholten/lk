@@ -483,6 +483,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       } else if (lk_ev.type == LK_EVENT_KEY_DOWN ||
                  lk_ev.type == LK_EVENT_KEY_UP || lk_ev.type == LK_EVENT_TEXT) {
         lk_ev.target = lk_focus_current(win->ui, cur);
+        if (lk_ev.target == 0) {
+          lk_ev.target = cur->root;
+        }
       } else if (lk_ev.type == LK_EVENT_WINDOW_RESIZE) {
         win->width = lk_ev.data.window.w;
         win->height = lk_ev.data.window.h;
