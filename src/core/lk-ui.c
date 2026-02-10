@@ -1,10 +1,11 @@
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 /* lk-state.c */
-lk_state *lk_state_create(void *(*)(void *, lk_u32), void (*)(void *, void *), void *);
+lk_state *lk_state_create(void *(*)(void *, lk_u32), void (*)(void *, void *),
+                          void *);
 void lk_state_destroy(lk_state *st);
 void lk_state_gc(lk_state *st, const lk_changeset *cs);
 
@@ -129,15 +130,15 @@ static int value_equal(const lk_value *a, const lk_value *b) {
   switch (a->tag) {
   case UIV_NONE: return 1;
   case UIV_BOOL: return a->as.b == b->as.b;
-  case UIV_I32:  return a->as.i == b->as.i;
-  case UIV_STR:  return a->as.str_id == b->as.str_id;
+  case UIV_I32: return a->as.i == b->as.i;
+  case UIV_STR: return a->as.str_id == b->as.str_id;
   }
 
   return 0;
 }
 
-static int pres_equal(const lk_tree *prev, lk_ix prev_ix,
-                      const lk_tree *next, lk_ix next_ix) {
+static int pres_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
+                      lk_ix next_ix) {
   lk_u32 pi, ni;
   lk_u32 prev_count = 0;
   lk_u32 next_count = 0;

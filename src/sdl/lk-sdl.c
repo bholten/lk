@@ -89,8 +89,8 @@ static void text_cache_clear(lk_window *win) {
  * out_w/out_h to the texture dimensions.  Returns NULL on failure.
  */
 static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
-                                   const char *text, lk_color color,
-                                   int *out_w, int *out_h) {
+                                   const char *text, lk_color color, int *out_w,
+                                   int *out_h) {
   unsigned slot = str_id & (TEXT_CACHE_CAP - 1);
   int probes = 0;
 
@@ -104,15 +104,22 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
       SDL_Texture *tex;
       int w, h;
 
-      c.r = color.r; c.g = color.g; c.b = color.b; c.a = color.a;
+      c.r = color.r;
+      c.g = color.g;
+      c.b = color.b;
+      c.a = color.a;
       surf = TTF_RenderText_Blended(win->font, text, 0, c);
-      if (!surf) return NULL;
+      if (!surf) {
+        return NULL;
+      }
 
       tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
       w = surf->w;
       h = surf->h;
       SDL_DestroySurface(surf);
-      if (!tex) return NULL;
+      if (!tex) {
+        return NULL;
+      }
 
       e->str_id = str_id;
       e->tex = tex;
@@ -139,9 +146,14 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
     SDL_Surface *surf;
     SDL_Texture *tex;
 
-    c.r = color.r; c.g = color.g; c.b = color.b; c.a = color.a;
+    c.r = color.r;
+    c.g = color.g;
+    c.b = color.b;
+    c.a = color.a;
     surf = TTF_RenderText_Blended(win->font, text, 0, c);
-    if (!surf) return NULL;
+    if (!surf) {
+      return NULL;
+    }
 
     tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
     *out_w = surf->w;
@@ -268,7 +280,7 @@ lk_ui *lk_window_ui(lk_window *win) {
 }
 
 void lk_window_set_event_handler(lk_window *win, lk_event_handler_fn fn,
-                                  void *ud) {
+                                 void *ud) {
   if (win && win->ui) {
     lk_ui_set_event_handler(win->ui, fn, ud);
   }
@@ -276,28 +288,36 @@ void lk_window_set_event_handler(lk_window *win, lk_event_handler_fn fn,
 
 static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
   switch (k) {
-  case SDLK_TAB:       return LKK_TAB;
-  case SDLK_RETURN:    return LKK_RETURN;
-  case SDLK_ESCAPE:    return LKK_ESCAPE;
+  case SDLK_TAB: return LKK_TAB;
+  case SDLK_RETURN: return LKK_RETURN;
+  case SDLK_ESCAPE: return LKK_ESCAPE;
   case SDLK_BACKSPACE: return LKK_BACKSPACE;
-  case SDLK_DELETE:    return LKK_DELETE;
-  case SDLK_SPACE:     return LKK_SPACE;
-  case SDLK_LEFT:      return LKK_LEFT;
-  case SDLK_RIGHT:     return LKK_RIGHT;
-  case SDLK_UP:        return LKK_UP;
-  case SDLK_DOWN:      return LKK_DOWN;
-  case SDLK_HOME:      return LKK_HOME;
-  case SDLK_END:       return LKK_END;
-  default:             return LKK_UNKNOWN;
+  case SDLK_DELETE: return LKK_DELETE;
+  case SDLK_SPACE: return LKK_SPACE;
+  case SDLK_LEFT: return LKK_LEFT;
+  case SDLK_RIGHT: return LKK_RIGHT;
+  case SDLK_UP: return LKK_UP;
+  case SDLK_DOWN: return LKK_DOWN;
+  case SDLK_HOME: return LKK_HOME;
+  case SDLK_END: return LKK_END;
+  default: return LKK_UNKNOWN;
   }
 }
 
 static lk_u8 sdl_to_lk_mods(SDL_Keymod m) {
   lk_u8 r = 0;
-  if (m & SDL_KMOD_SHIFT) r |= (lk_u8)LK_MOD_SHIFT;
-  if (m & SDL_KMOD_CTRL)  r |= (lk_u8)LK_MOD_CTRL;
-  if (m & SDL_KMOD_ALT)   r |= (lk_u8)LK_MOD_ALT;
-  if (m & SDL_KMOD_GUI)   r |= (lk_u8)LK_MOD_GUI;
+  if (m & SDL_KMOD_SHIFT) {
+    r |= (lk_u8)LK_MOD_SHIFT;
+  }
+  if (m & SDL_KMOD_CTRL) {
+    r |= (lk_u8)LK_MOD_CTRL;
+  }
+  if (m & SDL_KMOD_ALT) {
+    r |= (lk_u8)LK_MOD_ALT;
+  }
+  if (m & SDL_KMOD_GUI) {
+    r |= (lk_u8)LK_MOD_GUI;
+  }
   return r;
 }
 
@@ -335,7 +355,9 @@ static int sdl_to_lk_event(const SDL_Event *sdl, lk_event *out) {
   case SDL_EVENT_TEXT_INPUT: {
     size_t len = strlen(sdl->text.text);
     out->type = LK_EVENT_TEXT;
-    if (len > 31) len = 31;
+    if (len > 31) {
+      len = 31;
+    }
     memcpy(out->data.text.buf, sdl->text.text, len);
     out->data.text.buf[len] = '\0';
     out->data.text.len = (lk_u8)len;
@@ -351,8 +373,7 @@ static int sdl_to_lk_event(const SDL_Event *sdl, lk_event *out) {
     out->data.window.w = sdl->window.data1;
     out->data.window.h = sdl->window.data2;
     return 1;
-  default:
-    return 0;
+  default: return 0;
   }
 }
 
@@ -451,18 +472,16 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           lk_ev.type == LK_EVENT_POINTER_DOWN ||
           lk_ev.type == LK_EVENT_POINTER_UP) {
         if (have_rects) {
-          lk_ev.target = lk_hit_test(cur, win->rects,
-                                      lk_ev.data.pointer.x,
-                                      lk_ev.data.pointer.y);
+          lk_ev.target = lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
+                                     lk_ev.data.pointer.y);
         }
       } else if (lk_ev.type == LK_EVENT_WHEEL) {
         if (have_rects) {
-          lk_ev.target = lk_hit_test(cur, win->rects,
-                                      win->mouse_x, win->mouse_y);
+          lk_ev.target =
+              lk_hit_test(cur, win->rects, win->mouse_x, win->mouse_y);
         }
       } else if (lk_ev.type == LK_EVENT_KEY_DOWN ||
-                 lk_ev.type == LK_EVENT_KEY_UP ||
-                 lk_ev.type == LK_EVENT_TEXT) {
+                 lk_ev.type == LK_EVENT_KEY_UP || lk_ev.type == LK_EVENT_TEXT) {
         lk_ev.target = lk_focus_current(win->ui, cur);
       } else if (lk_ev.type == LK_EVENT_WINDOW_RESIZE) {
         win->width = lk_ev.data.window.w;
@@ -534,8 +553,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
               SDL_Texture *tex;
               memcpy(buf, text.ptr, text.len);
               buf[text.len] = '\0';
-              tex = text_cache_get(win, cmd->str_id, buf, cmd->color,
-                                   &tw, &th);
+              tex = text_cache_get(win, cmd->str_id, buf, cmd->color, &tw, &th);
               if (tex) {
                 SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
               }
@@ -556,9 +574,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
         break;
       }
 
-      case LK_ROP_CLIP_END:
-        SDL_SetRenderClipRect(win->sdl_ren, NULL);
-        break;
+      case LK_ROP_CLIP_END: SDL_SetRenderClipRect(win->sdl_ren, NULL); break;
 
       default: break;
       }

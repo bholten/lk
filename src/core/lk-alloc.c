@@ -1,7 +1,7 @@
 #include <stdlib.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 void *lk_sys_alloc(void *ud, lk_u32 bytes) {
   (void)ud;

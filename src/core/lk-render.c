@@ -1,7 +1,7 @@
 #include <string.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
   if (rl->count >= rl->cap) {
@@ -120,8 +120,8 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       }
 
       if (child_count > 0) {
-        kids = (lk_ix *)lk_sys_alloc(
-            NULL, (lk_u32)(sizeof(lk_ix) * child_count));
+        kids =
+            (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * child_count));
 
         if (kids) {
           nk = 0;

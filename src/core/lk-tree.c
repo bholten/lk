@@ -1,7 +1,7 @@
 #include <memory.h>
 
-#include <lk.h>
 #include "lk-memory.h"
+#include <lk.h>
 
 static int lk_tree_reserve_nodes(lk_tree *t, lk_u32 need) {
   lk_node *nn;
@@ -85,7 +85,8 @@ static int lk_tree_reserve_pres(lk_tree *t, lk_u32 need) {
     new_cap *= 2;
   }
 
-  np = (lk_presentation *)lk_alloc(t, (lk_u32)(sizeof(lk_presentation) * new_cap));
+  np = (lk_presentation *)lk_alloc(t,
+                                   (lk_u32)(sizeof(lk_presentation) * new_cap));
 
   if (!np) {
     return 0;
@@ -306,8 +307,8 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
 
 /* ---- Presentation API ---- */
 
-void lk_tree_add_presentation(lk_tree *t, lk_ix node,
-                               lk_u32 ptype, lk_value pvalue) {
+void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
+                              lk_value pvalue) {
   lk_presentation *p;
 
   if (!t || node == 0 || node >= t->node_count) {
@@ -324,15 +325,14 @@ void lk_tree_add_presentation(lk_tree *t, lk_ix node,
   p->pvalue = pvalue;
 }
 
-void lk_tree_add_presentation_s(lk_tree *t, lk_ix node,
-                                 const char *ptype, lk_value pvalue) {
+void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
+                                lk_value pvalue) {
   if (!t || !t->intern || !ptype) {
     return;
   }
 
-  lk_tree_add_presentation(t, node,
-                            lk_intern_id(t->intern, lk_str_c(ptype)),
-                            pvalue);
+  lk_tree_add_presentation(t, node, lk_intern_id(t->intern, lk_str_c(ptype)),
+                           pvalue);
 }
 
 const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node) {
@@ -715,9 +715,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
         case UIV_BOOL:
           wr_cstr(wr, ud, t->pres[pi].pvalue.as.b ? "true" : "false");
           break;
-        case UIV_I32:
-          wr_u32(wr, ud, (lk_u32)t->pres[pi].pvalue.as.i);
-          break;
+        case UIV_I32: wr_u32(wr, ud, (lk_u32)t->pres[pi].pvalue.as.i); break;
         case UIV_STR:
           wr_cstr(wr, ud, "\"");
 
@@ -731,9 +729,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
 
           wr_cstr(wr, ud, "\"");
           break;
-        default:
-          wr_cstr(wr, ud, "null");
-          break;
+        default: wr_cstr(wr, ud, "null"); break;
         }
       }
     }
@@ -797,7 +793,7 @@ lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id) {
 /* ---- Public prop helpers ---- */
 
 lk_i32 lk_node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key,
-                         lk_i32 def) {
+                        lk_i32 def) {
   const lk_node *nd = &t->nodes[n];
   lk_u32 i;
 
