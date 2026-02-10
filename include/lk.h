@@ -42,6 +42,7 @@ int lk_str_cmp(lk_str a, lk_str b);
 typedef lk_u32 lk_node_id;
 
 typedef struct lk_intern lk_intern;
+typedef struct lk_state lk_state;
 
 lk_intern *lk_intern_new(void*(alloc)(void*, lk_u32), void *alloc_ud);
 void lk_intern_destroy(lk_intern *it);
@@ -76,6 +77,17 @@ typedef enum lk_prop_key {
 
   UIP__COUNT
 } lk_prop_key;
+
+typedef enum lk_state_key {
+  LKS_SCROLL_X = 1,
+  LKS_SCROLL_Y,
+  LKS_CURSOR_POS,
+  LKS_SELECTION_START,
+  LKS_SELECTION_END,
+  LKS_EXPANDED,
+  LKS__BUILTIN_COUNT,
+  LKS_USER = 256
+} lk_state_key;
 
 typedef enum lk_align {
   LK_ALIGN_START = 0,
@@ -430,6 +442,7 @@ typedef struct lk_ui {
   lk_event_handler_fn event_handler;
   void *event_ud;
   lk_node_id focused_id;  /* 0 = no focus */
+  lk_state *state;        /* retained per-node state */
 
   /* Translators */
   lk_translator *translators;
@@ -506,6 +519,18 @@ lk_intern *lk_tree_intern(const lk_tree *t);
 
 /* UI accessors */
 lk_intern *lk_ui_intern(const lk_ui *ui);
+
+/**
+ * Retained state store — per-node state that persists across frames.
+ * Keyed by (lk_node_id, lk_u16 state_key).
+ * Automatically garbage-collects entries when nodes are REMOVED.
+ **/
+
+lk_state *lk_ui_state(lk_ui *ui);
+
+int      lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v);
+lk_value lk_state_get(const lk_state *st, lk_node_id node, lk_u16 key);
+void     lk_state_remove_node(lk_state *st, lk_node_id node);
 
 /* Changeset accessors */
 lk_u32 lk_changeset_count(const lk_changeset *cs);
