@@ -1,0 +1,18 @@
+proc view {tree} {
+    let w   [lk::node $tree "main" "window"]
+    let col [lk::node $tree "root" "column"]
+    let lbl [lk::node $tree "greeting" "label"]
+
+    lk::prop $tree $col "padding" 20
+    lk::prop $tree $col "gap" 12
+    lk::prop $tree $lbl "text" "Hello from Lcl!"
+
+    lk::set_root $tree $w
+    lk::append_child $tree $w $col
+    lk::append_child $tree $col $lbl
+}
+
+let win [lk::window_create "Hello Lcl" 800 600]
+
+lk::window_run $win $view
+lk::window_destroy $win

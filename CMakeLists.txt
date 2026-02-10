@@ -80,3 +80,45 @@ if(SDL3_FOUND AND SDL3_ttf_FOUND)
 else()
   message(STATUS "SDL3 not found -- skipping lk_sdl and lk_demo")
 endif()
+
+# ---- Lcl scripting bindings ----
+
+option(LK_BUILD_LCL "Build Lcl scripting bindings" OFF)
+
+if(LK_BUILD_LCL)
+  set(LCL_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(LCL_BUILD_STATIC ON CACHE BOOL "" FORCE)
+  set(LCL_BUILD_CLI OFF CACHE BOOL "" FORCE)
+  add_subdirectory(submodules/lcl)
+
+  add_library(lcl_lk STATIC src/lcl/lcl-lk.c)
+  target_include_directories(lcl_lk
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(lcl_lk PUBLIC lk_core lcl::lcl)
+  target_compile_options(lcl_lk PRIVATE -Wall -Wextra -pedantic)
+
+  if(SDL3_FOUND AND SDL3_ttf_FOUND)
+    target_compile_definitions(lcl_lk PUBLIC LK_HAVE_SDL)
+    target_link_libraries(lcl_lk PUBLIC lk_sdl)
+
+    add_executable(lcl_lk_main src/lcl/lcl-lk-main.c)
+    target_link_libraries(lcl_lk_main PRIVATE lcl_lk)
+    target_include_directories(lcl_lk_main PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
+    target_compile_options(lcl_lk_main PRIVATE -Wall -Wextra)
+    set_target_properties(lcl_lk_main PROPERTIES
+      C_STANDARD 11
+      C_STANDARD_REQUIRED OFF
+      C_EXTENSIONS OFF)
+  endif()
+
+  add_executable(lcl_lk_test test/lcl-lk-test.c)
+  target_link_libraries(lcl_lk_test PRIVATE lcl_lk)
+  target_include_directories(lcl_lk_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_options(lcl_lk_test PRIVATE -Wall -Wextra -pedantic)
+endif()
