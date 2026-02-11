@@ -13,10 +13,14 @@ proc view {tree} {
     lk::prop $tree $title "text" "Hello from Lcl!"
     lk::prop $tree $ok "text" "OK"
     lk::prop $tree $cancel "text" "Cancel"
-    lk::prop $tree $footer "text" "Styled with lk::theme_rule and lk::tag"
+    lk::prop $tree $footer "text" "Click a button (uses commands)"
 
     ;; Tag the OK button as "primary"
     lk::tag $tree $ok "primary"
+
+    ;; Attach presentations: each button presents an "action" with a label
+    lk::present $tree $ok "action" "ok"
+    lk::present $tree $cancel "action" "cancel"
 
     lk::set_root $tree $w
     lk::append_child $tree $w $col
@@ -39,17 +43,22 @@ lk::theme_rule $ui "*" "" "" #{fg (200 200 220)}
 lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12}
 lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255)}
 
-lk::window_set_event_handler $win [lambda {ev node} {
-    if [and [== [get $ev type] pointer_up] [== [get $ev phase] target]] {
-        if [== [get $ev target_id] ok] {
-            puts "Clicked OK"
-            return 1
-        }
+;; Translator: pointer_down on any "action" presentation -> "ButtonClick" command
+lk::add_translator $ui "pointer_down" "action" "" "ButtonClick"
 
-        if [== [get $ev target_id] cancel] {
-            puts "Clicked Cancel"
-            return 1
-        }
+;; Command handler: receives a dict with {name, args, source_node_id, ...}
+lk::set_command_handler $ui [lambda {cmd} {
+    if [== [get $cmd name] ButtonClick] {
+        let action [get [get $cmd args] 0]
+        puts "Command: ButtonClick, action=$action"
+    }
+}]
+
+;; Event handler for keyboard events (not handled by translators)
+lk::window_set_event_handler $win [lambda {ev node} {
+    if [== [get $ev type] key_down] {
+        puts "Key: [get $ev keycode]"
+        return 1
     }
 
     return 0

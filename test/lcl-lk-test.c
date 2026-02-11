@@ -803,6 +803,56 @@ static void test_lcl_theme_rule(void) {
   END_TEST();
 }
 
+static void test_set_command_handler(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("set_command_handler accepts callable");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::set_command_handler $ui [lambda {cmd} {\n"
+    "  puts $cmd\n"
+    "}]",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_set_command_handler_with_translator(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("set_command_handler + add_translator integration");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"main\" \"window\"]\n"
+    "let btn [lk::node $t \"btn\" \"button\"]\n"
+    "lk::prop $t $btn \"text\" \"Click\"\n"
+    "lk::present $t $btn \"action\" 42\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $btn\n"
+    "lk::end_frame $ui\n"
+    "lk::add_translator $ui \"pointer_down\" \"action\" \"\" \"DoIt\"\n"
+    "let got_cmd 0\n"
+    "lk::set_command_handler $ui [lambda {cmd} {\n"
+    "  set got_cmd 1\n"
+    "}]",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -836,6 +886,8 @@ int main(void) {
 
   test_lcl_tag();
   test_lcl_theme_rule();
+  test_set_command_handler();
+  test_set_command_handler_with_translator();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

@@ -109,8 +109,21 @@ static int lookup_enum(const str_enum *table, const char *name, int *out) {
  * ============================================================================
  */
 
+/* Forward declarations for command handler cleanup */
+struct lcl_cmd_ctx;
+static void lcl_cmd_bridge(const lk_command *cmd, void *ud);
+static void lcl_cmd_ctx_free(struct lcl_cmd_ctx *ctx);
+
 static void ui_finalizer(void *ptr) {
-  lk_ui_destroy((lk_ui *)ptr);
+  lk_ui *ui = (lk_ui *)ptr;
+
+  if (ui->cmd_handler == lcl_cmd_bridge && ui->cmd_handler_ud) {
+    lcl_cmd_ctx_free((struct lcl_cmd_ctx *)ui->cmd_handler_ud);
+    ui->cmd_handler = NULL;
+    ui->cmd_handler_ud = NULL;
+  }
+
+  lk_ui_destroy(ui);
 }
 
 /* ============================================================================
@@ -658,6 +671,55 @@ static lcl_value *command_to_dict(const lk_command *cmd,
   return dict;
 }
 
+/* ---- Command handler bridge ---- */
+
+struct lcl_cmd_ctx {
+  lcl_interp *interp;
+  lcl_value *handler;
+  lk_ui *ui;
+};
+
+static void lcl_cmd_bridge(const lk_command *cmd, void *ud) {
+  struct lcl_cmd_ctx *ctx = (struct lcl_cmd_ctx *)ud;
+  lcl_value *dict;
+  lcl_value *args[1];
+  lcl_value *result = NULL;
+  const lk_tree *cur;
+
+  dict = command_to_dict(cmd, ctx->ui->intern);
+
+  /* Add source_node_id string for convenience */
+  cur = lk_ui_tree(ctx->ui);
+  if (cur && cmd->source_node > 0 &&
+      cmd->source_node <= (lk_ix)cur->node_count) {
+    const char *nid =
+        lk_intern_cstr(cur->intern, cur->nodes[cmd->source_node].id);
+    if (nid) {
+      lcl_value *v = lcl_string_new(nid);
+      lcl_dict_put(&dict, "source_node_id", v);
+      lcl_ref_dec(v);
+    }
+  }
+
+  args[0] = dict;
+  lcl_call_proc(ctx->interp, ctx->handler, 1, args, &result);
+
+  if (result) {
+    lcl_ref_dec(result);
+  }
+
+  lcl_ref_dec(dict);
+}
+
+static void lcl_cmd_ctx_free(struct lcl_cmd_ctx *ctx) {
+  if (ctx) {
+    if (ctx->handler) {
+      lcl_ref_dec(ctx->handler);
+    }
+    free(ctx);
+  }
+}
+
 /* lk::commands [ui] -> list of command dicts */
 static int c_lk_commands(lcl_interp *interp, int argc, lcl_value **argv,
                          lcl_value **out) {
@@ -768,6 +830,56 @@ static int c_lk_clear_command_log(lcl_interp *interp, int argc,
   }
 
   lk_ui_clear_command_log(ui);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::set_command_handler [ui, handler_proc] -> "" */
+static int c_lk_set_command_handler(lcl_interp *interp, int argc,
+                                    lcl_value **argv, lcl_value **out) {
+  lk_ui *ui;
+  struct lcl_cmd_ctx *ctx;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::set_command_handler: expected 2 arguments");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
+    lcl_set_error(interp, "lk::set_command_handler: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  if (!lcl_is_callable(argv[1])) {
+    lcl_set_error(interp, "lk::set_command_handler: expected callable");
+
+    return LCL_RC_ERR;
+  }
+
+  /* Free previous handler ctx if one was set through this binding */
+  if (ui->cmd_handler == lcl_cmd_bridge && ui->cmd_handler_ud) {
+    lcl_cmd_ctx_free((struct lcl_cmd_ctx *)ui->cmd_handler_ud);
+  }
+
+  ctx = (struct lcl_cmd_ctx *)malloc(sizeof(*ctx));
+
+  if (!ctx) {
+    lcl_set_error(interp, "lk::set_command_handler: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  ctx->interp = interp;
+  ctx->handler = argv[1];
+  ctx->ui = ui;
+  lcl_ref_inc(argv[1]);
+
+  lk_ui_set_command_handler(ui, lcl_cmd_bridge, ctx);
+
   *out = lcl_string_new("");
 
   return LCL_RC_OK;
@@ -1463,9 +1575,18 @@ static void lcl_lk_frame(lk_tree *t, void *ud) {
 
 static void lcl_lk_window_finalizer(void *ptr) {
   struct lcl_lk_window *lw = (struct lcl_lk_window *)ptr;
+  lk_ui *ui;
 
   if (lw->event_handler) {
     lcl_ref_dec(lw->event_handler);
+  }
+
+  /* Clean up command handler ctx before window destroy frees the ui */
+  ui = lk_window_ui(lw->win);
+  if (ui && ui->cmd_handler == lcl_cmd_bridge && ui->cmd_handler_ud) {
+    lcl_cmd_ctx_free((struct lcl_cmd_ctx *)ui->cmd_handler_ud);
+    ui->cmd_handler = NULL;
+    ui->cmd_handler_ud = NULL;
   }
 
   lk_window_destroy(lw->win);
@@ -1731,6 +1852,9 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::command_log", c_lk_command_log));
   lcl_ns_def(ns, "clear_command_log",
              lcl_c_proc_new("lk::clear_command_log", c_lk_clear_command_log));
+  lcl_ns_def(ns, "set_command_handler",
+             lcl_c_proc_new("lk::set_command_handler",
+                            c_lk_set_command_handler));
 
   /* State */
   lcl_ns_def(ns, "state_set", lcl_c_proc_new("lk::state_set", c_lk_state_set));
