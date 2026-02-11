@@ -53,8 +53,8 @@ static void measure_column(const lk_tree *t, lk_ix n, const lk_size *sizes,
   const lk_node *nd = &t->nodes[n];
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
-  lk_i32 gap = cfg->styles ? cfg->styles[n].gap
-                           : lk_node_prop_i32(t, n, UIP_GAP, 0);
+  lk_i32 gap =
+      cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
   lk_i32 max_w = 0;
   lk_i32 sum_h = 0;
@@ -84,8 +84,8 @@ static void measure_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
   const lk_node *nd = &t->nodes[n];
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
-  lk_i32 gap = cfg->styles ? cfg->styles[n].gap
-                           : lk_node_prop_i32(t, n, UIP_GAP, 0);
+  lk_i32 gap =
+      cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
   lk_i32 sum_w = 0;
   lk_i32 max_h = 0;
@@ -177,12 +177,14 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
                         const lk_rect *content, const lk_layout_cfg *cfg,
                         lk_rect *rects, int axis) {
   const lk_node *nd = &t->nodes[n];
-  lk_i32 gap = cfg->styles ? cfg->styles[n].gap
-                           : lk_node_prop_i32(t, n, UIP_GAP, 0);
-  lk_i32 align = cfg->styles ? (lk_i32)cfg->styles[n].align
-                             : lk_node_prop_i32(t, n, UIP_ALIGN, LK_ALIGN_STRETCH);
-  lk_i32 justify = cfg->styles ? (lk_i32)cfg->styles[n].justify
-                               : lk_node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
+  lk_i32 gap =
+      cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
+  lk_i32 align = cfg->styles
+                     ? (lk_i32)cfg->styles[n].align
+                     : lk_node_prop_i32(t, n, UIP_ALIGN, LK_ALIGN_STRETCH);
+  lk_i32 justify = cfg->styles
+                       ? (lk_i32)cfg->styles[n].justify
+                       : lk_node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
   /* main_size = content extent along main axis
    * cross_size = content extent along cross axis */
   lk_i32 main_size = axis ? content->w : content->h;

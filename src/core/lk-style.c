@@ -12,9 +12,9 @@
 /* ---- Internal rule struct ---- */
 
 typedef struct lk_style_rule {
-  lk_u16 kind;       /* 0 = any */
-  lk_u32 tag_id;     /* 0 = any */
-  lk_u8  state_mask; /* 0 = any */
+  lk_u16 kind;      /* 0 = any */
+  lk_u32 tag_id;    /* 0 = any */
+  lk_u8 state_mask; /* 0 = any */
   lk_style style;
   lk_u32 field_mask;
 } lk_style_rule;
@@ -46,8 +46,8 @@ void lk_theme_destroy(lk_theme *th) {
 }
 
 void lk_theme_add_rule(lk_theme *th, lk_u16 kind, lk_u32 tag_id,
-                        lk_u8 state_mask, const lk_style *style,
-                        lk_u32 field_mask) {
+                       lk_u8 state_mask, const lk_style *style,
+                       lk_u32 field_mask) {
   lk_style_rule *r;
   if (!th || !style) {
     return;
@@ -135,7 +135,7 @@ static int tree_has_tag(const lk_tree *t, lk_ix node, lk_u32 tag_id) {
 /* ---- Apply a single rule's fields to a style ---- */
 
 static void apply_rule(lk_style *dst, lk_u32 *set_mask,
-                        const lk_style_rule *rule) {
+                       const lk_style_rule *rule) {
   lk_u32 fm = rule->field_mask;
   if (fm & LK_SF_FG) {
     dst->fg = rule->style.fg;
@@ -176,7 +176,7 @@ static void apply_rule(lk_style *dst, lk_u32 *set_mask,
 /* ---- Resolver ---- */
 
 void lk_style_resolve(const lk_theme *th, const lk_tree *t,
-                       const lk_u8 *node_states, lk_style *styles) {
+                      const lk_u8 *node_states, lk_style *styles) {
   /* Stack-based top-down DFS */
   lk_ix *stack;
   lk_u32 sp;
@@ -221,7 +221,8 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
         continue;
       }
       /* Check state match */
-      if (rule->state_mask != 0 && (nstate & rule->state_mask) != rule->state_mask) {
+      if (rule->state_mask != 0 &&
+          (nstate & rule->state_mask) != rule->state_mask) {
         continue;
       }
       apply_rule(&styles[n], &set_mask, rule);
@@ -275,8 +276,7 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
     }
 
     if (child_count > 0) {
-      kids = (lk_ix *)lk_sys_alloc(
-          NULL, (lk_u32)(sizeof(lk_ix) * child_count));
+      kids = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * child_count));
       if (kids) {
         nk = 0;
         child = nd->first_child;
@@ -297,9 +297,8 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
 
 /* ---- Style tracing ---- */
 
-void lk_style_trace_node(const lk_theme *th, const lk_tree *t,
-                          lk_ix node, lk_u8 node_state,
-                          lk_style_trace *out) {
+void lk_style_trace_node(const lk_theme *th, const lk_tree *t, lk_ix node,
+                         lk_u8 node_state, lk_style_trace *out) {
   lk_u16 kind;
   lk_u32 ri;
 
@@ -323,7 +322,8 @@ void lk_style_trace_node(const lk_theme *th, const lk_tree *t,
     if (rule->tag_id != 0 && !tree_has_tag(t, node, rule->tag_id)) {
       continue;
     }
-    if (rule->state_mask != 0 && (node_state & rule->state_mask) != rule->state_mask) {
+    if (rule->state_mask != 0 &&
+        (node_state & rule->state_mask) != rule->state_mask) {
       continue;
     }
 

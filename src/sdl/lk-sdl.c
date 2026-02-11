@@ -568,7 +568,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
               if (tex) {
                 SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
               }
-              
+
               free(buf);
             }
           }

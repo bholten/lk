@@ -51,7 +51,9 @@ int main(int argc, char **argv) {
     fprintf(stderr, "\n");
   }
 
-  if (result) lcl_ref_dec(result);
+  if (result) {
+    lcl_ref_dec(result);
+  }
   lcl_interp_free(interp);
 
   return rc == LCL_RC_OK ? 0 : 1;

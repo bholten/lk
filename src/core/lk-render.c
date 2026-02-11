@@ -74,7 +74,7 @@ static void init_fallback_styles(void) {
   }
 
   buf = (lk_style *)lk_sys_alloc(NULL,
-      (lk_u32)(sizeof(lk_style) * t->node_count));
+                                 (lk_u32)(sizeof(lk_style) * t->node_count));
   if (buf) {
     lk_style_resolve(th, t, NULL, buf);
     for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
