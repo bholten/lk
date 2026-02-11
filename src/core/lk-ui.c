@@ -197,8 +197,8 @@ static int pres_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
   return 1;
 }
 
-static int tags_equal(const lk_tree *prev, lk_ix prev_ix,
-                      const lk_tree *next, lk_ix next_ix) {
+static int tags_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
+                      lk_ix next_ix) {
   lk_u32 pi, ni;
   lk_u32 prev_count = 0;
   lk_u32 next_count = 0;
@@ -571,8 +571,7 @@ void lk_ui_resolve_styles(lk_ui *ui) {
       ui_dealloc(ui, ui->styles);
     }
 
-    ui->styles =
-        (lk_style *)ui_alloc(ui, (lk_u32)(sizeof(lk_style) * nc));
+    ui->styles = (lk_style *)ui_alloc(ui, (lk_u32)(sizeof(lk_style) * nc));
 
     if (!ui->styles) {
       ui->styles_cap = 0;
@@ -588,8 +587,7 @@ void lk_ui_resolve_styles(lk_ui *ui) {
       ui_dealloc(ui, ui->node_states);
     }
 
-    ui->node_states =
-        (lk_u8 *)ui_alloc(ui, (lk_u32)(sizeof(lk_u8) * nc));
+    ui->node_states = (lk_u8 *)ui_alloc(ui, (lk_u32)(sizeof(lk_u8) * nc));
 
     if (!ui->node_states) {
       ui->nstates_cap = 0;

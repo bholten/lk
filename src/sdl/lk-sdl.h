@@ -23,6 +23,6 @@ lk_ui *lk_window_ui(lk_window *win);
 
 /* Set event handler on the underlying lk_ui. */
 void lk_window_set_event_handler(lk_window *win, lk_event_handler_fn fn,
-                                  void *ud);
+                                 void *ud);
 
 #endif
