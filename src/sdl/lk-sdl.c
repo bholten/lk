@@ -415,7 +415,10 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       continue;
     }
 
-    /* 2. Layout */
+    /* 2. Resolve styles */
+    lk_ui_resolve_styles(win->ui);
+
+    /* 3. Layout */
     if (cur->node_count > win->rects_cap) {
       if (win->rects) {
         lk_sys_dealloc(NULL, win->rects);
@@ -428,6 +431,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
     have_rects = 0;
     if (win->rects) {
+      const lk_style *styles = lk_ui_styles(win->ui);
       memset(&lcfg, 0, sizeof(lcfg));
 
       if (win->font) {
@@ -440,13 +444,14 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
       lcfg.viewport_w = win->width;
       lcfg.viewport_h = win->height;
+      lcfg.styles = styles;
 
       if (lk_layout(cur, &lcfg, win->rects)) {
         have_rects = 1;
       }
     }
 
-    /* 3. Poll events (after layout so we have rects for hit-testing) */
+    /* 4. Poll events (after layout so we have rects for hit-testing) */
     while (SDL_PollEvent(&sdl_ev)) {
       lk_event lk_ev;
 
@@ -524,8 +529,8 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       continue;
     }
 
-    /* 4. Render */
-    lk_render_build(cur, win->rects, &win->rl);
+    /* 5. Render */
+    lk_render_build(cur, win->rects, lk_ui_styles(win->ui), &win->rl);
 
     SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
     SDL_RenderClear(win->sdl_ren);
@@ -549,17 +554,21 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       case LK_ROP_DRAW_TEXT:
         if (win->font && cmd->str_id != 0) {
           lk_str text = lk_intern_str(cur->intern, cmd->str_id);
+
           if (text.ptr && text.len > 0) {
             char *buf = (char *)malloc(text.len + 1);
+
             if (buf) {
               int tw, th;
               SDL_Texture *tex;
               memcpy(buf, text.ptr, text.len);
               buf[text.len] = '\0';
               tex = text_cache_get(win, cmd->str_id, buf, cmd->color, &tw, &th);
+
               if (tex) {
                 SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
               }
+              
               free(buf);
             }
           }

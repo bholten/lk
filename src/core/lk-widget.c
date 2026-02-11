@@ -34,35 +34,6 @@ const lk_widget_def *lk_widget_get(lk_kind kind) {
   return &g_widgets[(int)kind];
 }
 
-/* ---- Theme colors (moved from lk-render.c) ---- */
-
-static lk_color color_window_bg(void) {
-  lk_color c;
-  c.r = 30;
-  c.g = 30;
-  c.b = 30;
-  c.a = 255;
-  return c;
-}
-
-static lk_color color_button_bg(void) {
-  lk_color c;
-  c.r = 60;
-  c.g = 60;
-  c.b = 60;
-  c.a = 255;
-  return c;
-}
-
-static lk_color color_text(void) {
-  lk_color c;
-  c.r = 220;
-  c.g = 220;
-  c.b = 220;
-  c.a = 255;
-  return c;
-}
-
 /* ---- Measure functions ---- */
 
 static void measure_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
@@ -80,14 +51,14 @@ static void measure_column(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
                            lk_i32 *out_h) {
   const lk_node *nd = &t->nodes[n];
-  lk_i32 pad = lk_node_prop_i32(t, n, UIP_PADDING, 0);
-  lk_i32 gap = lk_node_prop_i32(t, n, UIP_GAP, 0);
+  lk_i32 pad = cfg->styles ? cfg->styles[n].padding
+                           : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 gap = cfg->styles ? cfg->styles[n].gap
+                           : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
   lk_i32 max_w = 0;
   lk_i32 sum_h = 0;
   int count = 0;
-
-  (void)cfg;
 
   while (ch) {
     if (sizes[ch].w > max_w) {
@@ -111,14 +82,14 @@ static void measure_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
                         const lk_layout_cfg *cfg, lk_i32 *out_w,
                         lk_i32 *out_h) {
   const lk_node *nd = &t->nodes[n];
-  lk_i32 pad = lk_node_prop_i32(t, n, UIP_PADDING, 0);
-  lk_i32 gap = lk_node_prop_i32(t, n, UIP_GAP, 0);
+  lk_i32 pad = cfg->styles ? cfg->styles[n].padding
+                           : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 gap = cfg->styles ? cfg->styles[n].gap
+                           : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
   lk_i32 sum_w = 0;
   lk_i32 max_h = 0;
   int count = 0;
-
-  (void)cfg;
 
   while (ch) {
     sum_w += sizes[ch].w;
@@ -165,7 +136,8 @@ static void measure_button(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
                            lk_i32 *out_h) {
   lk_str text = lk_node_text(t, n);
-  lk_i32 pad = lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 pad = cfg->styles ? cfg->styles[n].padding
+                           : lk_node_prop_i32(t, n, UIP_PADDING, 0);
   lk_i32 tw = 0;
   lk_i32 th = 0;
 
@@ -178,11 +150,13 @@ static void measure_button(const lk_tree *t, lk_ix n, const lk_size *sizes,
 /* ---- Layout functions ---- */
 
 static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                         const lk_rect *content, lk_rect *rects) {
+                         const lk_rect *content, const lk_layout_cfg *cfg,
+                         lk_rect *rects) {
   const lk_node *nd = &t->nodes[n];
   lk_ix child = nd->first_child;
 
   (void)sizes;
+  (void)cfg;
 
   while (child) {
     rects[child].x = content->x;
@@ -200,11 +174,15 @@ static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
  * axis=1 -> row    (main=horizontal, cross=vertical)
  */
 static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                        const lk_rect *content, lk_rect *rects, int axis) {
+                        const lk_rect *content, const lk_layout_cfg *cfg,
+                        lk_rect *rects, int axis) {
   const lk_node *nd = &t->nodes[n];
-  lk_i32 gap = lk_node_prop_i32(t, n, UIP_GAP, 0);
-  lk_i32 align = lk_node_prop_i32(t, n, UIP_ALIGN, LK_ALIGN_STRETCH);
-  lk_i32 justify = lk_node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
+  lk_i32 gap = cfg->styles ? cfg->styles[n].gap
+                           : lk_node_prop_i32(t, n, UIP_GAP, 0);
+  lk_i32 align = cfg->styles ? (lk_i32)cfg->styles[n].align
+                             : lk_node_prop_i32(t, n, UIP_ALIGN, LK_ALIGN_STRETCH);
+  lk_i32 justify = cfg->styles ? (lk_i32)cfg->styles[n].justify
+                               : lk_node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
   /* main_size = content extent along main axis
    * cross_size = content extent along cross axis */
   lk_i32 main_size = axis ? content->w : content->h;
@@ -327,19 +305,21 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
 }
 
 static int layout_column(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                         const lk_rect *content, lk_rect *rects) {
-  return layout_stack(t, n, sizes, content, rects, 0);
+                         const lk_rect *content, const lk_layout_cfg *cfg,
+                         lk_rect *rects) {
+  return layout_stack(t, n, sizes, content, cfg, rects, 0);
 }
 
 static int layout_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                      const lk_rect *content, lk_rect *rects) {
-  return layout_stack(t, n, sizes, content, rects, 1);
+                      const lk_rect *content, const lk_layout_cfg *cfg,
+                      lk_rect *rects) {
+  return layout_stack(t, n, sizes, content, cfg, rects, 1);
 }
 
 /* ---- Render functions ---- */
 
 static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                          lk_render_list *out) {
+                          const lk_style *style, lk_render_list *out) {
   lk_render_cmd cmd;
 
   (void)t;
@@ -347,12 +327,12 @@ static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
-  cmd.color = color_window_bg();
+  cmd.color = style->bg;
   lk_render_list_push(out, cmd);
 }
 
 static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                         lk_render_list *out) {
+                         const lk_style *style, lk_render_list *out) {
   lk_u32 sid = lk_node_text_id(t, n);
 
   if (sid != 0) {
@@ -360,22 +340,22 @@ static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_DRAW_TEXT;
     cmd.rect = *rect;
-    cmd.color = color_text();
+    cmd.color = style->fg;
     cmd.str_id = sid;
     lk_render_list_push(out, cmd);
   }
 }
 
 static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                          lk_render_list *out) {
-  lk_i32 pad = lk_node_prop_i32(t, n, UIP_PADDING, 0);
+                          const lk_style *style, lk_render_list *out) {
+  lk_i32 pad = style->padding;
   lk_u32 sid = lk_node_text_id(t, n);
   lk_render_cmd cmd;
 
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
-  cmd.color = color_button_bg();
+  cmd.color = style->bg;
   lk_render_list_push(out, cmd);
 
   if (sid != 0) {
@@ -385,7 +365,7 @@ static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.y = rect->y + pad;
     cmd.rect.w = rect->w - pad * 2;
     cmd.rect.h = rect->h - pad * 2;
-    cmd.color = color_text();
+    cmd.color = style->fg;
     cmd.str_id = sid;
     lk_render_list_push(out, cmd);
   }

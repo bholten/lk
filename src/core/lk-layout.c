@@ -83,7 +83,6 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
                         const lk_size *sizes, lk_rect *rects) {
   lk_ix *stack;
   lk_u32 sp;
-  (void)cfg;
 
   stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
 
@@ -108,14 +107,15 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
       continue;
     }
 
-    pad = lk_node_prop_i32(t, n, UIP_PADDING, 0);
+    pad = cfg->styles ? cfg->styles[n].padding
+                      : lk_node_prop_i32(t, n, UIP_PADDING, 0);
 
     content.x = rects[n].x + pad;
     content.y = rects[n].y + pad;
     content.w = rects[n].w - pad * 2;
     content.h = rects[n].h - pad * 2;
 
-    def->layout(t, n, sizes, &content, rects);
+    def->layout(t, n, sizes, &content, cfg, rects);
 
     /* Push children in reverse order for correct DFS traversal */
     child_count = 0;

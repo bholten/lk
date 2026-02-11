@@ -197,6 +197,60 @@ static int pres_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
   return 1;
 }
 
+static int tags_equal(const lk_tree *prev, lk_ix prev_ix,
+                      const lk_tree *next, lk_ix next_ix) {
+  lk_u32 pi, ni;
+  lk_u32 prev_count = 0;
+  lk_u32 next_count = 0;
+
+  for (pi = 0; pi < prev->tag_count; pi++) {
+    if (prev->tags[pi].node == prev_ix) {
+      prev_count++;
+    }
+  }
+
+  for (ni = 0; ni < next->tag_count; ni++) {
+    if (next->tags[ni].node == next_ix) {
+      next_count++;
+    }
+  }
+
+  if (prev_count != next_count) {
+    return 0;
+  }
+
+  if (prev_count == 0) {
+    return 1;
+  }
+
+  /* Compare tags in order of appearance */
+  pi = 0;
+  ni = 0;
+
+  while (pi < prev->tag_count && ni < next->tag_count) {
+    while (pi < prev->tag_count && prev->tags[pi].node != prev_ix) {
+      pi++;
+    }
+
+    while (ni < next->tag_count && next->tags[ni].node != next_ix) {
+      ni++;
+    }
+
+    if (pi >= prev->tag_count || ni >= next->tag_count) {
+      break;
+    }
+
+    if (prev->tags[pi].tag_id != next->tags[ni].tag_id) {
+      return 0;
+    }
+
+    pi++;
+    ni++;
+  }
+
+  return 1;
+}
+
 static void diff_node(lk_ui *ui, lk_ix prev_ix, lk_ix next_ix) {
   lk_node *pn = &ui->prev->nodes[prev_ix];
   lk_node *nn = &ui->next->nodes[next_ix];
@@ -207,7 +261,8 @@ static void diff_node(lk_ui *ui, lk_ix prev_ix, lk_ix next_ix) {
   lk_u8 *matched = NULL;
 
   if (pn->kind != nn->kind || !props_equal(ui->prev, pn, ui->next, nn) ||
-      !pres_equal(ui->prev, prev_ix, ui->next, next_ix)) {
+      !pres_equal(ui->prev, prev_ix, ui->next, next_ix) ||
+      !tags_equal(ui->prev, prev_ix, ui->next, next_ix)) {
     cs_push(ui, LK_CHANGE_UPDATED, nn->id, next_ix);
   }
 
@@ -362,6 +417,8 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
     return NULL;
   }
 
+  ui->theme = lk_theme_default();
+
   return ui;
 }
 
@@ -400,6 +457,18 @@ void lk_ui_destroy(lk_ui *ui) {
 
   if (ui->cmd_log) {
     ui_dealloc(ui, ui->cmd_log);
+  }
+
+  if (ui->theme) {
+    lk_theme_destroy(ui->theme);
+  }
+
+  if (ui->styles) {
+    ui_dealloc(ui, ui->styles);
+  }
+
+  if (ui->node_states) {
+    ui_dealloc(ui, ui->node_states);
   }
 
   ui->dealloc(ui->alloc_ud, ui);
@@ -459,4 +528,100 @@ const lk_tree *lk_ui_tree(const lk_ui *ui) {
 
 lk_state *lk_ui_state(lk_ui *ui) {
   return ui ? ui->state : NULL;
+}
+
+void lk_ui_set_theme(lk_ui *ui, lk_theme *th) {
+  if (!ui) {
+    return;
+  }
+
+  if (ui->theme) {
+    lk_theme_destroy(ui->theme);
+  }
+
+  ui->theme = th;
+}
+
+lk_theme *lk_ui_theme(lk_ui *ui) {
+  return ui ? ui->theme : NULL;
+}
+
+const lk_style *lk_ui_styles(const lk_ui *ui) {
+  return ui ? ui->styles : NULL;
+}
+
+void lk_ui_resolve_styles(lk_ui *ui) {
+  const lk_tree *t;
+  lk_u32 nc;
+
+  if (!ui || !ui->theme) {
+    return;
+  }
+
+  t = ui->prev;
+  if (!t || t->root == 0 || t->root >= t->node_count) {
+    return;
+  }
+
+  nc = t->node_count;
+
+  /* Ensure styles array is large enough */
+  if (nc > ui->styles_cap) {
+    if (ui->styles) {
+      ui_dealloc(ui, ui->styles);
+    }
+
+    ui->styles =
+        (lk_style *)ui_alloc(ui, (lk_u32)(sizeof(lk_style) * nc));
+
+    if (!ui->styles) {
+      ui->styles_cap = 0;
+      return;
+    }
+
+    ui->styles_cap = nc;
+  }
+
+  /* Ensure node_states array is large enough */
+  if (nc > ui->nstates_cap) {
+    if (ui->node_states) {
+      ui_dealloc(ui, ui->node_states);
+    }
+
+    ui->node_states =
+        (lk_u8 *)ui_alloc(ui, (lk_u32)(sizeof(lk_u8) * nc));
+
+    if (!ui->node_states) {
+      ui->nstates_cap = 0;
+      return;
+    }
+
+    ui->nstates_cap = nc;
+  }
+
+  /* Compute node states */
+  memset(ui->node_states, 0, sizeof(lk_u8) * nc);
+
+  {
+    lk_ix fi;
+
+    /* Mark focused node */
+    if (ui->focused_id != 0) {
+      for (fi = 1; fi < (lk_ix)nc; fi++) {
+        if (t->nodes[fi].id == ui->focused_id) {
+          ui->node_states[fi] |= LK_NSTATE_FOCUSED;
+          break;
+        }
+      }
+    }
+
+    /* Mark disabled nodes */
+    for (fi = 1; fi < (lk_ix)nc; fi++) {
+      if (lk_node_prop_bool(t, fi, UIP_DISABLED)) {
+        ui->node_states[fi] |= LK_NSTATE_DISABLED;
+      }
+    }
+  }
+
+  lk_style_resolve(ui->theme, t, ui->node_states, ui->styles);
 }

@@ -31,8 +31,64 @@ int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
  */
 #define CLIP_END_MARKER 0x80000000u
 
+/* Fallback style resolved from default theme for a given kind,
+ * used when styles == NULL (backward compat for tests).
+ */
+static lk_style g_fallback_styles[LK_KIND_MAX];
+static int g_fallback_inited;
+
+static void init_fallback_styles(void) {
+  lk_theme *th;
+  lk_tree *t;
+  lk_style *buf;
+  int k;
+
+  if (g_fallback_inited) {
+    return;
+  }
+  g_fallback_inited = 1;
+  memset(g_fallback_styles, 0, sizeof(g_fallback_styles));
+
+  /* Build a small tree with one node of each kind and resolve */
+  th = lk_theme_default();
+  if (!th) {
+    return;
+  }
+
+  t = lk_tree_create(NULL);
+  if (!t) {
+    lk_theme_destroy(th);
+    return;
+  }
+
+  /* Add one node per kind (indices 1..UIK__COUNT-1).
+   * Make window the root and all others its children so the
+   * DFS resolver visits every node.
+   */
+  for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
+    lk_tree_add_node(t, (lk_node_id)(k), (lk_kind)k);
+  }
+  lk_tree_set_root(t, 1);
+  for (k = UIK_WINDOW + 1; k < (int)UIK__COUNT; k++) {
+    lk_tree_append_child(t, 1, (lk_ix)k);
+  }
+
+  buf = (lk_style *)lk_sys_alloc(NULL,
+      (lk_u32)(sizeof(lk_style) * t->node_count));
+  if (buf) {
+    lk_style_resolve(th, t, NULL, buf);
+    for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
+      g_fallback_styles[k] = buf[k];
+    }
+    lk_sys_dealloc(NULL, buf);
+  }
+
+  lk_tree_destroy(t);
+  lk_theme_destroy(th);
+}
+
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
-                    lk_render_list *out) {
+                    const lk_style *styles, lk_render_list *out) {
   lk_ix *stack;
   lk_u32 sp;
   /* Stack needs room for each node plus a CLIP_END marker per clipping
@@ -54,6 +110,10 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     return 0;
   }
 
+  if (!styles && !g_fallback_inited) {
+    init_fallback_styles();
+  }
+
   stack_cap = t->node_count * 2;
   stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * stack_cap));
 
@@ -71,6 +131,7 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     lk_kind kind;
     const lk_widget_def *def;
     int clips;
+    const lk_style *node_style;
 
     /* Check for CLIP_END sentinel */
     if (raw & CLIP_END_MARKER) {
@@ -87,8 +148,17 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     def = lk_widget_get(kind);
     clips = (def && def->clips) ? 1 : 0;
 
+    /* Determine style for this node */
+    if (styles) {
+      node_style = &styles[n];
+    } else {
+      node_style = ((int)kind > 0 && (int)kind < LK_KIND_MAX)
+                       ? &g_fallback_styles[(int)kind]
+                       : &g_fallback_styles[0];
+    }
+
     if (def && def->render) {
-      def->render(t, n, &rects[n], out);
+      def->render(t, n, &rects[n], node_style, out);
     }
 
     /* Emit CLIP_BEGIN after own render commands, before children */

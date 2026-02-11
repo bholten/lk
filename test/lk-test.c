@@ -1619,7 +1619,7 @@ static void test_render_empty_tree(void) {
   BEGIN_TEST("render: empty tree returns success");
 
   memset(&rl, 0, sizeof(rl));
-  ok = lk_render_build(t, NULL, &rl);
+  ok = lk_render_build(t, NULL, NULL, &rl);
   CHECK_EQ((unsigned)ok, 1u);
   CHECK_EQ(rl.count, 0u);
 
@@ -1643,7 +1643,7 @@ static void test_render_window_only(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     CHECK_EQ(rl.count, 3u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
     CHECK_EQ((unsigned)rl.cmds[0].rect.w, 800u);
@@ -1680,7 +1680,7 @@ static void test_render_window_column_label(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     /* FILL_RECT + CLIP_BEGIN + DRAW_TEXT + CLIP_END */
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -1719,7 +1719,7 @@ static void test_render_button_with_padding(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     /* window FILL + CLIP_BEGIN + button FILL + button TEXT + CLIP_END */
     CHECK_EQ(rl.count, 5u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -1767,7 +1767,7 @@ static void test_render_larger_tree(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT + CLIP_END = 7 */
     CHECK_EQ(rl.count, 7u);
     lk_render_list_destroy(&rl);
@@ -1801,13 +1801,13 @@ static void test_render_build_reuse(void) {
     memset(&rl, 0, sizeof(rl));
 
     /* first build: FILL + CLIP_BEGIN + TEXT + CLIP_END = 4 */
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     cap_after_first = rl.cap;
     CHECK(cap_after_first > 0);
 
     /* second build on same list — count resets, cap stays */
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ(rl.cap, cap_after_first);
 
@@ -2736,7 +2736,7 @@ static void test_widget_override_render(void) {
   lk_rect *r;
   lk_render_list rl;
   lk_widget_def override;
-  const lk_widget_def *orig;
+  lk_widget_def saved;
   lk_u32 count_before;
   lk_u32 count_after;
   lk_ix w, col, lbl;
@@ -2758,23 +2758,23 @@ static void test_widget_override_render(void) {
 
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     count_before = rl.count;
 
     /* Override LABEL to emit nothing */
-    orig = lk_widget_get(UIK_LABEL);
-    override = *orig;
+    saved = *lk_widget_get(UIK_LABEL);
+    override = saved;
     override.render = NULL;
     lk_widget_register(UIK_LABEL, &override);
 
     rl.count = 0;
-    lk_render_build(t, r, &rl);
+    lk_render_build(t, r, NULL, &rl);
     count_after = rl.count;
 
     CHECK(count_after < count_before);
 
     /* Restore original */
-    lk_widget_register(UIK_LABEL, orig);
+    lk_widget_register(UIK_LABEL, &saved);
 
     lk_render_list_destroy(&rl);
     free(r);
@@ -3774,6 +3774,749 @@ static void test_state_remove_node_manual(void) {
 
 
 /* ================================================================
+ * Style system tests
+ * ================================================================ */
+
+static void test_theme_create_destroy(void) {
+  lk_theme *th;
+  BEGIN_TEST("style: theme create/destroy");
+  th = lk_theme_new();
+  CHECK(th != NULL);
+  lk_theme_destroy(th);
+  END_TEST();
+}
+
+static void test_style_resolve_basic(void) {
+  /* window > column > button — verify colors match default theme */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_ix w, col, btn;
+
+  BEGIN_TEST("style: resolve basic (default theme colors)");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  th = lk_theme_default();
+  CHECK(th != NULL);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  CHECK(styles != NULL);
+
+  if (th && styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    /* window bg = (30,30,30,255) */
+    CHECK_EQ(styles[w].bg.r, 30);
+    CHECK_EQ(styles[w].bg.g, 30);
+    CHECK_EQ(styles[w].bg.a, 255);
+    /* button bg = (60,60,60,255) */
+    CHECK_EQ(styles[btn].bg.r, 60);
+    CHECK_EQ(styles[btn].bg.g, 60);
+    CHECK_EQ(styles[btn].bg.a, 255);
+    /* button padding = 8 */
+    CHECK_EQ((unsigned)styles[btn].padding, 8u);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_resolve_inheritance(void) {
+  /* window fg propagates to label child */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_ix w, col, lbl;
+
+  BEGIN_TEST("style: fg inherits from parent");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  th = lk_theme_default();
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (th && styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    /* label inherits fg = (220,220,220,255) from wildcard rule */
+    CHECK_EQ(styles[lbl].fg.r, 220);
+    CHECK_EQ(styles[lbl].fg.g, 220);
+    CHECK_EQ(styles[lbl].fg.b, 220);
+    CHECK_EQ(styles[lbl].fg.a, 255);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_resolve_tree_prop_override(void) {
+  /* Tree prop UIP_PADDING on node overrides theme rule */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_ix w, btn;
+
+  BEGIN_TEST("style: tree prop override (padding)");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  /* theme says padding=8 for buttons, but tree prop says 20 */
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(20));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  th = lk_theme_default();
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (th && styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[btn].padding, 20u);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_resolve_rule_order(void) {
+  /* Later rule wins for same field */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w;
+
+  BEGIN_TEST("style: later rule wins for same field");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 10;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s, LK_SF_BG);
+
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 99;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s, LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ(styles[w].bg.r, 99);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_resolve_state_match(void) {
+  /* Button with FOCUSED state gets different bg */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_u8 *nstates;
+  lk_style s;
+  lk_ix w, btn;
+
+  BEGIN_TEST("style: state match (focused button)");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  th = lk_theme_new();
+  /* normal button bg */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 60;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG);
+
+  /* focused button bg */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 100;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, LK_NSTATE_FOCUSED, &s, LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  nstates = (lk_u8 *)malloc(sizeof(lk_u8) * t->node_count);
+
+  if (styles && nstates) {
+    memset(nstates, 0, sizeof(lk_u8) * t->node_count);
+    nstates[btn] = LK_NSTATE_FOCUSED;
+    lk_style_resolve(th, t, nstates, styles);
+    CHECK_EQ(styles[btn].bg.r, 100);
+  }
+
+  free(nstates);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_trace(void) {
+  lk_tree *t;
+  lk_theme *th;
+  lk_style s;
+  lk_style_trace trace;
+  lk_ix w;
+
+  BEGIN_TEST("style: trace reports matching rules");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+
+  th = lk_theme_new();
+  /* rule 0: wildcard fg */
+  memset(&s, 0, sizeof(s));
+  s.fg.r = 220;
+  lk_theme_add_rule(th, 0, 0, 0, &s, LK_SF_FG);
+  /* rule 1: window bg */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 30;
+  lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s, LK_SF_BG);
+  /* rule 2: button only (should not match) */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 60;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG);
+
+  memset(&trace, 0, sizeof(trace));
+  lk_style_trace_node(th, t, w, 0, &trace);
+
+  /* Should match rules 0 and 1, not 2 */
+  CHECK_EQ(trace.count, 2u);
+  if (trace.count >= 2) {
+    CHECK_EQ(trace.entries[0].rule_index, 0u);
+    CHECK_EQ(trace.entries[0].field_mask, LK_SF_FG);
+    CHECK_EQ(trace.entries[1].rule_index, 1u);
+    CHECK_EQ(trace.entries[1].field_mask, LK_SF_BG);
+  }
+
+  if (trace.entries) {
+    free(trace.entries);
+  }
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ================================================================
+ * Style + layout integration tests
+ * ================================================================ */
+
+static void test_layout_with_resolved_styles(void) {
+  /* Theme sets button padding=20, verify geometry */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, btn;
+
+  BEGIN_TEST("layout: resolved styles drive padding");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  /* Custom theme with padding=20 on buttons */
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.padding = 20;
+  s.bg.r = 60; s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_PADDING | LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (th && styles && rects) {
+    lk_style_resolve(th, t, NULL, styles);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+
+    lk_layout(t, &cfg, rects);
+
+    /* Button padding in layout is 20 (from style, not tree prop).
+     * The layout_pass reads cfg->styles[n].padding = 20.
+     * But button has no layout func (leaf), so padding affects only
+     * the parent's layout_pass content rect. For the button's own
+     * rendering, the style padding is used.
+     *
+     * Actually, padding on the button itself is read by the layout engine
+     * when computing the button's content rect. But button is a leaf
+     * (no layout func), so the engine skips it. The padding only
+     * affects the measure function (measure_button reads tree prop).
+     *
+     * For this test, let's verify the render uses style padding.
+     */
+    {
+      lk_render_list rl;
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build(t, rects, styles, &rl);
+      /* button FILL_RECT at rl.cmds[2] (after window FILL + CLIP_BEGIN)
+       * button TEXT at rl.cmds[3]
+       * text should be inset by 20 from button rect
+       */
+      if (rl.count >= 4) {
+        CHECK_EQ((unsigned)rl.cmds[3].rect.x,
+                 (unsigned)(rl.cmds[2].rect.x + 20));
+        CHECK_EQ((unsigned)rl.cmds[3].rect.y,
+                 (unsigned)(rl.cmds[2].rect.y + 20));
+      }
+      lk_render_list_destroy(&rl);
+    }
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_layout_style_tree_prop_override(void) {
+  /* Theme says padding=10, tree prop says padding=5, verify 5 wins */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, btn;
+
+  BEGIN_TEST("layout: tree prop overrides style padding");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(5));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, btn);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.padding = 10;
+  s.bg.r = 60; s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_PADDING | LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (th && styles && rects) {
+    lk_style_resolve(th, t, NULL, styles);
+    /* Resolver should give padding=5 (tree prop wins) */
+    CHECK_EQ((unsigned)styles[btn].padding, 5u);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+
+    lk_layout(t, &cfg, rects);
+
+    {
+      lk_render_list rl;
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build(t, rects, styles, &rl);
+      if (rl.count >= 4) {
+        CHECK_EQ((unsigned)rl.cmds[3].rect.x,
+                 (unsigned)(rl.cmds[2].rect.x + 5));
+      }
+      lk_render_list_destroy(&rl);
+    }
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ================================================================
+ * Tag tests
+ * ================================================================ */
+
+static void test_tag_add_query(void) {
+  lk_tree *t;
+  lk_ix w, btn;
+
+  BEGIN_TEST("tag: add and query");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  lk_tree_add_tag_s(t, btn, "primary");
+
+  CHECK(lk_tree_has_tag(t, btn, lk_intern_cid(t->intern, "primary")));
+  CHECK(!lk_tree_has_tag(t, btn, lk_intern_cid(t->intern, "other")));
+  CHECK(!lk_tree_has_tag(t, w, lk_intern_cid(t->intern, "primary")));
+
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_tag_diffing(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_changeset *cs;
+
+  BEGIN_TEST("tag: adding tag triggers UPDATED");
+
+  /* Frame 1: button, no tags */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+  }
+  lk_ui_end_frame(ui);
+
+  /* Frame 2: same button, add tag */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_tag_s(t, btn, "primary");
+  }
+  cs = lk_ui_end_frame(ui);
+
+  CHECK(cs_has(cs, ui, LK_CHANGE_UPDATED, "btn"));
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_style_resolve_with_tag(void) {
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, btn;
+
+  BEGIN_TEST("style: resolve with tag match");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+  lk_tree_add_tag_s(t, btn, "danger");
+
+  th = lk_theme_new();
+  /* base button bg */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 60;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG);
+
+  /* "danger" tagged button gets red bg */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 200;
+  s.bg.g = 50;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON,
+                    lk_intern_cid(t->intern, "danger"),
+                    0, &s, LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ(styles[btn].bg.r, 200);
+    CHECK_EQ(styles[btn].bg.g, 50);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_tag_multiple_on_node(void) {
+  lk_tree *t;
+  lk_ix w, btn;
+
+  BEGIN_TEST("tag: multiple tags on one node");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  lk_tree_add_tag_s(t, btn, "primary");
+  lk_tree_add_tag_s(t, btn, "large");
+
+  CHECK(lk_tree_has_tag(t, btn, lk_intern_cid(t->intern, "primary")));
+  CHECK(lk_tree_has_tag(t, btn, lk_intern_cid(t->intern, "large")));
+  CHECK(!lk_tree_has_tag(t, btn, lk_intern_cid(t->intern, "small")));
+
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ---- Phase 5: lk_ui owns theme + styles ---- */
+
+static void test_ui_owns_default_theme(void) {
+  lk_ui *ui;
+
+  BEGIN_TEST("ui: owns default theme");
+
+  ui = lk_ui_create(NULL);
+  CHECK(ui != NULL);
+  CHECK(lk_ui_theme(ui) != NULL);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_ui_resolve_styles_headless(void) {
+  lk_ui *ui;
+  lk_tree *tree;
+  const lk_tree *cur;
+  const lk_style *styles;
+  lk_ix w, btn;
+
+  BEGIN_TEST("ui: resolve_styles headless");
+
+  ui = lk_ui_create(NULL);
+
+  /* Build a frame */
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+  cur = lk_ui_tree(ui);
+
+  /* Before resolve, styles should be NULL */
+  CHECK(lk_ui_styles(ui) == NULL);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles != NULL);
+
+  /* Window bg should match default theme (30,30,30) */
+  CHECK(styles[cur->root].bg.r == 30);
+  CHECK(styles[cur->root].bg.g == 30);
+  CHECK(styles[cur->root].bg.b == 30);
+
+  /* Button bg should match default theme (60,60,60) */
+  CHECK(styles[btn].bg.r == 60);
+  CHECK(styles[btn].bg.g == 60);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+static void test_ui_set_theme_custom(void) {
+  lk_ui *ui;
+  lk_theme *th;
+  lk_style s;
+  lk_tree *tree;
+  lk_ix w;
+  const lk_style *styles;
+
+  BEGIN_TEST("ui: set_theme with custom theme");
+
+  ui = lk_ui_create(NULL);
+
+  /* Create custom theme with red window bg */
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 255;
+  s.bg.g = 0;
+  s.bg.b = 0;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s, LK_SF_BG);
+
+  lk_ui_set_theme(ui, th);
+  CHECK(lk_ui_theme(ui) == th);
+
+  /* Build a frame and resolve */
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(tree, w);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles != NULL);
+
+  /* Window bg should be red from custom theme */
+  CHECK(styles[w].bg.r == 255);
+  CHECK(styles[w].bg.g == 0);
+  CHECK(styles[w].bg.b == 0);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
+/* ================================================================
+ * Tests: deferred prop append (lazy props_off)
+ * ================================================================ */
+
+/* Create all nodes first, then add props grouped per node.
+ * This is the pattern used by Lcl scripts (hello.lcl). */
+static void test_prop_deferred_all_nodes_first(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, lbl, btn;
+
+  BEGIN_TEST("prop: all nodes first, then grouped props");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+
+  /* props grouped per node — not interleaved */
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(10));
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(5));
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(8));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+  lk_tree_append_child(t, col, btn);
+
+  CHECK_EQ((unsigned)lk_node_prop_i32(t, col, UIP_PADDING, 0), 10u);
+  CHECK_EQ((unsigned)lk_node_prop_i32(t, col, UIP_GAP, 0), 5u);
+  CHECK(lk_str_cmp(lk_node_text(t, lbl), lk_str_c("Hello")));
+  CHECK(lk_str_cmp(lk_node_text(t, btn), lk_str_c("OK")));
+  CHECK_EQ((unsigned)lk_node_prop_i32(t, btn, UIP_PADDING, 0), 8u);
+
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* Interleaved props for different nodes: second add to node A after
+ * adding props to node B should be silently dropped. */
+static void test_prop_interleave_drops(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col;
+
+  BEGIN_TEST("prop: interleaved props for different nodes drop");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(10));
+  lk_tree_add_prop(t, w, UIP_PADDING, lk_v_i32(5));
+  /* Now try adding a second prop to col — arena tail belongs to w */
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(8));
+
+  CHECK_EQ((unsigned)lk_node_prop_i32(t, col, UIP_PADDING, 0), 10u);
+  CHECK_EQ((unsigned)lk_node_prop_i32(t, w, UIP_PADDING, 0), 5u);
+  /* col's GAP was dropped — interleaving */
+  CHECK_EQ((unsigned)lk_node_prop_i32(t, col, UIP_GAP, 0), 0u);
+
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* End-to-end: build tree like hello.lcl (all nodes first), then
+ * verify render list contains DRAW_TEXT commands. */
+static void test_render_deferred_props_emit_text(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, lbl, btn;
+  lk_rect *r;
+  lk_render_list rl;
+  lk_u32 text_count;
+  lk_u32 i;
+
+  BEGIN_TEST("render: deferred props produce DRAW_TEXT");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+
+  /* all props after all nodes — the hello.lcl pattern */
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(10));
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Title"));
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_add_prop(t, btn, UIP_PADDING, lk_v_i32(4));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+  lk_tree_append_child(t, col, btn);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, NULL, &rl);
+
+    text_count = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+        text_count++;
+      }
+    }
+    /* label text + button text = 2 DRAW_TEXT commands */
+    CHECK_EQ(text_count, 2u);
+
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -3939,6 +4682,40 @@ int main(void) {
   test_state_multiple_keys();
   test_state_gc_preserves_other();
   test_state_remove_node_manual();
+
+  /* style + layout */
+  printf("\nlk style+layout tests:\n");
+  test_layout_with_resolved_styles();
+  test_layout_style_tree_prop_override();
+
+  /* tags */
+  printf("\nlk tag tests:\n");
+  test_tag_add_query();
+  test_tag_diffing();
+  test_style_resolve_with_tag();
+  test_tag_multiple_on_node();
+
+  /* style system */
+  printf("\nlk style tests:\n");
+  test_theme_create_destroy();
+  test_style_resolve_basic();
+  test_style_resolve_inheritance();
+  test_style_resolve_tree_prop_override();
+  test_style_resolve_rule_order();
+  test_style_resolve_state_match();
+  test_style_trace();
+
+  /* ui style integration */
+  printf("\nlk ui style tests:\n");
+  test_ui_owns_default_theme();
+  test_ui_resolve_styles_headless();
+  test_ui_set_theme_custom();
+
+  /* deferred prop append */
+  printf("\nlk deferred prop tests:\n");
+  test_prop_deferred_all_nodes_first();
+  test_prop_interleave_drops();
+  test_render_deferred_props_emit_text();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
