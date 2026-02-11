@@ -148,6 +148,14 @@ typedef struct lk_presentation {
   lk_value pvalue; /* semantic value */
 } lk_presentation;
 
+/**
+ * Tag — attaches a named tag to a node for style matching.
+ **/
+typedef struct lk_tag {
+  lk_ix node;
+  lk_u32 tag_id;
+} lk_tag;
+
 typedef struct lk_tree {
   lk_intern *intern;
   lk_u8 owns_intern; /* 1 if tree created the intern table */
@@ -160,6 +168,9 @@ typedef struct lk_tree {
   lk_presentation *pres;
   lk_u32 pres_cap;
   lk_u32 pres_count;
+  lk_tag *tags;
+  lk_u32 tag_count;
+  lk_u32 tag_cap;
   lk_ix root;
   void *(*alloc)(void *ud, lk_u32 bytes);
   void (*dealloc)(void *ud, void *ptr);
@@ -211,6 +222,11 @@ void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
 void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
                                 lk_value pvalue);
 const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node);
+
+/* Tags — attach named tags to nodes for style matching. */
+void lk_tree_add_tag(lk_tree *t, lk_ix node, lk_u32 tag_id);
+void lk_tree_add_tag_s(lk_tree *t, lk_ix node, const char *tag);
+int  lk_tree_has_tag(const lk_tree *t, lk_ix node, lk_u32 tag_id);
 
 /* Value constructors. */
 lk_value lk_v_none(void);
@@ -464,6 +480,13 @@ typedef struct lk_ui {
   lk_command *cmd_log;
   lk_u32 cmd_log_count;
   lk_u32 cmd_log_cap;
+
+  /* Style system */
+  struct lk_theme *theme;
+  struct lk_style *styles;
+  lk_u32 styles_cap;
+  lk_u8 *node_states;
+  lk_u32 nstates_cap;
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -491,6 +514,12 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui);
 /* Return the current tree (valid after end_frame, before next
    begin_frame). */
 const lk_tree *lk_ui_tree(const lk_ui *ui);
+
+/* Style system integration */
+void             lk_ui_set_theme(lk_ui *ui, struct lk_theme *th);
+struct lk_theme *lk_ui_theme(lk_ui *ui);
+const struct lk_style *lk_ui_styles(const lk_ui *ui);
+void lk_ui_resolve_styles(lk_ui *ui);
 
 /**
  * Node prop query helpers
@@ -571,6 +600,7 @@ typedef struct lk_layout_cfg {
   lk_measure_text_fn measure_text;
   void *measure_ud;
   lk_i32 viewport_w, viewport_h;
+  const struct lk_style *styles; /* NULL = read tree props directly */
 } lk_layout_cfg;
 
 /* Compute layout rects for every node in the tree. rects[] must be
@@ -593,6 +623,62 @@ int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,
 typedef struct lk_color {
   lk_u8 r, g, b, a;
 } lk_color;
+
+/**
+ * Style system — resolved appearance for a node.
+ **/
+
+typedef struct lk_style {
+  lk_color fg, bg, border_color;
+  lk_u32 font_id;
+  lk_i32 font_size, padding, gap, border_width, border_radius;
+  lk_u8 align, justify;
+} lk_style;
+
+/* Field mask bits */
+#define LK_SF_FG            (1u << 0)
+#define LK_SF_BG            (1u << 1)
+#define LK_SF_FONT_ID       (1u << 2)
+#define LK_SF_FONT_SIZE     (1u << 3)
+#define LK_SF_PADDING       (1u << 4)
+#define LK_SF_GAP           (1u << 5)
+#define LK_SF_BORDER_WIDTH  (1u << 6)
+#define LK_SF_BORDER_COLOR  (1u << 7)
+#define LK_SF_BORDER_RADIUS (1u << 8)
+#define LK_SF_ALIGN         (1u << 9)
+#define LK_SF_JUSTIFY       (1u << 10)
+
+/* Inheritable fields: fg, font_id, font_size */
+#define LK_STYLE_INHERIT_MASK (LK_SF_FG | LK_SF_FONT_ID | LK_SF_FONT_SIZE)
+
+/* Node interaction state bits */
+#define LK_NSTATE_FOCUSED  (1u << 0)
+#define LK_NSTATE_HOVERED  (1u << 1)
+#define LK_NSTATE_DISABLED (1u << 2)
+
+typedef struct lk_theme lk_theme;
+
+lk_theme *lk_theme_new(void);
+void      lk_theme_destroy(lk_theme *th);
+void      lk_theme_add_rule(lk_theme *th, lk_u16 kind, lk_u32 tag_id,
+                            lk_u8 state_mask, const lk_style *style,
+                            lk_u32 field_mask);
+lk_theme *lk_theme_default(void);
+
+void lk_style_resolve(const lk_theme *th, const lk_tree *t,
+                      const lk_u8 *node_states, lk_style *styles);
+
+/* Style tracing */
+typedef struct lk_style_trace_entry {
+  lk_u32 rule_index, field_mask;
+} lk_style_trace_entry;
+typedef struct lk_style_trace {
+  lk_style_trace_entry *entries;
+  lk_u32 count, cap;
+} lk_style_trace;
+void lk_style_trace_node(const lk_theme *th, const lk_tree *t,
+                         lk_ix node, lk_u8 node_state,
+                         lk_style_trace *out);
 
 typedef enum lk_render_op {
   LK_ROP_FILL_RECT = 1,
@@ -619,7 +705,7 @@ typedef struct lk_render_list {
  * Returns 1 on success, 0 on failure.
  */
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
-                    lk_render_list *out);
+                    const lk_style *styles, lk_render_list *out);
 
 /* Push a command to the render list (grows as needed). Returns 1 on
  * success, 0 on allocation failure. */
@@ -641,10 +727,11 @@ typedef struct lk_widget_def {
   /* Position children within content rect (parent rect minus padding).
    * Returns 1 if children need recursive layout, 0 for leaves. */
   int (*layout)(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                const lk_rect *content, lk_rect *rects);
+                const lk_rect *content, const lk_layout_cfg *cfg,
+                lk_rect *rects);
 
   void (*render)(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                 lk_render_list *out);
+                 const lk_style *style, lk_render_list *out);
 
   lk_u8 clips; /* 1 if this node clips children */
 } lk_widget_def;

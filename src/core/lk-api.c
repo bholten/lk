@@ -263,6 +263,7 @@ int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,
   cfg.measure_text = lk_measure_text_stub;
   cfg.viewport_w = viewport_w;
   cfg.viewport_h = viewport_h;
+  cfg.styles = NULL;
 
   return lk_layout(t, &cfg, rects);
 }

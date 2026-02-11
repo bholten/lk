@@ -1,7 +1,7 @@
 /*
  * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
  *
- * Exposes 26 procs in the "lk" namespace for building UI trees,
+ * Exposes 28 procs in the "lk" namespace for building UI trees,
  * managing frames, commands, translators, state, focus, and interning.
  * SDL window procs are conditionally compiled when LK_HAVE_SDL is set.
  *
@@ -83,14 +83,24 @@ static const str_enum align_table[] = {
   { NULL, 0 }
 };
 
+static const str_enum state_table[] = {
+  { "focused",  LK_NSTATE_FOCUSED },
+  { "hovered",  LK_NSTATE_HOVERED },
+  { "disabled", LK_NSTATE_DISABLED },
+  { NULL, 0 }
+};
+
 static int lookup_enum(const str_enum *table, const char *name, int *out) {
   const str_enum *e;
+
   for (e = table; e->name; e++) {
     if (strcmp(e->name, name) == 0) {
       *out = e->value;
+
       return 1;
     }
   }
+
   return 0;
 }
 
@@ -112,17 +122,25 @@ static void ui_finalizer(void *ptr) {
 static int c_lk_ui_create(lcl_interp *interp, int argc, lcl_value **argv,
                            lcl_value **out) {
   lk_ui *ui;
-  (void)interp; (void)argv;
+  (void)interp;
+  (void)argv;
+
   if (argc != 0) {
     lcl_set_error(interp, "lk::ui_create: expected 0 arguments");
+
     return LCL_RC_ERR;
   }
+
   ui = lk_ui_create(NULL);
+
   if (!ui) {
     lcl_set_error(interp, "lk::ui_create: allocation failed");
+
     return LCL_RC_ERR;
   }
+
   *out = lcl_opaque_new(ui, LK_UI_TYPE, ui_finalizer);
+
   return LCL_RC_OK;
 }
 
@@ -130,21 +148,28 @@ static int c_lk_ui_create(lcl_interp *interp, int argc, lcl_value **argv,
 static int c_lk_ui_destroy(lcl_interp *interp, int argc, lcl_value **argv,
                             lcl_value **out) {
   lk_ui *ui;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::ui_destroy: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::ui_destroy: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   lk_ui_destroy(ui);
+
   /* Prevent double-free via finalizer: clear the opaque pointer.
    * lcl_opaque_get returns the raw ptr; we need to null it out.
    * Since we can't modify the opaque directly, we accept the finalizer
    * will be called on a now-invalid pointer.  The convention is:
    * after explicit destroy, drop all references immediately. */
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -153,17 +178,24 @@ static int c_lk_begin_frame(lcl_interp *interp, int argc, lcl_value **argv,
                              lcl_value **out) {
   lk_ui *ui;
   lk_tree *t;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::begin_frame: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::begin_frame: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   t = lk_ui_begin_frame(ui);
+
   /* Tree is owned by ui, no finalizer */
   *out = lcl_opaque_new(t, LK_TREE_TYPE, NULL);
+
   return LCL_RC_OK;
 }
 
@@ -177,10 +209,13 @@ static int c_lk_end_frame(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 1) {
     lcl_set_error(interp, "lk::end_frame: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::end_frame: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
 
@@ -199,6 +234,7 @@ static int c_lk_end_frame(lcl_interp *interp, int argc, lcl_value **argv,
     case LK_CHANGE_UPDATED: kind_str = "updated"; break;
     default:                kind_str = "unknown"; break;
     }
+
     v = lcl_string_new(kind_str);
     lcl_dict_put(&dict, "kind", v);
     lcl_ref_dec(v);
@@ -214,11 +250,13 @@ static int c_lk_end_frame(lcl_interp *interp, int argc, lcl_value **argv,
     /* Resolve id to string */
     {
       const char *id_str = lk_intern_cstr(ui->intern, ch->id);
+
       if (id_str) {
         v = lcl_string_new(id_str);
       } else {
         v = lcl_string_new("");
       }
+
       lcl_dict_put(&dict, "id_str", v);
       lcl_ref_dec(v);
     }
@@ -228,6 +266,7 @@ static int c_lk_end_frame(lcl_interp *interp, int argc, lcl_value **argv,
   }
 
   *out = list;
+
   return LCL_RC_OK;
 }
 
@@ -236,17 +275,24 @@ static int c_lk_tree(lcl_interp *interp, int argc, lcl_value **argv,
                       lcl_value **out) {
   lk_ui *ui;
   const lk_tree *t;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::tree: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::tree: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   t = lk_ui_tree(ui);
+
   /* Cast away const: the tree is borrowed, no finalizer */
   *out = lcl_opaque_new((void *)t, LK_TREE_TYPE, NULL);
+
   return LCL_RC_OK;
 }
 
@@ -266,22 +312,29 @@ static int c_lk_node(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 3) {
     lcl_set_error(interp, "lk::node: expected 3 arguments (tree, id, kind)");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_TREE_TYPE, (void **)&t) != LCL_OK) {
     lcl_set_error(interp, "lk::node: expected lk_tree opaque");
+
     return LCL_RC_ERR;
   }
+
   id_str = lcl_value_to_string(argv[1]);
   kind_str = lcl_value_to_string(argv[2]);
 
   if (!lookup_enum(kind_table, kind_str, &kind_val)) {
     lcl_set_error(interp, "lk::node: unknown kind");
+
     return LCL_RC_ERR;
   }
 
   ix = lk_tree_add_node_c(t, id_str, (lk_kind)kind_val);
+
   *out = lcl_int_new((long)ix);
+
   return LCL_RC_OK;
 }
 
@@ -293,19 +346,26 @@ static int c_lk_set_root(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::set_root: expected 2 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_TREE_TYPE, (void **)&t) != LCL_OK) {
     lcl_set_error(interp, "lk::set_root: expected lk_tree opaque");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_value_to_int(argv[1], &ix) != LCL_OK) {
     lcl_set_error(interp, "lk::set_root: node_ix must be an integer");
+
     return LCL_RC_ERR;
   }
 
   lk_tree_set_root(t, (lk_ix)ix);
+
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -317,23 +377,32 @@ static int c_lk_append_child(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 3) {
     lcl_set_error(interp, "lk::append_child: expected 3 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_TREE_TYPE, (void **)&t) != LCL_OK) {
     lcl_set_error(interp, "lk::append_child: expected lk_tree opaque");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_value_to_int(argv[1], &parent_ix) != LCL_OK) {
     lcl_set_error(interp, "lk::append_child: parent_ix must be an integer");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_value_to_int(argv[2], &child_ix) != LCL_OK) {
     lcl_set_error(interp, "lk::append_child: child_ix must be an integer");
+
     return LCL_RC_ERR;
   }
 
   lk_tree_append_child(t, (lk_ix)parent_ix, (lk_ix)child_ix);
+
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -348,19 +417,27 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 4) {
     lcl_set_error(interp, "lk::prop: expected 4 arguments (tree, node, key, value)");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_TREE_TYPE, (void **)&t) != LCL_OK) {
     lcl_set_error(interp, "lk::prop: expected lk_tree opaque");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_value_to_int(argv[1], &node_ix) != LCL_OK) {
     lcl_set_error(interp, "lk::prop: node_ix must be an integer");
+
     return LCL_RC_ERR;
   }
+
   key_str = lcl_value_to_string(argv[2]);
+
   if (!lookup_enum(prop_table, key_str, &key_val)) {
     lcl_set_error(interp, "lk::prop: unknown prop key");
+
     return LCL_RC_ERR;
   }
 
@@ -409,6 +486,7 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
 
   lk_tree_add_prop(t, (lk_ix)node_ix, (lk_prop_key)key_val, lv);
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -422,16 +500,22 @@ static int c_lk_present(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 4) {
     lcl_set_error(interp, "lk::present: expected 4 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_TREE_TYPE, (void **)&t) != LCL_OK) {
     lcl_set_error(interp, "lk::present: expected lk_tree opaque");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_value_to_int(argv[1], &node_ix) != LCL_OK) {
     lcl_set_error(interp, "lk::present: node_ix must be an integer");
+
     return LCL_RC_ERR;
   }
+
   ptype_str = lcl_value_to_string(argv[2]);
 
   /* pvalue: try int first, fall back to string */
@@ -446,6 +530,7 @@ static int c_lk_present(lcl_interp *interp, int argc, lcl_value **argv,
 
   lk_tree_add_presentation_s(t, (lk_ix)node_ix, ptype_str, pv);
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -469,10 +554,13 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 5) {
     lcl_set_error(interp, "lk::add_translator: expected 5 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::add_translator: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
 
@@ -486,8 +574,10 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
     int ev_val;
     if (!lookup_enum(event_table, ev_str, &ev_val)) {
       lcl_set_error(interp, "lk::add_translator: unknown event type");
+
       return LCL_RC_ERR;
     }
+
     ev_type = (lk_u8)ev_val;
   }
 
@@ -510,6 +600,7 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
   lk_ui_add_translator(ui, ev_type, ptype, node_kind, cmd_name);
 
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -548,9 +639,11 @@ static lcl_value *command_to_dict(const lk_command *cmd, const lk_intern *intern
         av = lcl_string_new("");
         break;
       }
+
       lcl_list_push(&args_list, av);
       lcl_ref_dec(av);
     }
+
     lcl_dict_put(&dict, "args", args_list);
     lcl_ref_dec(args_list);
   }
@@ -581,10 +674,13 @@ static int c_lk_commands(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 1) {
     lcl_set_error(interp, "lk::commands: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::commands: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
 
@@ -598,6 +694,7 @@ static int c_lk_commands(lcl_interp *interp, int argc, lcl_value **argv,
   }
 
   *out = list;
+
   return LCL_RC_OK;
 }
 
@@ -605,16 +702,22 @@ static int c_lk_commands(lcl_interp *interp, int argc, lcl_value **argv,
 static int c_lk_clear_commands(lcl_interp *interp, int argc, lcl_value **argv,
                                 lcl_value **out) {
   lk_ui *ui;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::clear_commands: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::clear_commands: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   lk_ui_clear_commands(ui);
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -629,10 +732,13 @@ static int c_lk_command_log(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 1) {
     lcl_set_error(interp, "lk::command_log: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::command_log: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
 
@@ -646,6 +752,7 @@ static int c_lk_command_log(lcl_interp *interp, int argc, lcl_value **argv,
   }
 
   *out = list;
+
   return LCL_RC_OK;
 }
 
@@ -653,16 +760,22 @@ static int c_lk_command_log(lcl_interp *interp, int argc, lcl_value **argv,
 static int c_lk_clear_command_log(lcl_interp *interp, int argc,
                                    lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::clear_command_log: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::clear_command_log: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   lk_ui_clear_command_log(ui);
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -683,15 +796,21 @@ static int c_lk_state_set(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 4) {
     lcl_set_error(interp, "lk::state_set: expected 4 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::state_set: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   node_str = lcl_value_to_string(argv[1]);
+
   if (lcl_value_to_int(argv[2], &key) != LCL_OK) {
     lcl_set_error(interp, "lk::state_set: key must be an integer");
+
     return LCL_RC_ERR;
   }
 
@@ -711,6 +830,7 @@ static int c_lk_state_set(lcl_interp *interp, int argc, lcl_value **argv,
   lk_state_set(st, nid, (lk_u16)key, lv);
 
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -726,15 +846,21 @@ static int c_lk_state_get(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 3) {
     lcl_set_error(interp, "lk::state_get: expected 3 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::state_get: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   node_str = lcl_value_to_string(argv[1]);
+
   if (lcl_value_to_int(argv[2], &key) != LCL_OK) {
     lcl_set_error(interp, "lk::state_get: key must be an integer");
+
     return LCL_RC_ERR;
   }
 
@@ -758,6 +884,7 @@ static int c_lk_state_get(lcl_interp *interp, int argc, lcl_value **argv,
     *out = lcl_string_new("");
     break;
   }
+
   return LCL_RC_OK;
 }
 
@@ -776,18 +903,23 @@ static int c_lk_focus_set(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::focus_set: expected 2 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::focus_set: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   id_str = lcl_value_to_string(argv[1]);
   nid = lk_intern_cid(ui->intern, id_str);
   t = lk_ui_tree(ui);
   lk_focus_set(ui, t, nid);
 
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -795,16 +927,269 @@ static int c_lk_focus_set(lcl_interp *interp, int argc, lcl_value **argv,
 static int c_lk_focus_clear(lcl_interp *interp, int argc, lcl_value **argv,
                              lcl_value **out) {
   lk_ui *ui;
+
   if (argc != 1) {
     lcl_set_error(interp, "lk::focus_clear: expected 1 argument");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::focus_clear: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   lk_focus_clear(ui);
+
   *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
+ * Tags & Style (2)
+ * ============================================================================
+ */
+
+/* lk::tag [tree, node_ix, tag_str] -> "" */
+static int c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
+                     lcl_value **out) {
+  lk_tree *t;
+  long node_ix;
+  const char *tag_str;
+
+  if (argc != 3) {
+    lcl_set_error(interp, "lk::tag: expected 3 arguments (tree, node, tag)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_TREE_TYPE, (void **)&t) != LCL_OK) {
+    lcl_set_error(interp, "lk::tag: expected lk_tree opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &node_ix) != LCL_OK) {
+    lcl_set_error(interp, "lk::tag: node_ix must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  tag_str = lcl_value_to_string(argv[2]);
+  lk_tree_add_tag_s(t, (lk_ix)node_ix, tag_str);
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* Helper: parse (r g b) or (r g b a) list into lk_color */
+static int parse_color_list(lcl_value *list, lk_color *out) {
+  size_t len;
+  lcl_value *v;
+  long r;
+  long g;
+  long b;
+  long a;
+
+  len = lcl_list_len(list);
+
+  if (len < 3 || len > 4) {
+    return 0;
+  }
+
+  if (lcl_list_get(list, 0, &v) != LCL_OK || lcl_value_to_int(v, &r) != LCL_OK) {
+    return 0;
+  }
+
+  if (lcl_list_get(list, 1, &v) != LCL_OK || lcl_value_to_int(v, &g) != LCL_OK) {
+    return 0;
+  }
+
+  if (lcl_list_get(list, 2, &v) != LCL_OK || lcl_value_to_int(v, &b) != LCL_OK) {
+    return 0;
+  }
+
+  a = 255;
+
+  if (len == 4) {
+    if (lcl_list_get(list, 3, &v) != LCL_OK || lcl_value_to_int(v, &a) != LCL_OK) {
+      return 0;
+    }
+  }
+
+  out->r = (lk_u8)r;
+  out->g = (lk_u8)g;
+  out->b = (lk_u8)b;
+  out->a = (lk_u8)a;
+
+  return 1;
+}
+
+/* lk::theme_rule [ui, kind_str, tag_str, state_str, style_dict] -> "" */
+static int c_lk_theme_rule(lcl_interp *interp, int argc, lcl_value **argv,
+                           lcl_value **out) {
+  lk_ui *ui;
+  const char *kind_str;
+  const char *tag_str;
+  const char *state_str;
+  lcl_value *dict;
+  lk_u16 kind = 0;
+  lk_u32 tag_id = 0;
+  lk_u8 state_mask = 0;
+  lk_style style;
+  lk_u32 field_mask = 0;
+  lk_theme *th;
+  lcl_value *v;
+
+  if (argc != 5) {
+    lcl_set_error(interp,
+        "lk::theme_rule: expected 5 arguments (ui, kind, tag, state, style)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
+    lcl_set_error(interp, "lk::theme_rule: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  kind_str = lcl_value_to_string(argv[1]);
+  tag_str = lcl_value_to_string(argv[2]);
+  state_str = lcl_value_to_string(argv[3]);
+  dict = argv[4];
+
+  /* kind: "" or "*" means 0 (any) */
+  if (kind_str[0] != '\0' && strcmp(kind_str, "*") != 0) {
+    int kv;
+    if (!lookup_enum(kind_table, kind_str, &kv)) {
+      lcl_set_error(interp, "lk::theme_rule: unknown kind");
+
+      return LCL_RC_ERR;
+    }
+
+    kind = (lk_u16)kv;
+  }
+
+  /* tag: "" means 0 (any) */
+  if (tag_str[0] != '\0') {
+    tag_id = lk_intern_cid(ui->intern, tag_str);
+  }
+
+  /* state: "" means 0 (any) */
+  if (state_str[0] != '\0') {
+    int sv;
+    if (!lookup_enum(state_table, state_str, &sv)) {
+      lcl_set_error(interp, "lk::theme_rule: unknown state");
+
+      return LCL_RC_ERR;
+    }
+
+    state_mask = (lk_u8)sv;
+  }
+
+  /* Parse style dict */
+  memset(&style, 0, sizeof(style));
+
+  /* bg: {r g b} or {r g b a} */
+  if (lcl_dict_get(dict, "bg", &v) == LCL_OK) {
+    if (parse_color_list(v, &style.bg)) {
+      field_mask |= LK_SF_BG;
+    }
+  }
+
+  /* fg: {r g b} or {r g b a} */
+  if (lcl_dict_get(dict, "fg", &v) == LCL_OK) {
+    if (parse_color_list(v, &style.fg)) {
+      field_mask |= LK_SF_FG;
+    }
+  }
+
+  /* border_color: {r g b} or {r g b a} */
+  if (lcl_dict_get(dict, "border_color", &v) == LCL_OK) {
+    if (parse_color_list(v, &style.border_color)) {
+      field_mask |= LK_SF_BORDER_COLOR;
+    }
+  }
+
+  /* padding: int */
+  if (lcl_dict_get(dict, "padding", &v) == LCL_OK) {
+    long iv;
+    if (lcl_value_to_int(v, &iv) == LCL_OK) {
+      style.padding = (lk_i32)iv;
+      field_mask |= LK_SF_PADDING;
+    }
+  }
+
+  /* gap: int */
+  if (lcl_dict_get(dict, "gap", &v) == LCL_OK) {
+    long iv;
+    if (lcl_value_to_int(v, &iv) == LCL_OK) {
+      style.gap = (lk_i32)iv;
+      field_mask |= LK_SF_GAP;
+    }
+  }
+
+  /* font_size: int */
+  if (lcl_dict_get(dict, "font_size", &v) == LCL_OK) {
+    long iv;
+    if (lcl_value_to_int(v, &iv) == LCL_OK) {
+      style.font_size = (lk_i32)iv;
+      field_mask |= LK_SF_FONT_SIZE;
+    }
+  }
+
+  /* border_width: int */
+  if (lcl_dict_get(dict, "border_width", &v) == LCL_OK) {
+    long iv;
+    if (lcl_value_to_int(v, &iv) == LCL_OK) {
+      style.border_width = (lk_i32)iv;
+      field_mask |= LK_SF_BORDER_WIDTH;
+    }
+  }
+
+  /* border_radius: int */
+  if (lcl_dict_get(dict, "border_radius", &v) == LCL_OK) {
+    long iv;
+    if (lcl_value_to_int(v, &iv) == LCL_OK) {
+      style.border_radius = (lk_i32)iv;
+      field_mask |= LK_SF_BORDER_RADIUS;
+    }
+  }
+
+  /* align: string */
+  if (lcl_dict_get(dict, "align", &v) == LCL_OK) {
+    int av;
+    if (lookup_enum(align_table, lcl_value_to_string(v), &av)) {
+      style.align = (lk_u8)av;
+      field_mask |= LK_SF_ALIGN;
+    }
+  }
+
+  /* justify: string */
+  if (lcl_dict_get(dict, "justify", &v) == LCL_OK) {
+    int av;
+    if (lookup_enum(align_table, lcl_value_to_string(v), &av)) {
+      style.justify = (lk_u8)av;
+      field_mask |= LK_SF_JUSTIFY;
+    }
+  }
+
+  th = lk_ui_theme(ui);
+
+  if (!th) {
+    lcl_set_error(interp, "lk::theme_rule: ui has no theme");
+
+    return LCL_RC_ERR;
+  }
+
+  lk_theme_add_rule(th, kind, tag_id, state_mask, &style, field_mask);
+
+  *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -822,19 +1207,25 @@ static int c_lk_intern_str(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::intern_str: expected 2 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::intern_str: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
     lcl_set_error(interp, "lk::intern_str: id must be an integer");
+
     return LCL_RC_ERR;
   }
 
   s = lk_intern_cstr(ui->intern, (lk_node_id)id);
   *out = lcl_string_new(s ? s : "");
+
   return LCL_RC_OK;
 }
 
@@ -847,15 +1238,20 @@ static int c_lk_intern_id(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::intern_id: expected 2 arguments");
+
     return LCL_RC_ERR;
   }
+
   if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
     lcl_set_error(interp, "lk::intern_id: expected lk_ui opaque");
+
     return LCL_RC_ERR;
   }
+
   s = lcl_value_to_string(argv[1]);
   id = lk_intern_cid(ui->intern, s);
   *out = lcl_int_new((long)id);
+
   return LCL_RC_OK;
 }
 
@@ -995,6 +1391,7 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
   lcl_value *ev_dict;
   lcl_value *args[2];
   lcl_value *result = NULL;
+  const lk_tree *cur;
   int rc;
 
   if (!lw->event_handler) {
@@ -1002,6 +1399,29 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
   }
 
   ev_dict = event_to_dict(event);
+
+  /* Add target_id and node_id string fields so scripts can identify nodes */
+  cur = lk_ui_tree(lk_window_ui(lw->win));
+  if (cur) {
+    lcl_value *v;
+    if (event->target > 0 && event->target <= (lk_ix)cur->node_count) {
+      const char *tid = lk_intern_cstr(cur->intern, cur->nodes[event->target].id);
+      if (tid) {
+        v = lcl_string_new(tid);
+        lcl_dict_put(&ev_dict, "target_id", v);
+        lcl_ref_dec(v);
+      }
+    }
+    if (node_ix > 0 && node_ix <= (lk_ix)cur->node_count) {
+      const char *nid = lk_intern_cstr(cur->intern, cur->nodes[node_ix].id);
+      if (nid) {
+        v = lcl_string_new(nid);
+        lcl_dict_put(&ev_dict, "node_id", v);
+        lcl_ref_dec(v);
+      }
+    }
+  }
+
   args[0] = ev_dict;
   args[1] = lcl_int_new((long)node_ix);
 
@@ -1064,10 +1484,13 @@ static void lcl_lk_window_finalizer(void *ptr) {
 static struct lcl_lk_window *get_lk_window(lcl_interp *interp,
                                             lcl_value *val) {
   struct lcl_lk_window *lw = NULL;
+
   if (lcl_opaque_get(val, LK_WIN_TYPE, (void **)&lw) != LCL_OK) {
     lcl_set_error(interp, "expected lk_window opaque");
+
     return NULL;
   }
+
   return lw;
 }
 
@@ -1080,6 +1503,7 @@ static int c_lk_window_create(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc < 1 || argc > 5) {
     lcl_set_error(interp, "lk::window_create: expected 1-5 arguments");
+
     return LCL_RC_ERR;
   }
 
@@ -1122,6 +1546,7 @@ static int c_lk_window_create(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (!win) {
     lcl_set_error(interp, "lk::window_create: failed to create window");
+
     return LCL_RC_ERR;
   }
 
@@ -1130,6 +1555,7 @@ static int c_lk_window_create(lcl_interp *interp, int argc, lcl_value **argv,
   if (!lw) {
     lk_window_destroy(win);
     lcl_set_error(interp, "lk::window_create: allocation failed");
+
     return LCL_RC_ERR;
   }
 
@@ -1149,12 +1575,15 @@ static int c_lk_window_destroy(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 1) {
     lcl_set_error(interp, "lk::window_destroy: expected 1 argument");
+
     return LCL_RC_ERR;
   }
 
   lw = get_lk_window(interp, argv[0]);
 
-  if (!lw) return LCL_RC_ERR;
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
 
   if (lw->event_handler) {
     lcl_ref_dec(lw->event_handler);
@@ -1165,6 +1594,7 @@ static int c_lk_window_destroy(lcl_interp *interp, int argc, lcl_value **argv,
   lw->win = NULL;
 
   *out = lcl_string_new("");
+
   return LCL_RC_OK;
 }
 
@@ -1181,10 +1611,13 @@ static int c_lk_window_run(lcl_interp *interp, int argc, lcl_value **argv,
 
   lw = get_lk_window(interp, argv[0]);
 
-  if (!lw) return LCL_RC_ERR;
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
 
   if (!lcl_is_callable(argv[1])) {
     lcl_set_error(interp, "lk::window_run: expected callable view proc");
+
     return LCL_RC_ERR;
   }
 
@@ -1213,12 +1646,15 @@ static int c_lk_window_ui(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (argc != 1) {
     lcl_set_error(interp, "lk::window_ui: expected 1 argument");
+
     return LCL_RC_ERR;
   }
 
   lw = get_lk_window(interp, argv[0]);
 
-  if (!lw) return LCL_RC_ERR;
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
 
   ui = lk_window_ui(lw->win);
   /* UI is owned by window, no finalizer */
@@ -1234,14 +1670,17 @@ static int c_lk_window_set_event_handler(lcl_interp *interp, int argc,
 
   if (argc != 2) {
     lcl_set_error(interp, "lk::window_set_event_handler: expected 2 arguments");
+
     return LCL_RC_ERR;
   }
 
   lw = get_lk_window(interp, argv[0]);
+
   if (!lw) return LCL_RC_ERR;
 
   if (!lcl_is_callable(argv[1])) {
     lcl_set_error(interp, "lk::window_set_event_handler: expected callable");
+
     return LCL_RC_ERR;
   }
 
@@ -1299,6 +1738,10 @@ void lcl_register_lk(lcl_interp *interp) {
   /* Focus */
   lcl_ns_def(ns, "focus_set",   lcl_c_proc_new("lk::focus_set",   c_lk_focus_set));
   lcl_ns_def(ns, "focus_clear", lcl_c_proc_new("lk::focus_clear", c_lk_focus_clear));
+
+  /* Tags & Style */
+  lcl_ns_def(ns, "tag",        lcl_c_proc_new("lk::tag",        c_lk_tag));
+  lcl_ns_def(ns, "theme_rule", lcl_c_proc_new("lk::theme_rule", c_lk_theme_rule));
 
   /* Interning */
   lcl_ns_def(ns, "intern_str", lcl_c_proc_new("lk::intern_str", c_lk_intern_str));

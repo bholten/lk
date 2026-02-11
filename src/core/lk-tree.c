@@ -106,6 +106,40 @@ static int lk_tree_reserve_pres(lk_tree *t, lk_u32 need) {
   return 1;
 }
 
+static int lk_tree_reserve_tags(lk_tree *t, lk_u32 need) {
+  lk_tag *nt;
+  lk_u32 new_cap;
+
+  if (need <= t->tag_cap) {
+    return 1;
+  }
+
+  new_cap = t->tag_cap ? t->tag_cap : 16;
+
+  while (new_cap < need) {
+    new_cap *= 2;
+  }
+
+  nt = (lk_tag *)lk_alloc(t, (lk_u32)(sizeof(lk_tag) * new_cap));
+
+  if (!nt) {
+    return 0;
+  }
+
+  if (t->tags && t->tag_count) {
+    memcpy(nt, t->tags, sizeof(lk_tag) * t->tag_count);
+  }
+
+  if (t->tags) {
+    lk_dealloc(t, t->tags);
+  }
+
+  t->tags = nt;
+  t->tag_cap = new_cap;
+
+  return 1;
+}
+
 lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
   lk_tree *t;
   lk_tree_cfg d;
@@ -187,6 +221,10 @@ void lk_tree_destroy(lk_tree *t) {
     lk_dealloc(t, t->pres);
   }
 
+  if (t->tags) {
+    lk_dealloc(t, t->tags);
+  }
+
   lk_dealloc(t, t);
 }
 
@@ -198,6 +236,7 @@ void lk_tree_reset(lk_tree *t) {
   t->node_count = 1;
   t->prop_count = 0;
   t->pres_count = 0;
+  t->tag_count = 0;
   t->root = 0;
 
   if (t->nodes) {
@@ -287,11 +326,16 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
   */
   n = &t->nodes[node];
 
+  /* Lazily set props_off when the first prop is added. Allows all
+     nodes to be created up front, then props grouped per node. */
+  if (n->props_len == 0) {
+    n->props_off = (lk_ix)t->prop_count;
+  }
+
   /* enforce contiguous append in global arena */
   if (n->props_off + n->props_len != t->prop_count) {
-    /* In Phase 0 sketch: just ignore or we could assert/record diag.
-       Document the rule + keep it strict.
-    */
+    /* Props for this node are not at the arena tail — another node's
+       props were appended in between. Silently drop. */
     return;
   }
 
@@ -349,6 +393,48 @@ const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node) {
   }
 
   return NULL;
+}
+
+/* ---- Tag API ---- */
+
+void lk_tree_add_tag(lk_tree *t, lk_ix node, lk_u32 tag_id) {
+  lk_tag *tg;
+
+  if (!t || node == 0 || node >= t->node_count || tag_id == 0) {
+    return;
+  }
+
+  if (!lk_tree_reserve_tags(t, t->tag_count + 1)) {
+    return;
+  }
+
+  tg = &t->tags[t->tag_count++];
+  tg->node = node;
+  tg->tag_id = tag_id;
+}
+
+void lk_tree_add_tag_s(lk_tree *t, lk_ix node, const char *tag) {
+  if (!t || !t->intern || !tag) {
+    return;
+  }
+
+  lk_tree_add_tag(t, node, lk_intern_cid(t->intern, tag));
+}
+
+int lk_tree_has_tag(const lk_tree *t, lk_ix node, lk_u32 tag_id) {
+  lk_u32 i;
+
+  if (!t || node == 0 || tag_id == 0) {
+    return 0;
+  }
+
+  for (i = 0; i < t->tag_count; i++) {
+    if (t->tags[i].node == node && t->tags[i].tag_id == tag_id) {
+      return 1;
+    }
+  }
+
+  return 0;
 }
 
 static void push_diag(lk_diag *diags, lk_u32 cap, lk_u32 *len, lk_diag_kind k,

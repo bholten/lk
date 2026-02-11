@@ -758,6 +758,51 @@ static void test_present_string_value(void) {
   END_TEST();
 }
 
+/* ---- tag tests ---- */
+
+static void test_lcl_tag(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("tag: apply tag via lk::tag");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t w window]\n"
+    "let btn [lk::node $t btn button]\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $btn\n"
+    "lk::tag $t $btn primary\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_lcl_theme_rule(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("theme_rule: add rule via lk::theme_rule");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::theme_rule $ui button \"\" \"\" {bg {200 50 50}}\n"
+    "lk::theme_rule $ui \"*\" \"\" \"\" {fg {255 255 0}}",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -788,6 +833,9 @@ int main(void) {
   test_all_kinds();
   test_add_translator_all_event_types();
   test_present_string_value();
+
+  test_lcl_tag();
+  test_lcl_theme_rule();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 
