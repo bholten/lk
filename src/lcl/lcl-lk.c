@@ -45,8 +45,9 @@ static const str_enum kind_table[] = {
     {"column", UIK_COLUMN},
     {"spacer", UIK_SPACER},
     {"label",  UIK_LABEL },
-    {"button", UIK_BUTTON},
-    {NULL,     0         }
+    {"button",     UIK_BUTTON    },
+    {"text_input", UIK_TEXT_INPUT},
+    {NULL,         0            }
 };
 
 static const str_enum prop_table[] = {

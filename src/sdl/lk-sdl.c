@@ -300,6 +300,7 @@ static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
   case SDLK_DOWN: return LKK_DOWN;
   case SDLK_HOME: return LKK_HOME;
   case SDLK_END: return LKK_END;
+  case SDLK_A: return LKK_A;
   default: return LKK_UNKNOWN;
   }
 }
@@ -445,6 +446,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       lcfg.viewport_w = win->width;
       lcfg.viewport_h = win->height;
       lcfg.styles = styles;
+      lcfg.state = lk_ui_state(win->ui);
 
       if (lk_layout(cur, &lcfg, win->rects)) {
         have_rects = 1;
@@ -530,7 +532,8 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     }
 
     /* 5. Render */
-    lk_render_build(cur, win->rects, lk_ui_styles(win->ui), &win->rl);
+    lk_render_build(cur, win->rects, lk_ui_styles(win->ui),
+                    lk_ui_state(win->ui), &win->rl);
 
     SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
     SDL_RenderClear(win->sdl_ren);

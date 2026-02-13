@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-text-input.h"
 #include <lk.h>
 
 /* ---- Registry ---- */
@@ -321,11 +322,13 @@ static int layout_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
 /* ---- Render functions ---- */
 
 static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                          const lk_style *style, lk_render_list *out) {
+                          const lk_style *style, const lk_state *state,
+                          lk_render_list *out) {
   lk_render_cmd cmd;
 
   (void)t;
   (void)n;
+  (void)state;
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
@@ -334,8 +337,10 @@ static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
 }
 
 static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                         const lk_style *style, lk_render_list *out) {
+                         const lk_style *style, const lk_state *state,
+                         lk_render_list *out) {
   lk_u32 sid = lk_node_text_id(t, n);
+  (void)state;
 
   if (sid != 0) {
     lk_render_cmd cmd;
@@ -349,10 +354,12 @@ static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
 }
 
 static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                          const lk_style *style, lk_render_list *out) {
+                          const lk_style *style, const lk_state *state,
+                          lk_render_list *out) {
   lk_i32 pad = style->padding;
   lk_u32 sid = lk_node_text_id(t, n);
   lk_render_cmd cmd;
+  (void)state;
 
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
@@ -432,4 +439,7 @@ static void init_defaults(void) {
   def.render = render_button;
   def.clips = 0;
   g_widgets[UIK_BUTTON] = def;
+
+  /* TEXT_INPUT */
+  g_widgets[UIK_TEXT_INPUT] = lk_text_input_widget_def();
 }

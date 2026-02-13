@@ -59,6 +59,7 @@ typedef enum lk_kind {
   UIK_SPACER,
   UIK_LABEL,
   UIK_BUTTON,
+  UIK_TEXT_INPUT,
   UIK__COUNT
 } lk_kind;
 
@@ -85,6 +86,8 @@ typedef enum lk_state_key {
   LKS_SELECTION_START,
   LKS_SELECTION_END,
   LKS_EXPANDED,
+  LKS_TEXT_BUF,
+  LKS_CURSOR_X,
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -361,6 +364,7 @@ typedef enum lk_keycode {
   LKK_DOWN,
   LKK_HOME,
   LKK_END,
+  LKK_A,
   LKK__COUNT
 } lk_keycode;
 
@@ -601,6 +605,7 @@ typedef struct lk_layout_cfg {
   void *measure_ud;
   lk_i32 viewport_w, viewport_h;
   const struct lk_style *styles; /* NULL = read tree props directly */
+  lk_state *state;               /* NULL ok; widgets may use for cursor etc. */
 } lk_layout_cfg;
 
 /* Compute layout rects for every node in the tree. rects[] must be
@@ -701,10 +706,12 @@ typedef struct lk_render_list {
 
 /* Build a render list from a laid-out tree.  rects[] indexed by lk_ix
  * (from lk_layout).  Reuses existing capacity in out; resets count.
+ * state may be NULL; passed through to widget render functions.
  * Returns 1 on success, 0 on failure.
  */
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
-                    const lk_style *styles, lk_render_list *out);
+                    const lk_style *styles, const lk_state *state,
+                    lk_render_list *out);
 
 /* Push a command to the render list (grows as needed). Returns 1 on
  * success, 0 on allocation failure. */
@@ -719,6 +726,8 @@ void lk_render_list_destroy(lk_render_list *rl);
 
 #define LK_KIND_MAX 32
 
+#define LK_TEXT_INPUT_MAX 1024
+
 typedef struct lk_widget_def {
   void (*measure)(const lk_tree *t, lk_ix n, const lk_size *sizes,
                   const lk_layout_cfg *cfg, lk_i32 *out_w, lk_i32 *out_h);
@@ -730,7 +739,12 @@ typedef struct lk_widget_def {
                 lk_rect *rects);
 
   void (*render)(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                 const lk_style *style, lk_render_list *out);
+                 const lk_style *style, const lk_state *state,
+                 lk_render_list *out);
+
+  /* Widget-level event handler. Called at TARGET phase before the global
+   * handler. Return 1 if handled (stops propagation), 0 to continue. */
+  int (*event)(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev);
 
   lk_u8 clips; /* 1 if this node clips children */
 } lk_widget_def;
