@@ -1619,7 +1619,7 @@ static void test_render_empty_tree(void) {
   BEGIN_TEST("render: empty tree returns success");
 
   memset(&rl, 0, sizeof(rl));
-  ok = lk_render_build(t, NULL, NULL, &rl);
+  ok = lk_render_build(t, NULL, NULL, NULL, &rl);
   CHECK_EQ((unsigned)ok, 1u);
   CHECK_EQ(rl.count, 0u);
 
@@ -1643,7 +1643,7 @@ static void test_render_window_only(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 3u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
     CHECK_EQ((unsigned)rl.cmds[0].rect.w, 800u);
@@ -1680,7 +1680,7 @@ static void test_render_window_column_label(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     /* FILL_RECT + CLIP_BEGIN + DRAW_TEXT + CLIP_END */
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -1719,7 +1719,7 @@ static void test_render_button_with_padding(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     /* window FILL + CLIP_BEGIN + button FILL + button TEXT + CLIP_END */
     CHECK_EQ(rl.count, 5u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -1767,7 +1767,7 @@ static void test_render_larger_tree(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT + CLIP_END = 7 */
     CHECK_EQ(rl.count, 7u);
     lk_render_list_destroy(&rl);
@@ -1801,13 +1801,13 @@ static void test_render_build_reuse(void) {
     memset(&rl, 0, sizeof(rl));
 
     /* first build: FILL + CLIP_BEGIN + TEXT + CLIP_END = 4 */
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     cap_after_first = rl.cap;
     CHECK(cap_after_first > 0);
 
     /* second build on same list — count resets, cap stays */
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ(rl.cap, cap_after_first);
 
@@ -2758,7 +2758,7 @@ static void test_widget_override_render(void) {
 
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     count_before = rl.count;
 
     /* Override LABEL to emit nothing */
@@ -2768,7 +2768,7 @@ static void test_widget_override_render(void) {
     lk_widget_register(UIK_LABEL, &override);
 
     rl.count = 0;
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
     count_after = rl.count;
 
     CHECK(count_after < count_before);
@@ -4090,7 +4090,7 @@ static void test_layout_with_resolved_styles(void) {
     {
       lk_render_list rl;
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, rects, styles, &rl);
+      lk_render_build(t, rects, styles, NULL, &rl);
       /* button FILL_RECT at rl.cmds[2] (after window FILL + CLIP_BEGIN)
        * button TEXT at rl.cmds[3]
        * text should be inset by 20 from button rect
@@ -4159,7 +4159,7 @@ static void test_layout_style_tree_prop_override(void) {
     {
       lk_render_list rl;
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, rects, styles, &rl);
+      lk_render_build(t, rects, styles, NULL, &rl);
       if (rl.count >= 4) {
         CHECK_EQ((unsigned)rl.cmds[3].rect.x,
                  (unsigned)(rl.cmds[2].rect.x + 5));
@@ -4402,6 +4402,491 @@ static void test_ui_set_theme_custom(void) {
 }
 
 /* ================================================================
+ * Additional style resolution tests
+ * ================================================================ */
+
+static void test_style_bg_does_not_inherit(void) {
+  /* Parent (window) has bg=(30,30,30), child (column) should NOT inherit it */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_ix w, col, lbl;
+
+  BEGIN_TEST("style: bg does NOT inherit to children");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  th = lk_theme_default();
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (th && styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    /* window bg = (30,30,30,255) from default theme */
+    CHECK_EQ(styles[w].bg.r, 30);
+    CHECK_EQ(styles[w].bg.a, 255);
+    /* column has no bg rule — should be zero (not inherited) */
+    CHECK_EQ(styles[col].bg.r, 0);
+    CHECK_EQ(styles[col].bg.g, 0);
+    CHECK_EQ(styles[col].bg.b, 0);
+    CHECK_EQ(styles[col].bg.a, 0);
+    /* label also has no bg rule */
+    CHECK_EQ(styles[lbl].bg.r, 0);
+    CHECK_EQ(styles[lbl].bg.a, 0);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_font_inherits(void) {
+  /* Custom theme sets font on root; children should inherit it */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, col, lbl;
+
+  BEGIN_TEST("style: font_id and font_size inherit");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  th = lk_theme_new();
+  /* Set font on wildcard (all nodes) */
+  memset(&s, 0, sizeof(s));
+  s.font_id = 42;
+  s.font_size = 18;
+  lk_theme_add_rule(th, 0, 0, 0, &s, LK_SF_FONT_ID | LK_SF_FONT_SIZE);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    /* All nodes should have font_id=42, font_size=18 */
+    CHECK_EQ(styles[w].font_id, 42u);
+    CHECK_EQ((unsigned)styles[w].font_size, 18u);
+    CHECK_EQ(styles[col].font_id, 42u);
+    CHECK_EQ((unsigned)styles[col].font_size, 18u);
+    CHECK_EQ(styles[lbl].font_id, 42u);
+    CHECK_EQ((unsigned)styles[lbl].font_size, 18u);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_kind_no_cross_match(void) {
+  /* BUTTON rule should NOT match a LABEL node */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, btn, lbl;
+
+  BEGIN_TEST("style: kind-specific rule doesn't cross-match");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+  lk_tree_append_child(t, w, lbl);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 80;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    /* button gets the bg */
+    CHECK_EQ(styles[btn].bg.r, 80);
+    CHECK_EQ(styles[btn].bg.a, 255);
+    /* label does NOT */
+    CHECK_EQ(styles[lbl].bg.r, 0);
+    CHECK_EQ(styles[lbl].bg.a, 0);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_state_requires_all_bits(void) {
+  /* Rule with state=FOCUSED|HOVERED only matches when BOTH are set */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_u8 *nstates;
+  lk_style s;
+  lk_ix w, btn;
+
+  BEGIN_TEST("style: state mask requires all bits set");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  th = lk_theme_new();
+  /* base rule */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 50;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG);
+  /* rule requiring both focused AND hovered */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 200;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0,
+                    LK_NSTATE_FOCUSED | LK_NSTATE_HOVERED,
+                    &s, LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  nstates = (lk_u8 *)malloc(sizeof(lk_u8) * t->node_count);
+
+  if (styles && nstates) {
+    /* Only FOCUSED — combined rule should NOT match */
+    memset(nstates, 0, sizeof(lk_u8) * t->node_count);
+    nstates[btn] = LK_NSTATE_FOCUSED;
+    lk_style_resolve(th, t, nstates, styles);
+    CHECK_EQ(styles[btn].bg.r, 50);
+
+    /* Both FOCUSED|HOVERED — combined rule SHOULD match */
+    nstates[btn] = LK_NSTATE_FOCUSED | LK_NSTATE_HOVERED;
+    lk_style_resolve(th, t, nstates, styles);
+    CHECK_EQ(styles[btn].bg.r, 200);
+  }
+
+  free(nstates);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_tag_no_match_untagged(void) {
+  /* Tag rule should NOT apply to untagged nodes of same kind */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, btn_tagged, btn_plain;
+
+  BEGIN_TEST("style: tag rule skips untagged node");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn_tagged = lk_tree_add_node_s(t, lk_str_c("t"), UIK_BUTTON);
+  btn_plain = lk_tree_add_node_s(t, lk_str_c("p"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn_tagged);
+  lk_tree_append_child(t, w, btn_plain);
+  lk_tree_add_tag_s(t, btn_tagged, "primary");
+
+  th = lk_theme_new();
+  /* base button */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 60;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG);
+  /* primary button — only matches tagged */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 150;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON,
+                    lk_intern_cid(t->intern, "primary"),
+                    0, &s, LK_SF_BG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ(styles[btn_tagged].bg.r, 150);
+    CHECK_EQ(styles[btn_plain].bg.r, 60);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_gap_prop_override(void) {
+  /* Tree prop UIP_GAP overrides style gap */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, col;
+
+  BEGIN_TEST("style: gap tree prop overrides theme");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(15));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.gap = 8;
+  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_GAP);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[col].gap, 15u); /* tree prop wins */
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_align_justify_prop_override(void) {
+  /* Tree props UIP_ALIGN and UIP_JUSTIFY override style values */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, col;
+
+  BEGIN_TEST("style: align/justify tree props override theme");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_ALIGN, lk_v_i32(LK_ALIGN_CENTER));
+  lk_tree_add_prop(t, col, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.align = LK_ALIGN_START;
+  s.justify = LK_ALIGN_START;
+  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s,
+                    LK_SF_ALIGN | LK_SF_JUSTIFY);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[col].align, (unsigned)LK_ALIGN_CENTER);
+    CHECK_EQ((unsigned)styles[col].justify, (unsigned)LK_ALIGN_END);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_render_uses_style_colors(void) {
+  /* Verify render list FILL_RECT uses bg from resolved style */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_ix w, btn;
+  lk_u32 i;
+  int found_btn_fill;
+
+  BEGIN_TEST("render: uses style fg/bg colors");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  /* Custom theme: button bg = (0, 200, 100, 255) */
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 0;
+  s.bg.g = 200;
+  s.bg.b = 100;
+  s.bg.a = 255;
+  s.padding = 4;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING);
+  /* fg for text */
+  memset(&s, 0, sizeof(s));
+  s.fg.r = 255;
+  s.fg.g = 255;
+  s.fg.b = 0;
+  s.fg.a = 255;
+  lk_theme_add_rule(th, 0, 0, 0, &s, LK_SF_FG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    lk_style_resolve(th, t, NULL, styles);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, &rl);
+
+    /* Find the button FILL_RECT — should have our custom green bg */
+    found_btn_fill = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
+          rl.cmds[i].color.g == 200 &&
+          rl.cmds[i].color.b == 100) {
+        found_btn_fill = 1;
+        break;
+      }
+    }
+    CHECK(found_btn_fill);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_layout_style_gap(void) {
+  /* Theme sets gap=20 on column; verify child positions reflect it */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, lbl1, lbl2;
+
+  BEGIN_TEST("layout: style gap affects child positions");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lbl2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl1, UIP_TEXT, lk_v_cstr(t->intern, "A"));
+  lk_tree_add_prop(t, lbl2, UIP_TEXT, lk_v_cstr(t->intern, "B"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl1);
+  lk_tree_append_child(t, col, lbl2);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.gap = 20;
+  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_GAP);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    lk_style_resolve(th, t, NULL, styles);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    /* With stub text measurer: label height = 16.
+     * lbl2.y should be lbl1.y + lbl1.h + gap(20) = 0 + 16 + 20 = 36 */
+    CHECK_EQ((unsigned)rects[lbl1].y, 0u);
+    CHECK_EQ((unsigned)rects[lbl2].y, (unsigned)(rects[lbl1].y +
+                                                  rects[lbl1].h + 20));
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_wildcard_matches_all(void) {
+  /* A wildcard rule (kind=0) should match every node kind */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_ix w, col, lbl, btn, sp;
+
+  BEGIN_TEST("style: wildcard rule matches all kinds");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("l"), UIK_LABEL);
+  btn = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+  sp = lk_tree_add_node_s(t, lk_str_c("s"), UIK_SPACER);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+  lk_tree_append_child(t, col, btn);
+  lk_tree_append_child(t, col, sp);
+
+  th = lk_theme_new();
+  memset(&s, 0, sizeof(s));
+  s.fg.r = 123;
+  s.fg.a = 255;
+  lk_theme_add_rule(th, 0, 0, 0, &s, LK_SF_FG);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ(styles[w].fg.r, 123);
+    CHECK_EQ(styles[col].fg.r, 123);
+    CHECK_EQ(styles[lbl].fg.r, 123);
+    CHECK_EQ(styles[btn].fg.r, 123);
+    CHECK_EQ(styles[sp].fg.r, 123);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ================================================================
  * Tests: deferred prop append (lazy props_off)
  * ================================================================ */
 
@@ -4497,7 +4982,7 @@ static void test_render_deferred_props_emit_text(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, &rl);
 
     text_count = 0;
     for (i = 0; i < rl.count; i++) {
@@ -4514,6 +4999,472 @@ static void test_render_deferred_props_emit_text(void) {
 
   lk_tree_destroy(t);
   END_TEST();
+}
+
+/* ================================================================
+ * Tests: text input widget
+ * ================================================================ */
+
+/* Helper: build a UI with a focused text input, run one frame, return
+ * the current tree.  Caller must destroy ui.
+ */
+static lk_ui *make_text_input_ui(const char *initial_text,
+                                  lk_ix *out_ti) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, ti;
+  const lk_tree *cur;
+  lk_node_id ti_id;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_TEXT,
+                   lk_v_cstr(t->intern, initial_text));
+  lk_tree_add_prop(t, ti, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ti);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_focus_set(ui, cur, ti_id);
+
+  *out_ti = lk_tree_find_by_id(cur, ti_id);
+  return ui;
+}
+
+static void test_text_input_measure(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, ti;
+  lk_rect *r;
+
+  BEGIN_TEST("text_input: measure includes padding + min width");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, ""));
+  lk_tree_add_prop(t, ti, UIP_PADDING, lk_v_i32(4));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, ti);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* Column stretches cross-axis (width) but uses intrinsic main-axis (h).
+     * Empty text, min width 100 + padding 4*2 = 108. Width stretched to 800.
+     * Height: 16 (stub text height) + 8 (padding*2) = 24
+     */
+    CHECK(r[ti].w >= 108);
+    CHECK_EQ((unsigned)r[ti].h, 24u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_text_input_render(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, ti;
+  lk_rect *r;
+  lk_render_list rl;
+
+  BEGIN_TEST("text_input: render emits FILL_RECT + DRAW_TEXT");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, "hello"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ti);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, NULL, NULL, &rl);
+    /* window: FILL + CLIP_BEGIN, text_input: FILL + TEXT, window: CLIP_END */
+    /* => at least 5 ops */
+    CHECK(rl.count >= 4u);
+    /* text_input FILL_RECT */
+    CHECK_EQ((unsigned)rl.cmds[2].op, (unsigned)LK_ROP_FILL_RECT);
+    /* text_input DRAW_TEXT */
+    CHECK_EQ((unsigned)rl.cmds[3].op, (unsigned)LK_ROP_DRAW_TEXT);
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_text_input_insert(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: TEXT event inserts, cursor advances");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Set cursor at position 1 (between a and b) */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  /* Send TEXT event "x" */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  /* Text should be "axb" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 3u);
+  CHECK(memcmp(text.ptr, "axb", 3) == 0);
+
+  /* Cursor should be at 2 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 2u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_backspace(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: BACKSPACE deletes before cursor");
+
+  ui = make_text_input_ui("hello", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Set cursor at position 3 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+
+  /* Send BACKSPACE */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_BACKSPACE;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  /* Text should be "helo" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "helo", 4) == 0);
+
+  /* Cursor should be at 2 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 2u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_delete(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: DELETE deletes after cursor");
+
+  ui = make_text_input_ui("hello", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Set cursor at position 2 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(2));
+
+  /* Send DELETE */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_DELETE;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  /* Text should be "helo" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "helo", 4) == 0);
+
+  /* Cursor should stay at 2 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 2u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_cursor_movement(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+
+  BEGIN_TEST("text_input: LEFT/RIGHT/HOME/END move cursor");
+
+  ui = make_text_input_ui("abcde", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Set cursor at position 3 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+
+  /* LEFT -> 2 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_LEFT;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 2u);
+
+  /* RIGHT -> 3 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_RIGHT;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  /* HOME -> 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_HOME;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* END -> 5 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_END;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 5u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_selection(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: SHIFT+arrow selects, typing replaces");
+
+  ui = make_text_input_ui("abcde", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Set cursor at position 2 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(2));
+
+  /* SHIFT+RIGHT -> selection 2..3, cursor 3 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_RIGHT;
+  ev.mods = LK_MOD_SHIFT;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_SELECTION_START);
+  CHECK_EQ((unsigned)v.as.i, 2u);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_END);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  /* SHIFT+RIGHT again -> selection 2..4, cursor 4 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_RIGHT;
+  ev.mods = LK_MOD_SHIFT;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_SELECTION_END);
+  CHECK_EQ((unsigned)v.as.i, 4u);
+
+  /* Type "X" -> replaces selection "cd", text becomes "abXe" */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'X';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "abXe", 4) == 0);
+
+  /* Selection should be cleared */
+  v = lk_state_get(st, ti_id, LKS_SELECTION_START);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_END);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_select_all(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+
+  BEGIN_TEST("text_input: CTRL+A selects all");
+
+  ui = make_text_input_ui("hello", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* CTRL+A */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_A;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  v = lk_state_get(st, ti_id, LKS_SELECTION_START);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_END);
+  CHECK_EQ((unsigned)v.as.i, 5u);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 5u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_initial_text(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: first edit copies from UIP_TEXT");
+
+  ui = make_text_input_ui("abc", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Before any event, LKS_TEXT_BUF should be NONE */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_NONE);
+
+  /* Send a TEXT event to trigger initialization */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  /* Text should now be "abcx" (copied initial + inserted) */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "abcx", 4) == 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_cursor_clamp(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+
+  BEGIN_TEST("text_input: cursor clamps to [0, len]");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Set cursor beyond text length */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(99));
+
+  /* LEFT should clamp to len first, then move to len-1 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_LEFT;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  /* Cursor was clamped to 2 (len), then LEFT moved to 1 */
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  /* Set cursor negative (impossible via i32 but test 0 boundary) */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(0));
+
+  /* LEFT at 0 should stay at 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_LEFT;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
 }
 
 /* ================================================================
@@ -4704,6 +5655,19 @@ int main(void) {
   test_style_resolve_rule_order();
   test_style_resolve_state_match();
   test_style_trace();
+  test_style_bg_does_not_inherit();
+  test_style_font_inherits();
+  test_style_kind_no_cross_match();
+  test_style_state_requires_all_bits();
+  test_style_tag_no_match_untagged();
+  test_style_gap_prop_override();
+  test_style_align_justify_prop_override();
+  test_style_wildcard_matches_all();
+
+  /* style + render/layout integration */
+  printf("\nlk style integration tests:\n");
+  test_render_uses_style_colors();
+  test_layout_style_gap();
 
   /* ui style integration */
   printf("\nlk ui style tests:\n");
@@ -4716,6 +5680,19 @@ int main(void) {
   test_prop_deferred_all_nodes_first();
   test_prop_interleave_drops();
   test_render_deferred_props_emit_text();
+
+  /* text input widget */
+  printf("\nlk text input tests:\n");
+  test_text_input_measure();
+  test_text_input_render();
+  test_text_input_insert();
+  test_text_input_backspace();
+  test_text_input_delete();
+  test_text_input_cursor_movement();
+  test_text_input_selection();
+  test_text_input_select_all();
+  test_text_input_initial_text();
+  test_text_input_cursor_clamp();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

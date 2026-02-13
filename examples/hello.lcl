@@ -2,6 +2,7 @@ proc view {tree} {
     let w [lk::node $tree "main" "window"]
     let col [lk::node $tree "layout" "column"]
     let title [lk::node $tree "title" "label"]
+    let input [lk::node $tree "search" "text_input"]
     let row [lk::node $tree "buttons" "row"]
     let ok [lk::node $tree "ok" "button"]
     let cancel [lk::node $tree "cancel" "button"]
@@ -11,9 +12,11 @@ proc view {tree} {
     lk::prop $tree $col "gap" 16
     lk::prop $tree $row "gap" 12
     lk::prop $tree $title "text" "Hello from Lcl!"
+    lk::prop $tree $input "text" "Type here..."
+    lk::prop $tree $input "focusable" 1
     lk::prop $tree $ok "text" "OK"
     lk::prop $tree $cancel "text" "Cancel"
-    lk::prop $tree $footer "text" "Click a button (uses commands)"
+    lk::prop $tree $footer "text" "Click the text input and type! (Tab to cycle focus)"
 
     ;; Tag the OK button as "primary"
     lk::tag $tree $ok "primary"
@@ -25,6 +28,7 @@ proc view {tree} {
     lk::set_root $tree $w
     lk::append_child $tree $w $col
     lk::append_child $tree $col $title
+    lk::append_child $tree $col $input
     lk::append_child $tree $col $row
     lk::append_child $tree $row $ok
     lk::append_child $tree $row $cancel
@@ -42,6 +46,8 @@ lk::theme_rule $ui "window" "" "" #{bg (25 25 35)}
 lk::theme_rule $ui "*" "" "" #{fg (200 200 220)}
 lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12}
 lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255)}
+lk::theme_rule $ui "text_input" "" "" #{bg (40 40 55) padding 8}
+lk::theme_rule $ui "text_input" "" "focused" #{border_width 2 border_color (80 140 220)}
 
 ;; Translator: pointer_down on any "action" presentation -> "ButtonClick" command
 lk::add_translator $ui "pointer_down" "action" "" "ButtonClick"
@@ -54,11 +60,11 @@ lk::set_command_handler $ui [lambda {cmd} {
     }
 }]
 
-;; Event handler for keyboard events (not handled by translators)
+;; Event handler for keyboard events (not handled by widgets or translators)
+;; Returns 0 so events continue propagating (Tab cycles focus, etc.)
 lk::window_set_event_handler $win [lambda {ev node} {
     if [== [get $ev type] key_down] {
         puts "Key: [get $ev keycode]"
-        return 1
     }
 
     return 0

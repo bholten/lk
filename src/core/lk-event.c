@@ -311,6 +311,19 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
     path[depth - 1 - i] = tmp;
   }
 
+  /* Widget-level event dispatch at target */
+  {
+    const lk_node *tgt_nd = &t->nodes[event->target];
+    const lk_widget_def *tgt_def = lk_widget_get((lk_kind)tgt_nd->kind);
+    if (tgt_def && tgt_def->event) {
+      event->phase = LK_PHASE_TARGET;
+      if (tgt_def->event(ui, t, event->target, event)) {
+        event->handled = 1;
+        return;
+      }
+    }
+  }
+
   /* Event handler routing (capture/target/bubble) */
   if (ui->event_handler) {
     /* Capture phase: root to target-parent */

@@ -123,6 +123,19 @@ lk_theme *lk_theme_default(void) {
   s.padding = 8;
   lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
+  /* TEXT_INPUT */
+  memset(&s, 0, sizeof(s));
+  s.bg = mk_color(45, 45, 45, 255);
+  s.padding = 4;
+  lk_theme_add_rule(th, UIK_TEXT_INPUT, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
+
+  /* TEXT_INPUT focused */
+  memset(&s, 0, sizeof(s));
+  s.border_width = 1;
+  s.border_color = mk_color(80, 140, 220, 255);
+  lk_theme_add_rule(th, UIK_TEXT_INPUT, 0, LK_NSTATE_FOCUSED, &s,
+                    LK_SF_BORDER_WIDTH | LK_SF_BORDER_COLOR);
+
   return th;
 }
 

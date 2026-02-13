@@ -88,7 +88,8 @@ static void init_fallback_styles(void) {
 }
 
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
-                    const lk_style *styles, lk_render_list *out) {
+                    const lk_style *styles, const lk_state *state,
+                    lk_render_list *out) {
   lk_ix *stack;
   lk_u32 sp;
   /* Stack needs room for each node plus a CLIP_END marker per clipping
@@ -158,7 +159,7 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     }
 
     if (def && def->render) {
-      def->render(t, n, &rects[n], node_style, out);
+      def->render(t, n, &rects[n], node_style, state, out);
     }
 
     /* Emit CLIP_BEGIN after own render commands, before children */
