@@ -880,6 +880,33 @@ static void test_text_input_kind(void) {
   END_TEST();
 }
 
+static void test_scroll_kind(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("scroll kind can be created via Lcl");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let sc [lk::node $t \"sc\" \"scroll\"]\n"
+    "lk::prop $t $sc \"h\" 200\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $sc\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) {
+    /* changeset should have 2 entries (window + scroll) */
+    CHECK(lcl_list_len(r) >= 2);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -916,6 +943,7 @@ int main(void) {
   test_set_command_handler();
   test_set_command_handler_with_translator();
   test_text_input_kind();
+  test_scroll_kind();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

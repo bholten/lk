@@ -324,6 +324,23 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
     }
   }
 
+  /* Widget-level event bubbling: walk ancestors from target's parent to root */
+  {
+    lk_ix anc = t->nodes[event->target].parent;
+    event->phase = LK_PHASE_BUBBLE;
+    while (anc != 0) {
+      const lk_node *anc_nd = &t->nodes[anc];
+      const lk_widget_def *anc_def = lk_widget_get((lk_kind)anc_nd->kind);
+      if (anc_def && anc_def->event) {
+        if (anc_def->event(ui, t, anc, event)) {
+          event->handled = 1;
+          return;
+        }
+      }
+      anc = anc_nd->parent;
+    }
+  }
+
   /* Event handler routing (capture/target/bubble) */
   if (ui->event_handler) {
     /* Capture phase: root to target-parent */

@@ -47,6 +47,7 @@ static const str_enum kind_table[] = {
     {"label",  UIK_LABEL },
     {"button",     UIK_BUTTON    },
     {"text_input", UIK_TEXT_INPUT},
+    {"scroll",     UIK_SCROLL   },
     {NULL,         0            }
 };
 

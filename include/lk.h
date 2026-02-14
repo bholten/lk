@@ -60,6 +60,7 @@ typedef enum lk_kind {
   UIK_LABEL,
   UIK_BUTTON,
   UIK_TEXT_INPUT,
+  UIK_SCROLL,
   UIK__COUNT
 } lk_kind;
 
@@ -88,6 +89,7 @@ typedef enum lk_state_key {
   LKS_EXPANDED,
   LKS_TEXT_BUF,
   LKS_CURSOR_X,
+  LKS_SCROLL_MAX,
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;

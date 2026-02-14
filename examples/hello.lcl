@@ -6,6 +6,20 @@ proc view {tree} {
     let row [lk::node $tree "buttons" "row"]
     let ok [lk::node $tree "ok" "button"]
     let cancel [lk::node $tree "cancel" "button"]
+
+    ;; Scroll container with a list of items
+    let scroll [lk::node $tree "item_list" "scroll"]
+
+    var i 0
+
+    while [< $i 20] {
+        let lbl [lk::node $tree "item_$i" "label"]
+
+        lk::prop $tree $lbl "text" "Item $i — scroll me!"
+        lk::append_child $tree $scroll $lbl
+        set! i [+ $i 1]
+    }
+
     let footer [lk::node $tree "footer" "label"]
 
     lk::prop $tree $col "padding" 24
@@ -16,7 +30,10 @@ proc view {tree} {
     lk::prop $tree $input "focusable" 1
     lk::prop $tree $ok "text" "OK"
     lk::prop $tree $cancel "text" "Cancel"
-    lk::prop $tree $footer "text" "Click the text input and type! (Tab to cycle focus)"
+    lk::prop $tree $scroll "h" 200
+    lk::prop $tree $scroll "padding" 8
+    lk::prop $tree $scroll "gap" 4
+    lk::prop $tree $footer "text" "Scroll the list with your mouse wheel! (Tab to cycle focus)"
 
     ;; Tag the OK button as "primary"
     lk::tag $tree $ok "primary"
@@ -32,6 +49,7 @@ proc view {tree} {
     lk::append_child $tree $col $row
     lk::append_child $tree $row $ok
     lk::append_child $tree $row $cancel
+    lk::append_child $tree $col $scroll
     lk::append_child $tree $col $footer
 }
 
@@ -48,6 +66,7 @@ lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12}
 lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255)}
 lk::theme_rule $ui "text_input" "" "" #{bg (40 40 55) padding 8}
 lk::theme_rule $ui "text_input" "" "focused" #{border_width 2 border_color (80 140 220)}
+lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4}
 
 ;; Translator: pointer_down on any "action" presentation -> "ButtonClick" command
 lk::add_translator $ui "pointer_down" "action" "" "ButtonClick"

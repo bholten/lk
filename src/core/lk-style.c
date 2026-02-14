@@ -129,6 +129,14 @@ lk_theme *lk_theme_default(void) {
   s.padding = 4;
   lk_theme_add_rule(th, UIK_TEXT_INPUT, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
+  /* SCROLL */
+  memset(&s, 0, sizeof(s));
+  s.bg = mk_color(35, 35, 35, 255);
+  s.padding = 0;
+  s.gap = 0;
+  lk_theme_add_rule(th, UIK_SCROLL, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING | LK_SF_GAP);
+
   /* TEXT_INPUT focused */
   memset(&s, 0, sizeof(s));
   s.border_width = 1;

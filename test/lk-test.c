@@ -5468,6 +5468,445 @@ static void test_text_input_cursor_clamp(void) {
 }
 
 /* ================================================================
+ * Tests: scroll widget
+ * ================================================================ */
+
+static lk_rect *run_layout_with_state(lk_tree *t, lk_i32 vw, lk_i32 vh,
+                                      lk_state *state) {
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.measure_ud = NULL;
+  cfg.viewport_w = vw;
+  cfg.viewport_h = vh;
+  cfg.state = state;
+
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+  if (!rects) {
+    return NULL;
+  }
+
+  if (!lk_layout(t, &cfg, rects)) {
+    free(rects);
+    return NULL;
+  }
+
+  return rects;
+}
+
+/* Build: window > column > scroll(h=100) > labels
+ * Column respects scroll's measured UIP_H, unlike window which fills viewport.
+ */
+static lk_ui *make_scroll_ui(int label_count, lk_ix *out_scroll) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, sc;
+  int i;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  lk_tree_add_prop(t, sc, UIP_H, lk_v_i32(100));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sc);
+
+  for (i = 0; i < label_count; i++) {
+    char name[32];
+    lk_ix lbl;
+    sprintf(name, "lbl%d", i);
+    lbl = lk_tree_add_node_s(t, lk_str_c(name), UIK_LABEL);
+    lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, name));
+    lk_tree_append_child(t, sc, lbl);
+  }
+
+  lk_ui_end_frame(ui);
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_node_id sc_id = lk_intern_id(ui->intern, lk_str_c("sc"));
+    *out_scroll = lk_tree_find_by_id(cur, sc_id);
+  }
+
+  return ui;
+}
+
+static void test_scroll_measure(void) {
+  /* Content = 10 labels * 16px each = 160px. Scroll natural size = 160. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, sc, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("scroll: measure sums children heights");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "World!"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sc);
+  lk_tree_append_child(t, sc, l1);
+  lk_tree_append_child(t, sc, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* With UIP_H not set on scroll, intrinsic h = 16+16 = 32.
+     * But scroll is inside a window that gives it full viewport height.
+     * The scroll itself gets 600px (window fills viewport, no padding).
+     */
+    CHECK_EQ((unsigned)r[sc].h, 600u);
+    /* Children each get 16px height */
+    CHECK_EQ((unsigned)r[l1].h, 16u);
+    CHECK_EQ((unsigned)r[l2].h, 16u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_scroll_layout_no_offset(void) {
+  /* No scroll offset: children start at top of content area. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(3, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_rect *r;
+
+  BEGIN_TEST("scroll: children at y=0 when no scroll offset");
+
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, lk_ui_state(ui));
+  CHECK(r != NULL);
+  if (r) {
+    lk_ix ch = cur->nodes[sc].first_child;
+    /* First child y should equal scroll content y (scroll.y + padding) */
+    CHECK_EQ((unsigned)r[ch].y, (unsigned)r[sc].y);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_layout_with_offset(void) {
+  /* Set scroll_y = 20, children should shift up by 20. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(10, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sc_id;
+  lk_rect *r;
+
+  BEGIN_TEST("scroll: children shifted by -scroll_y");
+
+  sc_id = cur->nodes[sc].id;
+  lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(20));
+
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  CHECK(r != NULL);
+  if (r) {
+    lk_ix ch = cur->nodes[sc].first_child;
+    /* First child y = scroll.y - 20 */
+    CHECK_EQ((unsigned)r[ch].y, (unsigned)(r[sc].y - 20));
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_render_clips(void) {
+  /* Scroll should produce FILL_RECT + CLIP_BEGIN + children + CLIP_END. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(2, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_rect *r;
+  lk_render_list rl;
+  int found_clip_begin = 0;
+  int found_clip_end = 0;
+  lk_u32 i;
+
+  BEGIN_TEST("scroll: render list has CLIP_BEGIN/CLIP_END");
+
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, lk_ui_state(ui));
+  CHECK(r != NULL);
+  if (r) {
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(cur, r, NULL, NULL, &rl);
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) found_clip_begin++;
+      if (rl.cmds[i].op == LK_ROP_CLIP_END) found_clip_end++;
+    }
+    /* At least 2 CLIP_BEGIN: one for window, one for scroll */
+    CHECK(found_clip_begin >= 2);
+    CHECK(found_clip_end >= 2);
+
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_wheel_event(void) {
+  /* Wheel event adjusts scroll_y. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(10, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sc_id;
+  lk_rect *r;
+  lk_event ev;
+  lk_value v;
+
+  BEGIN_TEST("scroll: wheel adjusts scroll_y");
+
+  sc_id = cur->nodes[sc].id;
+
+  /* Need to do layout first so scroll_max is computed */
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  CHECK(r != NULL);
+  if (r) {
+    /* Scroll on the scroll node itself */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = sc;
+    ev.data.wheel.dy = -1; /* scroll down */
+
+    lk_event_route(ui, &ev);
+
+    v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
+    CHECK(v.tag == UIV_I32);
+    CHECK((lk_i32)v.as.i == 30); /* SCROLL_STEP = 30 */
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_clamp_bounds(void) {
+  /* scroll_y stays in [0, scroll_max]. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(10, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sc_id;
+  lk_rect *r;
+  lk_value v;
+  lk_i32 scroll_max;
+
+  BEGIN_TEST("scroll: scroll_y clamped to [0, scroll_max]");
+
+  sc_id = cur->nodes[sc].id;
+
+  /* Layout to compute scroll_max */
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  CHECK(r != NULL);
+  if (r) {
+    scroll_max = (lk_i32)lk_state_get(st, sc_id, LKS_SCROLL_MAX).as.i;
+    CHECK(scroll_max > 0);
+
+    /* Set scroll_y way past max, then do layout again to clamp */
+    lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(scroll_max + 1000));
+    free(r);
+    r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+    if (r) {
+      v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
+      CHECK_EQ((unsigned)(lk_i32)v.as.i, (unsigned)scroll_max);
+      free(r);
+    }
+
+    /* Set scroll_y negative, layout clamps to 0 */
+    lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(-100));
+    r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+    if (r) {
+      v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
+      CHECK_EQ((unsigned)(lk_i32)v.as.i, 0u);
+      free(r);
+    }
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_wheel_bubbles(void) {
+  /* Wheel event on a child label bubbles up to scroll ancestor. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(10, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sc_id;
+  lk_rect *r;
+  lk_event ev;
+  lk_value v;
+  lk_ix first_child;
+
+  BEGIN_TEST("scroll: wheel on child handled by scroll ancestor");
+
+  sc_id = cur->nodes[sc].id;
+  first_child = cur->nodes[sc].first_child;
+
+  /* Layout to compute scroll_max */
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  CHECK(r != NULL);
+  if (r) {
+    /* Send wheel to child label, should bubble to scroll */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = first_child;
+    ev.data.wheel.dy = -1; /* scroll down */
+
+    lk_event_route(ui, &ev);
+
+    v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
+    CHECK(v.tag == UIV_I32);
+    CHECK((lk_i32)v.as.i == 30);
+    CHECK(ev.handled == 1);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_empty(void) {
+  /* Empty scroll container: no crash. */
+  lk_ix sc;
+  lk_ui *ui;
+  const lk_tree *cur;
+  lk_rect *r;
+
+  BEGIN_TEST("scroll: empty container no crash");
+
+  ui = make_scroll_ui(0, &sc);
+  cur = lk_ui_tree(ui);
+
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, lk_ui_state(ui));
+  CHECK(r != NULL);
+  if (r) {
+    /* Scroll with 0 children should not crash and rect should be valid */
+    CHECK(r[sc].w > 0);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_scroll_bar_rendered(void) {
+  /* When content > viewport, extra FILL_RECTs for track + thumb. */
+  lk_ix sc;
+  lk_ui *ui = make_scroll_ui(10, &sc);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sc_id;
+  lk_rect *r;
+  lk_render_list rl;
+  lk_u32 fill_count = 0;
+  lk_u32 i;
+
+  BEGIN_TEST("scroll: scroll bar rendered when content > viewport");
+
+  sc_id = cur->nodes[sc].id;
+
+  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  CHECK(r != NULL);
+  if (r) {
+    lk_i32 smax = (lk_i32)lk_state_get(st, sc_id, LKS_SCROLL_MAX).as.i;
+    CHECK(smax > 0);
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(cur, r, NULL, st, &rl);
+
+    /* Count FILL_RECTs. Should include: window bg, scroll bg,
+     * scroll track, scroll thumb = at least 4 FILL_RECTs
+     * (plus DRAW_TEXT for labels, CLIPs for window and scroll)
+     */
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT) fill_count++;
+    }
+    CHECK(fill_count >= 4);
+
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_widget_bubble_no_break_text_input(void) {
+  /* Verify text_input still works: key events targeted at text_input
+   * should NOT be consumed by any ancestor widget handler.
+   */
+  lk_ix ti;
+  lk_ui *ui;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_event ev;
+  lk_value v;
+
+  BEGIN_TEST("scroll: bubbling does not break text_input");
+
+  {
+    lk_tree *t;
+    lk_ix w, sc;
+    const lk_tree *cur;
+
+    ui = lk_ui_create(NULL);
+    t = lk_ui_begin_frame(ui);
+    w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+    lk_tree_add_prop(t, sc, UIP_H, lk_v_i32(200));
+    ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, "abc"));
+    lk_tree_add_prop(t, ti, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, sc);
+    lk_tree_append_child(t, sc, ti);
+    lk_ui_end_frame(ui);
+
+    cur = lk_ui_tree(ui);
+    ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+    lk_focus_set(ui, cur, ti_id);
+    ti = lk_tree_find_by_id(cur, ti_id);
+  }
+
+  st = lk_ui_state(ui);
+
+  /* Type 'x' into text input */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  /* Text should now be "abcx" (appended at end since cursor defaults to end) */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK(v.tag == UIV_STR);
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_str txt = lk_intern_str(cur->intern, v.as.str_id);
+    CHECK_EQ(txt.len, 4u);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -5693,6 +6132,19 @@ int main(void) {
   test_text_input_select_all();
   test_text_input_initial_text();
   test_text_input_cursor_clamp();
+
+  /* scroll widget */
+  printf("\nlk scroll tests:\n");
+  test_scroll_measure();
+  test_scroll_layout_no_offset();
+  test_scroll_layout_with_offset();
+  test_scroll_render_clips();
+  test_scroll_wheel_event();
+  test_scroll_clamp_bounds();
+  test_scroll_wheel_bubbles();
+  test_scroll_empty();
+  test_scroll_bar_rendered();
+  test_widget_bubble_no_break_text_input();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
