@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-scroll.h"
 #include "lk-text-input.h"
 #include <lk.h>
 
@@ -442,4 +443,7 @@ static void init_defaults(void) {
 
   /* TEXT_INPUT */
   g_widgets[UIK_TEXT_INPUT] = lk_text_input_widget_def();
+
+  /* SCROLL */
+  g_widgets[UIK_SCROLL] = lk_scroll_widget_def();
 }

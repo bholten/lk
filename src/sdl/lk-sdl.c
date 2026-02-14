@@ -223,6 +223,8 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
     /* NULL font is OK — falls back to stub measurer */
   }
 
+  SDL_StartTextInput(win->sdl_win);
+
   win->ui = lk_ui_create(NULL);
 
   if (!win->ui) {
@@ -267,6 +269,7 @@ void lk_window_destroy(lk_window *win) {
   }
 
   if (win->sdl_win) {
+    SDL_StopTextInput(win->sdl_win);
     SDL_DestroyWindow(win->sdl_win);
   }
 
