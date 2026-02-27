@@ -6,8 +6,6 @@ proc view {tree} {
     let row [lk::node $tree "buttons" "row"]
     let ok [lk::node $tree "ok" "button"]
     let cancel [lk::node $tree "cancel" "button"]
-
-    ;; Scroll container with a list of items
     let scroll [lk::node $tree "item_list" "scroll"]
 
     var i 0

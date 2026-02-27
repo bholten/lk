@@ -27,6 +27,7 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
   }
 
   stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+
   if (!stack) {
     return 0;
   }
@@ -52,6 +53,7 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
     /* Push children in reverse order for left-to-right DFS */
     child_count = 0;
     child = nd->first_child;
+
     while (child) {
       child_count++;
       child = t->nodes[child].next_sibling;
@@ -60,16 +62,20 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
     if (child_count > 0) {
       kids = (lk_ix *)lk_sys_alloc(
           NULL, (lk_u32)(sizeof(lk_ix) * (lk_u32)child_count));
+
       if (kids) {
         ki = 0;
         child = nd->first_child;
+
         while (child) {
           kids[ki++] = child;
           child = t->nodes[child].next_sibling;
         }
+
         while (ki > 0) {
           stack[sp++] = kids[--ki];
         }
+
         lk_sys_dealloc(NULL, kids);
       }
     }
@@ -138,6 +144,7 @@ static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
   }
 
   stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+
   if (!stack) {
     return 0;
   }
@@ -160,6 +167,7 @@ static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
     /* Push children in reverse order */
     child_count = 0;
     child = nd->first_child;
+
     while (child) {
       child_count++;
       child = t->nodes[child].next_sibling;
@@ -168,16 +176,20 @@ static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
     if (child_count > 0) {
       kids = (lk_ix *)lk_sys_alloc(
           NULL, (lk_u32)(sizeof(lk_ix) * (lk_u32)child_count));
+
       if (kids) {
         ki = 0;
         child = nd->first_child;
+
         while (child) {
           kids[ki++] = child;
           child = t->nodes[child].next_sibling;
         }
+
         while (ki > 0) {
           stack[sp++] = kids[--ki];
         }
+
         lk_sys_dealloc(NULL, kids);
       }
     }
@@ -197,11 +209,13 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
   }
 
   buf = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+
   if (!buf) {
     return 0;
   }
 
   count = collect_focusable(t, buf, t->node_count);
+
   if (count == 0) {
     lk_sys_dealloc(NULL, buf);
     return 0;
@@ -243,11 +257,13 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
   }
 
   buf = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+
   if (!buf) {
     return 0;
   }
 
   count = collect_focusable(t, buf, t->node_count);
+
   if (count == 0) {
     lk_sys_dealloc(NULL, buf);
     return 0;
@@ -276,6 +292,7 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
   result = t->nodes[buf[count - 1]].id;
   ui->focused_id = result;
   lk_sys_dealloc(NULL, buf);
+
   return result;
 }
 
@@ -292,6 +309,7 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   }
 
   t = lk_ui_tree(ui);
+
   if (!t || event->target == 0 || event->target >= t->node_count) {
     return;
   }
@@ -299,6 +317,7 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   /* Build path from root to target */
   depth = 0;
   n = event->target;
+
   while (n != 0 && depth < 64) {
     path[depth++] = n;
     n = t->nodes[n].parent;
@@ -315,8 +334,10 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   {
     const lk_node *tgt_nd = &t->nodes[event->target];
     const lk_widget_def *tgt_def = lk_widget_get((lk_kind)tgt_nd->kind);
+
     if (tgt_def && tgt_def->event) {
       event->phase = LK_PHASE_TARGET;
+
       if (tgt_def->event(ui, t, event->target, event)) {
         event->handled = 1;
         return;
@@ -328,15 +349,18 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   {
     lk_ix anc = t->nodes[event->target].parent;
     event->phase = LK_PHASE_BUBBLE;
+
     while (anc != 0) {
       const lk_node *anc_nd = &t->nodes[anc];
       const lk_widget_def *anc_def = lk_widget_get((lk_kind)anc_nd->kind);
+
       if (anc_def && anc_def->event) {
         if (anc_def->event(ui, t, anc, event)) {
           event->handled = 1;
           return;
         }
       }
+
       anc = anc_nd->parent;
     }
   }
@@ -345,8 +369,10 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   if (ui->event_handler) {
     /* Capture phase: root to target-parent */
     event->phase = LK_PHASE_CAPTURE;
+
     for (i = 0; i < depth - 1; i++) {
       ui->event_handler(event, path[i], ui->event_ud);
+
       if (event->handled) {
         return;
       }
@@ -355,14 +381,17 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
     /* Target phase */
     event->phase = LK_PHASE_TARGET;
     ui->event_handler(event, path[depth - 1], ui->event_ud);
+
     if (event->handled) {
       return;
     }
 
     /* Bubble phase: target-parent to root */
     event->phase = LK_PHASE_BUBBLE;
+
     for (i = depth - 2; i >= 0; i--) {
       ui->event_handler(event, path[i], ui->event_ud);
+
       if (event->handled) {
         return;
       }

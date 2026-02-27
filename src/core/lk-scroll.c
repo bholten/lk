@@ -18,24 +18,36 @@
 /* ---- Helpers ---- */
 
 static lk_i32 clamp(lk_i32 v, lk_i32 lo, lk_i32 hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
+  if (v < lo) {
+    return lo;
+  }
+  if (v > hi) {
+    return hi;
+  }
   return v;
 }
 
 static lk_i32 get_scroll_y(const lk_state *state, lk_node_id nid) {
   lk_value v;
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   v = lk_state_get(state, nid, LKS_SCROLL_Y);
-  if (v.tag == UIV_I32) return (lk_i32)v.as.i;
+  if (v.tag == UIV_I32) {
+    return (lk_i32)v.as.i;
+  }
   return 0;
 }
 
 static lk_i32 get_scroll_max(const lk_state *state, lk_node_id nid) {
   lk_value v;
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   v = lk_state_get(state, nid, LKS_SCROLL_MAX);
-  if (v.tag == UIV_I32) return (lk_i32)v.as.i;
+  if (v.tag == UIV_I32) {
+    return (lk_i32)v.as.i;
+  }
   return 0;
 }
 
@@ -58,6 +70,7 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     if (sizes[ch].w > max_w) {
       max_w = sizes[ch].w;
     }
+
     sum_h += sizes[ch].h;
     count++;
     ch = t->nodes[ch].next_sibling;
@@ -90,18 +103,23 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
   /* Sum children heights */
   ch = nd->first_child;
+
   while (ch) {
     content_h += sizes[ch].h;
     count++;
     ch = t->nodes[ch].next_sibling;
   }
+
   if (count > 1) {
     content_h += gap * (count - 1);
   }
 
   /* Compute scroll bounds */
   scroll_max = content_h - content->h;
-  if (scroll_max < 0) scroll_max = 0;
+
+  if (scroll_max < 0) {
+    scroll_max = 0;
+  }
 
   /* Read and clamp scroll offset */
   scroll_y = get_scroll_y(cfg->state, nid);
@@ -115,14 +133,19 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
   /* Reduce available width when scrollable (scroll bar space) */
   avail_w = content->w;
+
   if (scroll_max > 0) {
     avail_w -= SCROLL_BAR_W;
-    if (avail_w < 0) avail_w = 0;
+
+    if (avail_w < 0) {
+      avail_w = 0;
+    }
   }
 
   /* Position children */
   y = content->y - scroll_y;
   ch = nd->first_child;
+
   while (ch) {
     rects[ch].x = content->x;
     rects[ch].y = y;
@@ -167,7 +190,9 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     }
 
     thumb_h = (viewport_h * track_h) / total_h;
-    if (thumb_h < 8) thumb_h = 8;
+    if (thumb_h < 8) {
+      thumb_h = 8;
+    }
     thumb_y = rect->y + pad;
     if (scroll_max > 0) {
       thumb_y += (scroll_y * (track_h - thumb_h)) / scroll_max;

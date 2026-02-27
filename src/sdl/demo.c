@@ -31,6 +31,7 @@ static void on_command(const lk_command *cmd, void *ud) {
   if (cmd->name == st->select_cmd_id) {
     if (cmd->arg_count >= 1 && cmd->args[0].tag == UIV_I32) {
       int idx = (int)cmd->args[0].as.i;
+
       if (idx >= 0 && idx < FRUIT_COUNT) {
         st->selected = idx;
       }
