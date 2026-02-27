@@ -4,7 +4,11 @@
  * Clips children, scrolls vertically via wheel events, displays a
  * scroll bar indicator.  Children are stacked vertically like a column.
  *
- * Scroll offset stored in LKS_SCROLL_Y, max offset in LKS_SCROLL_MAX.
+ * Scroll offset (user interaction state) stays in LKS_SCROLL_Y; the
+ * max offset is DERIVED during layout, so it lives in the per-frame
+ * geometry scratch (geom->scroll.max), read back by render (bar
+ * geometry) and the wheel handler (clamping).  Without a geom
+ * scratch the bar does not render and wheel events bubble.
  */
 
 #include <string.h>
@@ -18,24 +22,30 @@
 /* ---- Helpers ---- */
 
 static lk_i32 clamp(lk_i32 v, lk_i32 lo, lk_i32 hi) {
-  if (v < lo) return lo;
-  if (v > hi) return hi;
+  if (v < lo) {
+    return lo;
+  }
+
+  if (v > hi) {
+    return hi;
+  }
+
   return v;
 }
 
 static lk_i32 get_scroll_y(const lk_state *state, lk_node_id nid) {
   lk_value v;
-  if (!state) return 0;
-  v = lk_state_get(state, nid, LKS_SCROLL_Y);
-  if (v.tag == UIV_I32) return (lk_i32)v.as.i;
-  return 0;
-}
 
-static lk_i32 get_scroll_max(const lk_state *state, lk_node_id nid) {
-  lk_value v;
-  if (!state) return 0;
-  v = lk_state_get(state, nid, LKS_SCROLL_MAX);
-  if (v.tag == UIV_I32) return (lk_i32)v.as.i;
+  if (!state) {
+    return 0;
+  }
+
+  v = lk_state_get(state, nid, LKS_SCROLL_Y);
+
+  if (v.tag == UIV_I32) {
+    return (lk_i32)v.as.i;
+  }
+
   return 0;
 }
 
@@ -47,6 +57,8 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   const lk_node *nd = &t->nodes[n];
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 bw = cfg->styles ? cfg->styles[n].border_width : 0;
+  lk_i32 inset = pad + bw;
   lk_i32 gap =
       cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
@@ -55,11 +67,15 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   int count = 0;
 
   while (ch) {
-    if (sizes[ch].w > max_w) {
-      max_w = sizes[ch].w;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      if (sizes[ch].w > max_w) {
+        max_w = sizes[ch].w;
+      }
+
+      sum_h += sizes[ch].h;
+      count++;
     }
-    sum_h += sizes[ch].h;
-    count++;
+
     ch = t->nodes[ch].next_sibling;
   }
 
@@ -67,8 +83,8 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     sum_h += gap * (count - 1);
   }
 
-  *out_w = max_w + pad * 2;
-  *out_h = sum_h + pad * 2;
+  *out_w = max_w + inset * 2;
+  *out_h = sum_h + inset * 2;
 }
 
 /* ---- Layout ---- */
@@ -87,51 +103,139 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 scroll_y;
   lk_i32 avail_w;
   lk_i32 y;
+  lk_i32 *hs = NULL; /* fitted child heights (docs/styled-text.md s2) */
+  int hi;
 
-  /* Sum children heights */
+  /* Count children, then fit each at the content width */
   ch = nd->first_child;
+
   while (ch) {
-    content_h += sizes[ch].h;
-    count++;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      count++;
+    }
+
     ch = t->nodes[ch].next_sibling;
   }
+
+  if (count > 0) {
+    hs = (lk_i32 *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_i32) * count));
+  }
+
+  hi = 0;
+  ch = nd->first_child;
+
+  while (ch) {
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      lk_i32 h = lk_widget_fit_height(t, ch, content->w, sizes, cfg);
+
+      if (hs) {
+        hs[hi] = h;
+      }
+
+      hi++;
+      content_h += h;
+    }
+
+    ch = t->nodes[ch].next_sibling;
+  }
+
   if (count > 1) {
     content_h += gap * (count - 1);
   }
 
   /* Compute scroll bounds */
   scroll_max = content_h - content->h;
-  if (scroll_max < 0) scroll_max = 0;
+
+  if (scroll_max < 0) {
+    scroll_max = 0;
+  }
 
   /* Read and clamp scroll offset */
   scroll_y = get_scroll_y(cfg->state, nid);
   scroll_y = clamp(scroll_y, 0, scroll_max);
 
-  /* Store scroll_max and clamped scroll_y in state */
+  /* scroll_max is derived geometry: per-frame scratch, not retained
+   * state.  The clamped scroll_y write-back IS retained interaction
+   * state (normalizing a stale offset after content shrank). */
+  if (cfg->geom) {
+    cfg->geom[n].scroll.max = scroll_max;
+  }
+
   if (cfg->state) {
-    lk_state_set(cfg->state, nid, LKS_SCROLL_MAX, lk_v_i32(scroll_max));
     lk_state_set(cfg->state, nid, LKS_SCROLL_Y, lk_v_i32(scroll_y));
   }
 
   /* Reduce available width when scrollable (scroll bar space) */
   avail_w = content->w;
+
   if (scroll_max > 0) {
     avail_w -= SCROLL_BAR_W;
-    if (avail_w < 0) avail_w = 0;
+
+    if (avail_w < 0) {
+      avail_w = 0;
+    }
+
+    /* Narrower content wraps taller: refit at the bar-reduced width
+     * (heights only grow, so the bar stays) and re-derive the extent. */
+    content_h = 0;
+    hi = 0;
+    ch = nd->first_child;
+
+    while (ch) {
+      if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+        lk_i32 h = lk_widget_fit_height(t, ch, avail_w, sizes, cfg);
+
+        if (hs) {
+          hs[hi] = h;
+        }
+
+        hi++;
+        content_h += h;
+      }
+
+      ch = t->nodes[ch].next_sibling;
+    }
+
+    if (count > 1) {
+      content_h += gap * (count - 1);
+    }
+
+    scroll_max = content_h - content->h;
+    scroll_y = clamp(scroll_y, 0, scroll_max);
+
+    if (cfg->geom) {
+      cfg->geom[n].scroll.max = scroll_max;
+    }
+
+    if (cfg->state) {
+      lk_state_set(cfg->state, nid, LKS_SCROLL_Y, lk_v_i32(scroll_y));
+    }
   }
 
   /* Position children */
   y = content->y - scroll_y;
+  hi = 0;
   ch = nd->first_child;
+
   while (ch) {
-    rects[ch].x = content->x;
-    rects[ch].y = y;
-    rects[ch].w = avail_w;
-    rects[ch].h = sizes[ch].h;
-    y += sizes[ch].h + gap;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      lk_i32 h = hs ? hs[hi] : sizes[ch].h;
+
+      rects[ch].x = content->x;
+      rects[ch].y = y;
+      rects[ch].w = avail_w;
+      rects[ch].h = h;
+      y += h + gap;
+      hi++;
+    }
+
     ch = t->nodes[ch].next_sibling;
   }
 
+
+  if (hs) {
+    lk_sys_dealloc(NULL, hs);
+  }
   return 1;
 }
 
@@ -139,7 +243,7 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
 static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
-                          lk_render_list *out) {
+                          const lk_widget_geom *geom, lk_render_list *out) {
   lk_node_id nid = t->nodes[n].id;
   lk_i32 scroll_max;
   lk_render_cmd cmd;
@@ -151,11 +255,13 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
   cmd.color = style->bg;
   lk_render_list_push(out, cmd);
 
-  /* Scroll bar (rendered before CLIP_BEGIN so not clipped) */
-  scroll_max = get_scroll_max(state, nid);
+  /* Scroll bar (rendered before CLIP_BEGIN so not clipped).  The max
+   * offset is layout-derived geometry; no geom, no bar. */
+  scroll_max = geom ? geom->scroll.max : 0;
+
   if (scroll_max > 0) {
     lk_i32 scroll_y = get_scroll_y(state, nid);
-    lk_i32 pad = style->padding;
+    lk_i32 pad = style->padding + style->border_width;
     lk_i32 track_h = rect->h - pad * 2;
     lk_i32 viewport_h = rect->h - pad * 2;
     lk_i32 total_h = viewport_h + scroll_max;
@@ -167,8 +273,13 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     }
 
     thumb_h = (viewport_h * track_h) / total_h;
-    if (thumb_h < 8) thumb_h = 8;
+
+    if (thumb_h < 8) {
+      thumb_h = 8;
+    }
+
     thumb_y = rect->y + pad;
+
     if (scroll_max > 0) {
       thumb_y += (scroll_y * (track_h - thumb_h)) / scroll_max;
     }
@@ -180,10 +291,7 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.y = rect->y + pad;
     cmd.rect.w = SCROLL_BAR_W;
     cmd.rect.h = track_h;
-    cmd.color.r = 50;
-    cmd.color.g = 50;
-    cmd.color.b = 50;
-    cmd.color.a = 128;
+    cmd.color = style->scrollbar_track;
     lk_render_list_push(out, cmd);
 
     /* Thumb */
@@ -193,10 +301,7 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.y = thumb_y;
     cmd.rect.w = SCROLL_BAR_W;
     cmd.rect.h = thumb_h;
-    cmd.color.r = 120;
-    cmd.color.g = 120;
-    cmd.color.b = 120;
-    cmd.color.a = 200;
+    cmd.color = style->scrollbar_thumb;
     lk_render_list_push(out, cmd);
   }
 }
@@ -212,9 +317,15 @@ static int event_scroll(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
+  /* Clamping needs the layout-derived max from the ui's geometry
+   * scratch (events run after layout).  No geom: bubble. */
+  if (!ui->geom || (lk_u32)n >= ui->geom_cap) {
+    return 0;
+  }
+
   st = lk_ui_state(ui);
   nid = t->nodes[n].id;
-  scroll_max = get_scroll_max(st, nid);
+  scroll_max = ui->geom[n].scroll.max;
 
   if (scroll_max <= 0) {
     return 0;

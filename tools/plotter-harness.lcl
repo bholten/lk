@@ -1,0 +1,93 @@
+;; tools/plotter-harness.lcl -- headless logic harness for the Plotter.
+;;
+;; Run from the repository root:  build/lcl_lk_main tools/plotter-harness.lcl
+;;
+;; The prefix-eval recipe: read the example, eval everything before its
+;; `app` call against a bare ui, then drive the model -- this is what
+;; catches gesture-path bugs (forward references, formatting) that an
+;; offscreen smoke run never exercises.  Prints "ok"/"FAIL" per check.
+let src [Io::read_file "examples/plotter-dsl.lcl"]
+let cut [String::find $src "\napp \""]
+eval [String::range $src 0 $cut]
+
+let ui [Lk::ui_create]
+set! LkDsl::_ui $ui
+set! cv [Lk::canvas_new $ui 700 450]
+set! cw 700
+set! ch 450
+
+proc check {name got want} {
+    if [== $got $want] { puts "ok   $name" } else { puts "FAIL $name: got $got want $want" }
+}
+
+proc near {name got want tol} {
+    if [< [fabs [- $got $want]] $tol] { puts "ok   $name" } else { puts "FAIL $name: got $got want $want" }
+}
+
+near "sin 0" [fsin 0] 0 1e-9
+near "sin pi/2" [fsin [/ $PI 2]] 1 1e-4
+near "sin 1" [fsin 1] 0.8414709848 1e-4
+near "sin -7" [fsin -7] -0.6569865987 1e-3
+near "sin 100" [fsin 100] -0.5063656411 1e-3
+near "cos 0" [fcos 0] 1 1e-4
+near "exp 0" [fexp 0] 1 1e-9
+near "exp 1" [fexp 1] 2.718281828 1e-6
+near "exp -2.5" [fexp -2.5] 0.0820849986 1e-6
+near "exp 7.5" [fexp 7.5] 1808.042414 1e-2
+check "fmt 3.14159 2" [fmt 3.14159 2] "3.14"
+check "fmt -0.004 2" [fmt -0.004 2] "0.00"
+check "fmt -2.5 0" [fmt -2.5 0] "-3"
+check "fmt 10 0" [fmt 10 0] "10"
+check "fmt 0.05 1" [fmt 0.05 1] "0.1"
+check "fmt 1234.5 1" [fmt 1234.5 1] "1234.5"
+near "nice 20/8" [nice_step 20 8] 2 1e-9
+near "nice 8/6" [nice_step 8 6] 1 1e-9
+near "nice 0.7/8" [nice_step 0.7 8] 0.1 1e-9
+near "nice 3000/8" [nice_step 3000 8] 500 1e-9
+check "ffloor -0.5" [ffloor -0.5] -1
+check "fceil 0.5" [fceil 0.5] 1
+check "fceil -0.5" [fceil -0.5] 0
+
+rebuild
+puts "ops after rebuild: [Lk::canvas_op_count $cv]"
+check "dirty cleared" $dirty 0
+check "walk has 41 samples" [len $walk_xs] 41
+
+;; crosshair path
+set! hover_px 300
+set! hover_py 200
+rebuild
+let ops_cross [Lk::canvas_op_count $cv]
+puts "ops with crosshair: $ops_cross"
+
+;; zoom keeps the point under the pointer
+let bx [px_to_x 300]
+let by [py_to_y 200]
+zoom_at 300 200 0.5
+near "zoom fixes x" [px_to_x 300] $bx 1e-9
+near "zoom fixes y" [py_to_y 200] $by 1e-9
+near "zoom halves width" [- $xmax $xmin] 10 1e-9
+pan_px 100 0
+near "pan left by 100px" [px_to_x 400] $bx 1e-9
+reset_view
+near "reset xmin" $xmin -10 1e-9
+
+;; everything on: rebuild cost
+set_preset "Everything"
+set! hover_px 300
+set! hover_py 200
+var i 0
+
+while [< $i 10] {
+    set! dirty 1
+
+    rebuild
+
+    set! i [+ $i 1]
+}
+
+puts "ops everything: [Lk::canvas_op_count $cv]"
+
+zoom_at 300 200 0.37
+
+puts "status after odd zoom: [status_text]"

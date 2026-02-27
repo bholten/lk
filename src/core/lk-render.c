@@ -1,6 +1,8 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-tabs.h"
+#include "lk-overlay.h"
 #include <lk.h>
 
 int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
@@ -23,6 +25,49 @@ int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
   }
 
   rl->cmds[rl->count++] = cmd;
+  return 1;
+}
+
+int lk_render_list_push_run(lk_render_list *rl, const char *ptr, lk_u32 len,
+                            lk_u32 *out_off) {
+  if (!rl || !out_off) {
+    return 0;
+  }
+
+  if (len > 0 && !ptr) {
+    return 0;
+  }
+
+  if (rl->bytes_count + len > rl->bytes_cap) {
+    lk_u32 new_cap = rl->bytes_cap == 0 ? 256 : rl->bytes_cap * 2;
+    char *new_bytes;
+
+    while (new_cap < rl->bytes_count + len) {
+      new_cap *= 2;
+    }
+
+    new_bytes = (char *)lk_sys_alloc(NULL, new_cap);
+
+    if (!new_bytes) {
+      return 0;
+    }
+
+    if (rl->bytes) {
+      memcpy(new_bytes, rl->bytes, rl->bytes_count);
+      lk_sys_dealloc(NULL, rl->bytes);
+    }
+
+    rl->bytes = new_bytes;
+    rl->bytes_cap = new_cap;
+  }
+
+  *out_off = rl->bytes_count;
+
+  if (len > 0) {
+    memcpy(rl->bytes + rl->bytes_count, ptr, len);
+    rl->bytes_count += len;
+  }
+
   return 1;
 }
 
@@ -50,12 +95,14 @@ static void init_fallback_styles(void) {
   memset(g_fallback_styles, 0, sizeof(g_fallback_styles));
 
   /* Build a small tree with one node of each kind and resolve */
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
+
   if (!th) {
     return;
   }
 
   t = lk_tree_create(NULL);
+
   if (!t) {
     lk_theme_destroy(th);
     return;
@@ -68,7 +115,9 @@ static void init_fallback_styles(void) {
   for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
     lk_tree_add_node(t, (lk_node_id)(k), (lk_kind)k);
   }
+
   lk_tree_set_root(t, 1);
+
   for (k = UIK_WINDOW + 1; k < (int)UIK__COUNT; k++) {
     lk_tree_append_child(t, 1, (lk_ix)k);
   }
@@ -77,9 +126,11 @@ static void init_fallback_styles(void) {
                                  (lk_u32)(sizeof(lk_style) * t->node_count));
   if (buf) {
     lk_style_resolve(th, t, NULL, buf);
+
     for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
       g_fallback_styles[k] = buf[k];
     }
+
     lk_sys_dealloc(NULL, buf);
   }
 
@@ -87,29 +138,22 @@ static void init_fallback_styles(void) {
   lk_theme_destroy(th);
 }
 
-int lk_render_build(const lk_tree *t, const lk_rect *rects,
-                    const lk_style *styles, const lk_state *state,
-                    lk_render_list *out) {
+/* Shared DFS emitter for lk_render_build / lk_render_build_from.
+ * Walks the subtree rooted at start and appends commands to out
+ * (count is NOT reset here).  Subtrees whose root carries UIP_HIDDEN
+ * are skipped, except start itself when ignore_start_hidden is set
+ * (overlay content subtrees are hidden from the main pass but must
+ * render in the overlay pass). */
+static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
+                       const lk_style *styles, const lk_state *state,
+                       const lk_widget_geom *geom, lk_render_list *out,
+                       int ignore_start_hidden) {
   lk_ix *stack;
   lk_u32 sp;
   /* Stack needs room for each node plus a CLIP_END marker per clipping
    * node.  2x node_count is a safe upper bound.
    */
   lk_u32 stack_cap;
-
-  if (!t || !out) {
-    return 0;
-  }
-
-  out->count = 0;
-
-  if (t->root == 0 || t->root >= t->node_count) {
-    return 1;
-  }
-
-  if (!rects) {
-    return 0;
-  }
 
   if (!styles && !g_fallback_inited) {
     init_fallback_styles();
@@ -123,7 +167,7 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
   }
 
   sp = 0;
-  stack[sp++] = t->root;
+  stack[sp++] = start;
 
   while (sp > 0) {
     lk_ix raw = stack[--sp];
@@ -144,6 +188,13 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     }
 
     n = raw;
+
+    /* Hidden subtrees are skipped by the main render pass. */
+    if (lk_node_prop_bool(t, n, UIP_HIDDEN) &&
+        !(ignore_start_hidden && n == start)) {
+      continue;
+    }
+
     nd = &t->nodes[n];
     kind = (lk_kind)nd->kind;
     def = lk_widget_get(kind);
@@ -159,7 +210,58 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     }
 
     if (def && def->render) {
-      def->render(t, n, &rects[n], node_style, state, out);
+      def->render(t, n, &rects[n], node_style, state, geom ? &geom[n] : NULL,
+                  out);
+    } else if (node_style->bg.a > 0) {
+      /* Render-less kinds (containers: column, row, spacer) get their
+       * background from the engine — widgets with a render fn own
+       * their full appearance.  Without this, a theme rule setting bg
+       * on a container matches, draws its border, and silently never
+       * paints the plate. */
+      lk_render_cmd cmd;
+
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_FILL_RECT;
+      cmd.color = node_style->bg;
+      cmd.rect = rects[n];
+      lk_render_list_push(out, cmd);
+    }
+
+    /* Emit border edges as 4 FILL_RECTs */
+    if (node_style->border_width > 0) {
+      lk_i32 bw = node_style->border_width;
+      lk_render_cmd bcmd;
+
+      /* Top */
+      memset(&bcmd, 0, sizeof(bcmd));
+      bcmd.op = LK_ROP_FILL_RECT;
+      bcmd.color = node_style->border_color;
+      bcmd.rect.x = rects[n].x;
+      bcmd.rect.y = rects[n].y;
+      bcmd.rect.w = rects[n].w;
+      bcmd.rect.h = bw;
+      lk_render_list_push(out, bcmd);
+
+      /* Bottom */
+      bcmd.rect.x = rects[n].x;
+      bcmd.rect.y = rects[n].y + rects[n].h - bw;
+      bcmd.rect.w = rects[n].w;
+      bcmd.rect.h = bw;
+      lk_render_list_push(out, bcmd);
+
+      /* Left */
+      bcmd.rect.x = rects[n].x;
+      bcmd.rect.y = rects[n].y + bw;
+      bcmd.rect.w = bw;
+      bcmd.rect.h = rects[n].h - bw * 2;
+      lk_render_list_push(out, bcmd);
+
+      /* Right */
+      bcmd.rect.x = rects[n].x + rects[n].w - bw;
+      bcmd.rect.y = rects[n].y + bw;
+      bcmd.rect.w = bw;
+      bcmd.rect.h = rects[n].h - bw * 2;
+      lk_render_list_push(out, bcmd);
     }
 
     /* Emit CLIP_BEGIN after own render commands, before children */
@@ -183,6 +285,12 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       while (child) {
         child_count++;
         child = t->nodes[child].next_sibling;
+      }
+
+      /* An unselected TAB page renders its header only: never descend
+       * (see lk-tabs.h). */
+      if (lk_tabs_collapsed(t, n, state)) {
+        child_count = 0;
       }
 
       /* Push CLIP_END marker first so it pops AFTER all children */
@@ -217,6 +325,46 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
   return 1;
 }
 
+int lk_render_build(const lk_tree *t, const lk_rect *rects,
+                    const lk_style *styles, const lk_state *state,
+                    const lk_widget_geom *geom, lk_render_list *out) {
+  if (!t || !out) {
+    return 0;
+  }
+
+  /* Reset commands and the run arena together (capacity is reused).
+   * lk_render_build_overlays only appends, so overlays never clobber
+   * runs emitted by the main pass. */
+  out->count = 0;
+  out->bytes_count = 0;
+
+  if (t->root == 0 || t->root >= t->node_count) {
+    return 1;
+  }
+
+  if (!rects) {
+    return 0;
+  }
+
+  return render_walk(t, t->root, rects, styles, state, geom, out, 0);
+}
+
+/* Internal (declared in lk-overlay.h): append the subtree rooted at
+ * start, ignoring UIP_HIDDEN on start itself. */
+int lk_render_build_from(const lk_tree *t, lk_ix start, const lk_rect *rects,
+                         const lk_style *styles, const lk_state *state,
+                         const lk_widget_geom *geom, lk_render_list *out) {
+  if (!t || !out || !rects) {
+    return 0;
+  }
+
+  if (start == 0 || start >= t->node_count) {
+    return 0;
+  }
+
+  return render_walk(t, start, rects, styles, state, geom, out, 1);
+}
+
 void lk_render_list_destroy(lk_render_list *rl) {
   if (!rl) {
     return;
@@ -226,7 +374,14 @@ void lk_render_list_destroy(lk_render_list *rl) {
     lk_sys_dealloc(NULL, rl->cmds);
   }
 
+  if (rl->bytes) {
+    lk_sys_dealloc(NULL, rl->bytes);
+  }
+
   rl->cmds = NULL;
   rl->count = 0;
   rl->cap = 0;
+  rl->bytes = NULL;
+  rl->bytes_count = 0;
+  rl->bytes_cap = 0;
 }

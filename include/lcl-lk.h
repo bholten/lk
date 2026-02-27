@@ -8,9 +8,9 @@ extern "C" {
 #endif
 
 /*
- * Register the "lk" namespace into an LCL interpreter.
+ * Register the "Lk" namespace into an LCL interpreter.
  *
- * This adds all lk:: procs for building UI trees, managing frames,
+ * This adds all Lk:: procs for building UI trees, managing frames,
  * handling commands/translators/state/focus, and (if linked with
  * lk_sdl) creating SDL windows.
  *
@@ -20,6 +20,12 @@ extern "C" {
  *   lcl_register_lk(interp);
  */
 void lcl_register_lk(lcl_interp *interp);
+
+/* Script arguments for Lk::args: the strings AFTER the script path
+ * (argc may be 0).  Borrowed, not copied -- the caller keeps them
+ * alive for the interpreter's lifetime (main's argv does).  Call
+ * before or after lcl_register_lk; Lk::args reads the latest. */
+void lcl_lk_set_args(int argc, char **argv);
 
 #ifdef __cplusplus
 }

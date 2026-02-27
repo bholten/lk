@@ -3,52 +3,44 @@
 #include <string.h>
 
 #include <lk.h>
+#include "core/lk-dropdown.h" /* lk_dropdown_popup_rect (geometry tests) */
 #include "core/lk-memory.h"
+#include "core/lk-tooltip.h" /* lk_tooltip_rect (geometry tests) */
 
-/* ---- minimal test harness ---- */
+/* ---- minimal test harness (macros in lk-test-harness.h) ---- */
 
-static int g_tests = 0;
-static int g_pass = 0;
-static int g_fail = 0;
-static int g_cur_ok = 0;
+#include "lk-test-harness.h"
 
-#define BEGIN_TEST(name)                                                       \
-  do {                                                                         \
-    g_tests++;                                                                 \
-    g_cur_ok = 1;                                                              \
-    printf("  %-44s ", name);                                                  \
-  } while (0)
+int g_tests = 0;
+int g_pass = 0;
+int g_fail = 0;
+int g_cur_ok = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      if (g_cur_ok)                                                            \
-        printf("FAIL\n");                                                      \
-      printf("    line %d: %s\n", __LINE__, #cond);                            \
-      g_cur_ok = 0;                                                            \
-    }                                                                          \
-  } while (0)
+/* document + edit history tests (test/lk-document-test.c) */
+void lk_document_run_tests(void);
 
-#define CHECK_EQ(a, b)                                                         \
-  do {                                                                         \
-    if ((a) != (b)) {                                                          \
-      if (g_cur_ok)                                                            \
-        printf("FAIL\n");                                                      \
-      printf("    line %d: %s == %u, expected %u\n", __LINE__, #a,             \
-             (unsigned)(a), (unsigned)(b));                                    \
-      g_cur_ok = 0;                                                            \
-    }                                                                          \
-  } while (0)
+/* resource table + render-list run arena tests
+ * (test/lk-resource-test.c, editor track stage B1) */
+void lk_resource_run_tests(void);
 
-#define END_TEST()                                                             \
-  do {                                                                         \
-    if (g_cur_ok) {                                                            \
-      printf("ok\n");                                                          \
-      g_pass++;                                                                \
-    } else {                                                                   \
-      g_fail++;                                                                \
-    }                                                                          \
-  } while (0)
+/* editor view + command layer + UIK_EDITOR widget tests
+ * (test/lk-editor-test.c, editor track stage B2) */
+void lk_editor_run_tests(void);
+
+/* annotation store + styled-span render tests
+ * (test/lk-annot-test.c, editor track stage C) */
+void lk_annot_run_tests(void);
+
+/* interior presentation tests (test/lk-present-test.c, weft-surface
+ * track stage S1) */
+void lk_present_run_tests(void);
+void lk_forms_run_tests(void);
+void lk_image_run_tests(void);
+void lk_canvas_run_tests(void);
+void lk_styled_text_run_tests(void);
+void lk_menu_run_tests(void);
+void lk_list_run_tests(void);
+void lk_focus_run_tests(void);
 
 /* ---- changeset query helpers ---- */
 
@@ -908,8 +900,7 @@ static lk_rect *run_layout(lk_tree *t, lk_i32 vw, lk_i32 vh) {
   lk_rect *rects;
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
-  cfg.measure_ud = NULL;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = vw;
   cfg.viewport_h = vh;
 
@@ -1338,7 +1329,7 @@ static void test_layout_empty_tree(void) {
   BEGIN_TEST("layout: empty tree (no root)");
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
 
@@ -1608,6 +1599,775 @@ static void test_layout_row_justify_end(void) {
 }
 
 /* ================================================================
+ * Tests: grow layout (docs/grow-layout.md)
+ * ================================================================ */
+
+static void test_grow_thirds(void) {
+  /* 100 @ 1:1:1 -> 34/33/33 (largest-remainder, ties to earlier) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2, s3;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: 100 @ 1:1:1 -> 34/33/33");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(1));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_GROW, lk_v_i32(1));
+  s3 = lk_tree_add_node_s(t, lk_str_c("s3"), UIK_SPACER);
+  lk_tree_add_prop(t, s3, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+  lk_tree_append_child(t, col, s3);
+
+  r = run_layout(t, 800, 100);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 34);
+    CHECK_RECT(r[s2], 0, 34, 800, 33);
+    CHECK_RECT(r[s3], 0, 67, 800, 33);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_text_input_row(void) {
+  /* A grow-1 text input in a row takes the leftover main-axis space
+   * (the mini-bar shape: label + input filling the rest). */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, lb, ti;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: text input fills row leftover");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "find:"));
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, lb);
+  lk_tree_append_child(t, row, ti);
+
+  r = run_layout(t, 500, 100);
+  CHECK(r != NULL);
+  if (r) {
+    /* stub: 8 px/cp -> label 40 wide; input gets 500 - 40 = 460 */
+    CHECK_EQ(r[lb].w, 40);
+    CHECK_EQ(r[ti].x, 40);
+    CHECK_EQ(r[ti].w, 460);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_one_two(void) {
+  /* 100 @ 1:2 -> 33/67; 101 @ 1:2 -> 34/67 (both normative) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: 100 @ 1:2 -> 33/67, 101 -> 34/67");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(1));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_GROW, lk_v_i32(2));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+
+  r = run_layout(t, 800, 100);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 33);
+    CHECK_RECT(r[s2], 0, 33, 800, 67);
+    free(r);
+  }
+
+  r = run_layout(t, 800, 101);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 34);
+    CHECK_RECT(r[s2], 0, 34, 800, 67);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_legacy_remainder_order(void) {
+  /* 3 bare legacy spacers, leftover 100: extras go to the FIRST
+   * children -> 34/33/33 (the compatibility theorem, order pinned) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2, s3;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: legacy spacers keep remainder order");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  s3 = lk_tree_add_node_s(t, lk_str_c("s3"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+  lk_tree_append_child(t, col, s3);
+
+  r = run_layout(t, 800, 100);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 34);
+    CHECK_RECT(r[s2], 0, 34, 800, 33);
+    CHECK_RECT(r[s3], 0, 67, 800, 33);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_mixed_legacy_and_grow(void) {
+  /* bare spacer (legacy weight 1) + grow-1 label split leftover */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: legacy spacer + grow child split");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_add_prop(t, l1, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* leftover = 600 - 16 = 584, split 292/292; label basis 16 + 292 */
+    CHECK_RECT(r[sp], 0, 0, 800, 292);
+    CHECK_RECT(r[l1], 0, 292, 800, 308);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_zero_pins_spacer(void) {
+  /* grow 0 on an otherwise-flexible spacer: zero-sized, fixed */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: grow 0 pins an unsized spacer");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_GROW, lk_v_i32(0));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[sp], 0, 0, 800, 0);
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_sized_spacer_basis(void) {
+  /* explicit main size is the basis: fixed without grow, grows on top
+   * of it with grow */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sa, sb;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: sized spacer with/without grow");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sa = lk_tree_add_node_s(t, lk_str_c("sa"), UIK_SPACER);
+  lk_tree_add_prop(t, sa, UIP_H, lk_v_i32(100));
+  sb = lk_tree_add_node_s(t, lk_str_c("sb"), UIK_SPACER);
+  lk_tree_add_prop(t, sb, UIP_H, lk_v_i32(100));
+  lk_tree_add_prop(t, sb, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sa);
+  lk_tree_append_child(t, col, sb);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* leftover = 600 - 200 = 400, all to sb: 100 + 400 = 500 */
+    CHECK_RECT(r[sa], 0, 0, 800, 100);
+    CHECK_RECT(r[sb], 0, 100, 800, 500);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_negative_clamped(void) {
+  /* negative grow clamps to 0 in core (bindings hard-error instead) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sn, sp;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: negative grow clamps to 0");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sn = lk_tree_add_node_s(t, lk_str_c("sn"), UIK_SPACER);
+  lk_tree_add_prop(t, sn, UIP_GROW, lk_v_i32(-5));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sn);
+  lk_tree_append_child(t, col, sp);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[sn], 0, 0, 800, 0);
+    CHECK_RECT(r[sp], 0, 0, 800, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_huge_weights_capped(void) {
+  /* weights clamp to 4096: huge values behave as equal weights and
+   * leftover * weight stays inside lk_i32 */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: huge weights cap at 4096");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(1000000));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_GROW, lk_v_i32(5000));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+
+  r = run_layout(t, 800, 101);
+  CHECK(r != NULL);
+  if (r) {
+    /* both clamp to 4096 -> equal split, extra to the first */
+    CHECK_RECT(r[s1], 0, 0, 800, 51);
+    CHECK_RECT(r[s2], 0, 51, 800, 50);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_hidden_children_inert(void) {
+  /* hidden children contribute neither weights nor bases nor gaps */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, la, sh, sp, lb;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: hidden children are inert");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(10));
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  sh = lk_tree_add_node_s(t, lk_str_c("sh"), UIK_SPACER);
+  lk_tree_add_prop(t, sh, UIP_GROW, lk_v_i32(5));
+  lk_tree_add_prop(t, sh, UIP_HIDDEN, lk_v_bool(1));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_tree_append_child(t, col, sh);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, lb);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* visible: la(16), sp, lb(16); 2 gaps = 20;
+     * leftover = 600 - 32 - 20 = 548 (hidden grow-5 spacer excluded) */
+    CHECK_RECT(r[la], 0, 0, 800, 16);
+    CHECK_RECT(r[sh], 0, 0, 0, 0);
+    CHECK_RECT(r[sp], 0, 26, 800, 548);
+    CHECK_RECT(r[lb], 0, 584, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_all_hidden(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: all children hidden");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(2));
+  lk_tree_add_prop(t, s1, UIP_HIDDEN, lk_v_bool(1));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_HIDDEN, lk_v_bool(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 0, 0);
+    CHECK_RECT(r[s2], 0, 0, 0, 0);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_single_child(void) {
+  /* single visible grow child takes the whole extent */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: single grow child fills");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_add_prop(t, l1, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[l1], 0, 0, 800, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_zero_extent_and_negative_leftover(void) {
+  /* zero inner extent: shares are 0; negative leftover: bases kept
+   * (intrinsic is the floor, no shrink) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: zero extent / negative leftover");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+  lk_tree_add_prop(t, l2, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 0);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    CHECK_RECT(r[l2], 0, 16, 800, 16);
+    free(r);
+  }
+
+  r = run_layout(t, 800, 20);
+  CHECK(r != NULL);
+  if (r) {
+    /* leftover = 20 - 32 < 0 -> clamped, bases kept */
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    CHECK_RECT(r[l2], 0, 16, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_padding_gap_accounting(void) {
+  /* available = inner extent - padding - visible gaps, exactly once */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, sp, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: padding + gaps + growth exact");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(10));
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(5));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_GROW, lk_v_i32(1));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* content h = 580; leftover = 580 - 32 - 10 = 538
+     * l2 ends at 574 + 16 = 590 = 600 - padding */
+    CHECK_RECT(r[l1], 10, 10, 780, 16);
+    CHECK_RECT(r[sp], 10, 31, 780, 538);
+    CHECK_RECT(r[l2], 10, 574, 780, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_repeated_layout_identical(void) {
+  /* growth is deterministic: repeated layout is byte-identical */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, l1, s2;
+  lk_rect *r1;
+  lk_rect *r2;
+
+  BEGIN_TEST("grow: repeated layout byte-identical");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(3));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Mid"));
+  lk_tree_add_prop(t, l1, UIP_GROW, lk_v_i32(2));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, s2);
+
+  r1 = run_layout(t, 800, 601);
+  r2 = run_layout(t, 800, 601);
+  CHECK(r1 != NULL && r2 != NULL);
+  if (r1 && r2) {
+    CHECK(memcmp(r1, r2, sizeof(lk_rect) * t->node_count) == 0);
+  }
+  free(r1);
+  free(r2);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_measure_unaffected(void) {
+  /* growth is layout-only: a parent's intrinsic size never includes
+   * it, and a parent granted only its intrinsic size distributes
+   * nothing */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, outer, inner, la, lb, after;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: measurement unaffected by child grow");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  outer = lk_tree_add_node_s(t, lk_str_c("outer"), UIK_COLUMN);
+  inner = lk_tree_add_node_s(t, lk_str_c("inner"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+  lk_tree_add_prop(t, lb, UIP_GROW, lk_v_i32(3));
+  after = lk_tree_add_node_s(t, lk_str_c("after"), UIK_LABEL);
+  lk_tree_add_prop(t, after, UIP_TEXT, lk_v_cstr(t->intern, "After"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, outer);
+  lk_tree_append_child(t, outer, inner);
+  lk_tree_append_child(t, inner, la);
+  lk_tree_append_child(t, inner, lb);
+  lk_tree_append_child(t, outer, after);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* inner intrinsic = 32 (grow 3 invisible to measure); zero
+     * leftover inside -> grow is a no-op */
+    CHECK_EQ((unsigned)r[inner].h, 32u);
+    CHECK_EQ((unsigned)r[la].h, 16u);
+    CHECK_EQ((unsigned)r[lb].h, 16u);
+    CHECK_EQ((unsigned)r[after].y, 32u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_justify_gate(void) {
+  /* justify operates iff leftover > 0 && total_weight == 0: a grow-0
+   * spacer no longer suppresses it, a bare spacer still does */
+  lk_tree *ta = lk_tree_create(NULL);
+  lk_tree *tb = lk_tree_create(NULL);
+  lk_ix w, row, l1, sp;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: justify inert iff total weight > 0");
+
+  w = lk_tree_add_node_s(ta, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(ta, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(ta, row, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(ta, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(ta, l1, UIP_TEXT, lk_v_cstr(ta->intern, "X"));
+  sp = lk_tree_add_node_s(ta, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(ta, sp, UIP_GROW, lk_v_i32(0));
+  lk_tree_set_root(ta, w);
+  lk_tree_append_child(ta, w, row);
+  lk_tree_append_child(ta, row, l1);
+  lk_tree_append_child(ta, row, sp);
+
+  r = run_layout(ta, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* total weight 0 -> justify end active: x = 800 - 8 = 792 */
+    CHECK_EQ((unsigned)r[l1].x, 792u);
+    free(r);
+  }
+
+  w = lk_tree_add_node_s(tb, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(tb, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(tb, row, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(tb, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(tb, l1, UIP_TEXT, lk_v_cstr(tb->intern, "X"));
+  sp = lk_tree_add_node_s(tb, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_set_root(tb, w);
+  lk_tree_append_child(tb, w, row);
+  lk_tree_append_child(tb, row, l1);
+  lk_tree_append_child(tb, row, sp);
+
+  r = run_layout(tb, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* bare spacer soaks the leftover -> justify inert */
+    CHECK_EQ((unsigned)r[l1].x, 0u);
+    CHECK_EQ((unsigned)r[sp].w, 792u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(ta);
+  lk_tree_destroy(tb);
+}
+
+static void test_grow_nested_containers(void) {
+  /* two independent phases: outer grants the inner column its grown
+   * extent; the inner column distributes its own leftover */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, outer, top, inner, la, lb;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: nested grown containers");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  outer = lk_tree_add_node_s(t, lk_str_c("outer"), UIK_COLUMN);
+  top = lk_tree_add_node_s(t, lk_str_c("top"), UIK_LABEL);
+  lk_tree_add_prop(t, top, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  inner = lk_tree_add_node_s(t, lk_str_c("inner"), UIK_COLUMN);
+  lk_tree_add_prop(t, inner, UIP_GROW, lk_v_i32(1));
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "Fill"));
+  lk_tree_add_prop(t, lb, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, outer);
+  lk_tree_append_child(t, outer, top);
+  lk_tree_append_child(t, outer, inner);
+  lk_tree_append_child(t, inner, la);
+  lk_tree_append_child(t, inner, lb);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* outer: inner basis 32 + (600 - 16 - 32) = 584 at y 16
+     * inner: lb = 16 + (584 - 32) = 568 at y 16 + 16 */
+    CHECK_RECT(r[inner], 0, 16, 800, 584);
+    CHECK_RECT(r[la], 0, 16, 800, 16);
+    CHECK_RECT(r[lb], 0, 32, 800, 568);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_style_theme_align_precedence(void) {
+  /* theme-sourced align survives an absent prop; an explicit
+   * align-start prop (zero IS a valid value) beats the theme */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, l1;
+
+  BEGIN_TEST("style: theme align vs prop precedence");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  th = lk_theme_new(NULL, NULL, NULL);
+  memset(&s, 0, sizeof(s));
+  s.align = (lk_u8)LK_ALIGN_STRETCH;
+  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_ALIGN);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (th && styles && rects) {
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+
+    /* direction 1: absent prop -> theme STRETCH survives */
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[col].align, (unsigned)LK_ALIGN_STRETCH);
+    lk_layout(t, &cfg, rects);
+    CHECK_EQ((unsigned)rects[l1].w, 800u);
+
+    /* direction 2: explicit align start beats theme STRETCH */
+    lk_tree_add_prop(t, col, UIP_ALIGN, lk_v_i32(LK_ALIGN_START));
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[col].align, (unsigned)LK_ALIGN_START);
+    lk_layout(t, &cfg, rects);
+    CHECK_EQ((unsigned)rects[l1].w, 16u);
+    CHECK_EQ((unsigned)rects[l1].x, 0u);
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_window_stretch_default(void) {
+  /* default theme gives WINDOW align STRETCH; an explicit prop
+   * overrides it */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+
+  BEGIN_TEST("style: WINDOW align STRETCH default");
+
+  t = lk_tree_create(NULL);
+  lk_tree_set_root(t, lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW));
+
+  th = lk_theme_default(NULL, NULL, NULL);
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (th && styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[t->root].align, (unsigned)LK_ALIGN_STRETCH);
+
+    lk_tree_add_prop(t, t->root, UIP_ALIGN, lk_v_i32(LK_ALIGN_START));
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[t->root].align, (unsigned)LK_ALIGN_START);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ================================================================
  * Tests: render list
  * ================================================================ */
 
@@ -1619,7 +2379,7 @@ static void test_render_empty_tree(void) {
   BEGIN_TEST("render: empty tree returns success");
 
   memset(&rl, 0, sizeof(rl));
-  ok = lk_render_build(t, NULL, NULL, NULL, &rl);
+  ok = lk_render_build(t, NULL, NULL, NULL, NULL, &rl);
   CHECK_EQ((unsigned)ok, 1u);
   CHECK_EQ(rl.count, 0u);
 
@@ -1643,7 +2403,7 @@ static void test_render_window_only(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 3u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
     CHECK_EQ((unsigned)rl.cmds[0].rect.w, 800u);
@@ -1680,7 +2440,7 @@ static void test_render_window_column_label(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* FILL_RECT + CLIP_BEGIN + DRAW_TEXT + CLIP_END */
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -1719,7 +2479,7 @@ static void test_render_button_with_padding(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* window FILL + CLIP_BEGIN + button FILL + button TEXT + CLIP_END */
     CHECK_EQ(rl.count, 5u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -1767,7 +2527,7 @@ static void test_render_larger_tree(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT + CLIP_END = 7 */
     CHECK_EQ(rl.count, 7u);
     lk_render_list_destroy(&rl);
@@ -1801,13 +2561,13 @@ static void test_render_build_reuse(void) {
     memset(&rl, 0, sizeof(rl));
 
     /* first build: FILL + CLIP_BEGIN + TEXT + CLIP_END = 4 */
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     cap_after_first = rl.cap;
     CHECK(cap_after_first > 0);
 
     /* second build on same list — count resets, cap stays */
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ(rl.cap, cap_after_first);
 
@@ -2714,9 +3474,11 @@ static void test_widget_register_custom(void) {
   memset(&custom, 0, sizeof(custom));
   custom.clips = 1;
 
-  /* Use a kind slot beyond the built-ins */
-  lk_widget_register((lk_kind)10, &custom);
-  got = lk_widget_get((lk_kind)10);
+  /* Use a kind slot beyond the built-ins (UIK__COUNT..LK_KIND_MAX) —
+   * a hardcoded number silently clobbers whatever kind grows into it
+   * (bit us when UIK_IMAGE landed on the old literal 20). */
+  lk_widget_register(UIK__COUNT, &custom);
+  got = lk_widget_get(UIK__COUNT);
 
   CHECK(got != NULL);
   CHECK(got->clips == 1);
@@ -2725,7 +3487,7 @@ static void test_widget_register_custom(void) {
 
   /* Clean up: reset slot to zero */
   memset(&custom, 0, sizeof(custom));
-  lk_widget_register((lk_kind)10, &custom);
+  lk_widget_register(UIK__COUNT, &custom);
 
   END_TEST();
 }
@@ -2758,7 +3520,7 @@ static void test_widget_override_render(void) {
 
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     count_before = rl.count;
 
     /* Override LABEL to emit nothing */
@@ -2768,7 +3530,7 @@ static void test_widget_override_render(void) {
     lk_widget_register(UIK_LABEL, &override);
 
     rl.count = 0;
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     count_after = rl.count;
 
     CHECK(count_after < count_before);
@@ -2807,8 +3569,9 @@ static void test_pres_add_and_get(void) {
   CHECK(p != NULL);
   if (p) {
     CHECK_EQ(p->ptype, lk_intern_id(t->intern, lk_str_c("item")));
-    CHECK_EQ(p->pvalue.tag, UIV_I32);
-    CHECK_EQ(p->pvalue.as.i, 42);
+    CHECK_EQ(p->pvalue_count, 1);
+    CHECK_EQ(p->pvalues[0].tag, UIV_I32);
+    CHECK_EQ(p->pvalues[0].as.i, 42);
     CHECK_EQ(p->node, btn);
   }
 
@@ -2903,6 +3666,122 @@ static void test_pres_change_triggers_updated(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_pres_multi_arg(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, btn;
+  const lk_presentation *p;
+  lk_value args[3];
+
+  BEGIN_TEST("pres: multi-arg presentation stored and retrieved");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  args[0] = lk_v_cstr(t->intern, "remove_row");
+  args[1] = lk_v_i32(5);
+  args[2] = lk_v_cstr(t->intern, "force");
+  lk_tree_add_presentation_sv(t, btn, "action", args, 3);
+
+  p = lk_tree_get_presentation(t, btn);
+  CHECK(p != NULL);
+  if (p) {
+    CHECK_EQ(p->pvalue_count, 3);
+    CHECK_EQ(p->pvalues[0].tag, UIV_STR);
+    CHECK_EQ(p->pvalues[1].tag, UIV_I32);
+    CHECK_EQ(p->pvalues[1].as.i, 5);
+    CHECK_EQ(p->pvalues[2].tag, UIV_STR);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_pres_multi_arg_cmd(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+  lk_value args[2];
+
+  BEGIN_TEST("pres: multi-arg pres emits multi-arg command");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "action", 0, 0, 0, 0, "DoIt");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+
+    args[0] = lk_v_cstr(t->intern, "remove_row");
+    args[1] = lk_v_i32(5);
+    lk_tree_add_presentation_sv(t, btn, "action", args, 2);
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+                                  lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].arg_count, 2);
+    CHECK_EQ(q->cmds[0].args[0].tag, UIV_STR);
+    CHECK_EQ(q->cmds[0].args[1].tag, UIV_I32);
+    CHECK_EQ(q->cmds[0].args[1].as.i, 5);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_pres_multi_arg_change_detected(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_changeset *cs;
+  lk_value args[2];
+
+  BEGIN_TEST("pres: changed arg in multi-arg pres triggers UPDATED");
+
+  /* Frame 1: two args (remove_row, 5) */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    args[0] = lk_v_cstr(t->intern, "remove_row");
+    args[1] = lk_v_i32(5);
+    lk_tree_add_presentation_sv(t, btn, "action", args, 2);
+  }
+  lk_ui_end_frame(ui);
+
+  /* Frame 2: second arg changed */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    args[0] = lk_v_cstr(t->intern, "remove_row");
+    args[1] = lk_v_i32(7);
+    lk_tree_add_presentation_sv(t, btn, "action", args, 2);
+  }
+  cs = lk_ui_end_frame(ui);
+
+  CHECK(cs_has(cs, ui, LK_CHANGE_UPDATED, "btn"));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 /* ================================================================
  * Command / Translator tests
  * ================================================================ */
@@ -2917,7 +3796,7 @@ static void test_translator_fires_command(void) {
   BEGIN_TEST("translator: fires command on match");
 
   /* Register translator: POINTER_DOWN + ptype "item" -> "Select" */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
 
   /* Build tree with presented button */
   t = lk_ui_begin_frame(ui);
@@ -2965,7 +3844,7 @@ static void test_translator_no_match(void) {
   BEGIN_TEST("translator: no match = empty queue");
 
   /* Translator for KEY_DOWN, but we'll send POINTER_DOWN */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3001,7 +3880,7 @@ static void test_translator_walks_ancestors(void) {
 
   BEGIN_TEST("translator: walks ancestors for pres");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, "ListClick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, 0, 0, 0, "ListClick");
 
   /* Presentation is on parent column, event targets child button */
   t = lk_ui_begin_frame(ui);
@@ -3045,7 +3924,7 @@ static void test_translator_ptype_and_kind(void) {
   BEGIN_TEST("translator: match ptype + node_kind");
 
   /* Only match BUTTON nodes with ptype "action" */
-  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, "DoAction");
+  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, 0, 0, 0, "DoAction");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3075,6 +3954,265 @@ static void test_translator_ptype_and_kind(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_translator_keycode_match(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode+mods match Ctrl+S");
+
+  /* Ctrl+S -> "Save" */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    lk_tree_add_presentation_s(t, lbl, "doc", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_S;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name,
+             lk_intern_id(ui->intern, lk_str_c("Save")));
+  }
+  CHECK_EQ(ev.handled, 1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_wrong_key(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode mismatch = no command");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    lk_tree_add_presentation_s(t, lbl, "doc", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Send Ctrl+F instead of Ctrl+S */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_F;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_wrong_mods(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: wrong mods = no command");
+
+  /* Ctrl+S translator */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    lk_tree_add_presentation_s(t, lbl, "doc", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Send Ctrl+Shift+S — should NOT match Ctrl+S */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_S;
+  ev.mods = LK_MOD_CTRL | LK_MOD_SHIFT;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_no_pres_required(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode+mods with ptype=0 needs pres");
+
+  /* Ctrl+F -> "Find", ptype=0 (match any presentation) */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0,
+                          (lk_u16)LKK_F, LK_MOD_CTRL, 0, "Find");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    /* Node has a presentation (any type) */
+    lk_tree_add_presentation_s(t, w, "app", lk_v_i32(0));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_F;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name,
+             lk_intern_id(ui->intern, lk_str_c("Find")));
+  }
+  CHECK_EQ(ev.handled, 1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_on_pointer_event(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode filter skips non-key events");
+
+  /* Translator with keycode set — should not match pointer events */
+  lk_ui_add_translator_s(ui, 0, "item", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(5));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_zero_mods(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode with zero mods matches bare key");
+
+  /* Return key with no modifiers -> "Confirm" */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "form", 0,
+                          (lk_u16)LKK_RETURN, 0, 0, "Confirm");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "form", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Send Return with no mods */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_RETURN;
+  ev.mods = 0;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  CHECK_EQ(ev.handled, 1);
+
+  /* Return+Ctrl should NOT match (mods=0 means exact: no mods) */
+  lk_ui_clear_commands(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_RETURN;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static int g_handler_called = 0;
 static lk_u32 g_handler_cmd_name = 0;
 
@@ -3095,7 +4233,7 @@ static void test_command_handler_fires(void) {
   g_handler_cmd_name = 0;
 
   lk_ui_set_command_handler(ui, test_cmd_handler_cb, NULL);
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Pick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Pick");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3135,7 +4273,7 @@ static void test_command_log_accumulates(void) {
 
   BEGIN_TEST("introspect: command log accumulates");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3204,8 +4342,8 @@ static void test_dump_commands_output(void) {
 
   BEGIN_TEST("introspect: dump_commands output");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, "Activate");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, 0, 0, 0, "Activate");
 
   memset(&buf, 0, sizeof(buf));
   lk_ui_dump_commands(ui, test_buf_write, &buf);
@@ -3334,7 +4472,7 @@ static void test_accessor_command_fields(void) {
 
   BEGIN_TEST("accessor: command name/arg_count/arg/source");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
   select_id = lk_intern_id(ui->intern, lk_str_c("Select"));
   item_id = lk_intern_id(ui->intern, lk_str_c("item"));
 
@@ -3390,7 +4528,7 @@ static void test_accessor_command_fields(void) {
  * ================================================================ */
 
 static void test_intern_cstr(void) {
-  lk_intern *it = lk_intern_new(NULL, NULL);
+  lk_intern *it = lk_intern_new(NULL, NULL, NULL);
   lk_node_id id1, id2;
   const char *s;
   lk_str sv;
@@ -3475,7 +4613,7 @@ static void test_command_arg_typed(void) {
 
   BEGIN_TEST("command: typed arg accessors");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3780,7 +4918,7 @@ static void test_state_remove_node_manual(void) {
 static void test_theme_create_destroy(void) {
   lk_theme *th;
   BEGIN_TEST("style: theme create/destroy");
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   CHECK(th != NULL);
   lk_theme_destroy(th);
   END_TEST();
@@ -3803,7 +4941,7 @@ static void test_style_resolve_basic(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, btn);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   CHECK(th != NULL);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
@@ -3847,7 +4985,7 @@ static void test_style_resolve_inheritance(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, lbl);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
   if (th && styles) {
@@ -3882,7 +5020,7 @@ static void test_style_resolve_tree_prop_override(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, btn);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
   if (th && styles) {
@@ -3910,7 +5048,7 @@ static void test_style_resolve_rule_order(void) {
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   lk_tree_set_root(t, w);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 10;
   s.bg.a = 255;
@@ -3951,7 +5089,7 @@ static void test_style_resolve_state_match(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, btn);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* normal button bg */
   memset(&s, 0, sizeof(s));
   s.bg.r = 60;
@@ -3994,7 +5132,7 @@ static void test_style_trace(void) {
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   lk_tree_set_root(t, w);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* rule 0: wildcard fg */
   memset(&s, 0, sizeof(s));
   s.fg.r = 220;
@@ -4054,7 +5192,7 @@ static void test_layout_with_resolved_styles(void) {
   lk_tree_append_child(t, col, btn);
 
   /* Custom theme with padding=20 on buttons */
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.padding = 20;
   s.bg.r = 60; s.bg.a = 255;
@@ -4067,7 +5205,7 @@ static void test_layout_with_resolved_styles(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -4090,7 +5228,7 @@ static void test_layout_with_resolved_styles(void) {
     {
       lk_render_list rl;
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, rects, styles, NULL, &rl);
+      lk_render_build(t, rects, styles, NULL, NULL, &rl);
       /* button FILL_RECT at rl.cmds[2] (after window FILL + CLIP_BEGIN)
        * button TEXT at rl.cmds[3]
        * text should be inset by 20 from button rect
@@ -4134,7 +5272,7 @@ static void test_layout_style_tree_prop_override(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, btn);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.padding = 10;
   s.bg.r = 60; s.bg.a = 255;
@@ -4149,7 +5287,7 @@ static void test_layout_style_tree_prop_override(void) {
     CHECK_EQ((unsigned)styles[btn].padding, 5u);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -4159,7 +5297,7 @@ static void test_layout_style_tree_prop_override(void) {
     {
       lk_render_list rl;
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, rects, styles, NULL, &rl);
+      lk_render_build(t, rects, styles, NULL, NULL, &rl);
       if (rl.count >= 4) {
         CHECK_EQ((unsigned)rl.cmds[3].rect.x,
                  (unsigned)(rl.cmds[2].rect.x + 5));
@@ -4251,7 +5389,7 @@ static void test_style_resolve_with_tag(void) {
   lk_tree_append_child(t, w, btn);
   lk_tree_add_tag_s(t, btn, "danger");
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* base button bg */
   memset(&s, 0, sizeof(s));
   s.bg.r = 60;
@@ -4371,7 +5509,7 @@ static void test_ui_set_theme_custom(void) {
   ui = lk_ui_create(NULL);
 
   /* Create custom theme with red window bg */
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 255;
   s.bg.g = 0;
@@ -4401,6 +5539,76 @@ static void test_ui_set_theme_custom(void) {
   END_TEST();
 }
 
+static void test_ui_hover_state(void) {
+  lk_ui *ui;
+  lk_tree *tree;
+  lk_ix w, btn;
+  const lk_style *styles;
+  lk_theme *th;
+  lk_style s;
+
+  BEGIN_TEST("ui: hover_set populates HOVERED node state");
+
+  ui = lk_ui_create(NULL);
+
+  /* Add a hover rule: hovered buttons get bg=(100,200,100) */
+  th = lk_ui_theme(ui);
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 100;
+  s.bg.g = 200;
+  s.bg.b = 100;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, LK_NSTATE_HOVERED, &s, LK_SF_BG);
+
+  /* Build a frame */
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+
+  /* No hover: button should have default bg (60,60,60) */
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles[btn].bg.r == 60);
+  CHECK(styles[btn].bg.g == 60);
+
+  /* Set hover on button */
+  lk_hover_set(ui, lk_ui_tree(ui)->nodes[btn].id);
+
+  /* Rebuild same frame so resolve runs with hover state */
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles[btn].bg.r == 100);
+  CHECK(styles[btn].bg.g == 200);
+  CHECK(styles[btn].bg.b == 100);
+
+  /* Clear hover: should revert */
+  lk_hover_clear(ui);
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles[btn].bg.r == 60);
+  CHECK(styles[btn].bg.g == 60);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
 /* ================================================================
  * Additional style resolution tests
  * ================================================================ */
@@ -4422,7 +5630,7 @@ static void test_style_bg_does_not_inherit(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, lbl);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
   if (th && styles) {
@@ -4464,7 +5672,7 @@ static void test_style_font_inherits(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, lbl);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* Set font on wildcard (all nodes) */
   memset(&s, 0, sizeof(s));
   s.font_id = 42;
@@ -4508,7 +5716,7 @@ static void test_style_kind_no_cross_match(void) {
   lk_tree_append_child(t, w, btn);
   lk_tree_append_child(t, w, lbl);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 80;
   s.bg.a = 255;
@@ -4549,7 +5757,7 @@ static void test_style_state_requires_all_bits(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, btn);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* base rule */
   memset(&s, 0, sizeof(s));
   s.bg.r = 50;
@@ -4605,7 +5813,7 @@ static void test_style_tag_no_match_untagged(void) {
   lk_tree_append_child(t, w, btn_plain);
   lk_tree_add_tag_s(t, btn_tagged, "primary");
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* base button */
   memset(&s, 0, sizeof(s));
   s.bg.r = 60;
@@ -4650,7 +5858,7 @@ static void test_style_gap_prop_override(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, col);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.gap = 8;
   lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_GAP);
@@ -4686,7 +5894,7 @@ static void test_style_align_justify_prop_override(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, col);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.align = LK_ALIGN_START;
   s.justify = LK_ALIGN_START;
@@ -4730,7 +5938,7 @@ static void test_render_uses_style_colors(void) {
   lk_tree_append_child(t, w, btn);
 
   /* Custom theme: button bg = (0, 200, 100, 255) */
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 0;
   s.bg.g = 200;
@@ -4754,14 +5962,14 @@ static void test_render_uses_style_colors(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
     lk_layout(t, &cfg, rects);
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, rects, styles, NULL, &rl);
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
     /* Find the button FILL_RECT — should have our custom green bg */
     found_btn_fill = 0;
@@ -4809,7 +6017,7 @@ static void test_layout_style_gap(void) {
   lk_tree_append_child(t, col, lbl1);
   lk_tree_append_child(t, col, lbl2);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.gap = 20;
   lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_GAP);
@@ -4821,7 +6029,7 @@ static void test_layout_style_gap(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -4863,7 +6071,7 @@ static void test_style_wildcard_matches_all(void) {
   lk_tree_append_child(t, col, btn);
   lk_tree_append_child(t, col, sp);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.fg.r = 123;
   s.fg.a = 255;
@@ -4982,7 +6190,7 @@ static void test_render_deferred_props_emit_text(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
 
     text_count = 0;
     for (i = 0; i < rl.count; i++) {
@@ -5004,6 +6212,67 @@ static void test_render_deferred_props_emit_text(void) {
 /* ================================================================
  * Tests: text input widget
  * ================================================================ */
+
+/* A tight-box backend: like the stub but an empty run really measures
+ * zero-high (the shape SDL_ttf reports).  The stub's constant height
+ * masks empty-run height bugs. */
+static void tight_measure(void *ud, lk_str run, lk_u16 font_id,
+                          lk_u16 font_size, lk_text_metrics *out) {
+  const lk_text_backend *stub = lk_text_backend_stub();
+
+  (void)ud;
+  stub->measure(stub->ud, run, font_id, font_size, out);
+
+  if (out && run.len == 0) {
+    out->h = 0;
+    out->baseline = 0;
+  }
+}
+
+static void test_text_input_empty_height(void) {
+  /* An empty input is one reference-run line tall, not a zero-high
+   * sliver (mini-bar regression: find/replace inputs collapsed). */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_text_backend tb;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, row, ti;
+
+  BEGIN_TEST("text input: empty input keeps line height");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  /* themed apps resolve row cross-align START (grow-layout.md §4);
+   * opt in here so the input keeps its intrinsic height. */
+  lk_tree_add_prop(t, row, UIP_ALIGN, lk_v_i32(LK_ALIGN_START));
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, ti);
+
+  tb = *lk_text_backend_stub();
+  tb.measure = tight_measure;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = &tb;
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 100;
+
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+  CHECK(rects != NULL);
+  if (rects) {
+    CHECK(lk_layout(t, &cfg, rects));
+    /* reference run "Mg" under the tight backend is 16 px high */
+    CHECK_EQ(rects[ti].h, 16);
+    CHECK_EQ(rects[ti].w, 400);
+    free(rects);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
 
 /* Helper: build a UI with a focused text input, run one frame, return
  * the current tree.  Caller must destroy ui.
@@ -5084,7 +6353,7 @@ static void test_text_input_render(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* window: FILL + CLIP_BEGIN, text_input: FILL + TEXT, window: CLIP_END */
     /* => at least 5 ops */
     CHECK(rl.count >= 4u);
@@ -5138,6 +6407,143 @@ static void test_text_input_insert(void) {
   /* Cursor should be at 2 */
   v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
   CHECK_EQ((unsigned)v.as.i, 2u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_emits_value_changed(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("text_input: insert emits VALUE_CHANGED + command");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Translator: value_changed + ptype "field" -> "FieldEdit" */
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
+                          "FieldEdit");
+
+  /* Attach presentation (arg = the field id) to text_input */
+  {
+    lk_value pvs[1];
+    pvs[0] = lk_v_cstr(ui->intern, "amount");
+    lk_tree_add_presentation_sv(ui->next, ti, "field", pvs, 1);
+    /* The presentation must be on current tree — we added after end_frame,
+     * so re-run a frame to carry it through. */
+  }
+
+  /* Rebuild the tree to carry the presentation through the diff. */
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix ti2 = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_value pvs[1];
+    lk_tree_add_prop(t, ti2, UIP_TEXT, lk_v_cstr(t->intern, "ab"));
+    lk_tree_add_prop(t, ti2, UIP_FOCUSABLE, lk_v_bool(1));
+    pvs[0] = lk_v_cstr(t->intern, "amount");
+    lk_tree_add_presentation_sv(t, ti2, "field", pvs, 1);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, ti2);
+    lk_ui_end_frame(ui);
+  }
+  ti = lk_tree_find_by_id(lk_ui_tree(ui),
+                           lk_intern_id(ui->intern, lk_str_c("ti")));
+
+  /* Re-set cursor (state is preserved but rebuild can reset it) */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  /* Send TEXT event "x" */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  /* Buffer should be "axb" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+
+  /* Command queue should contain FieldEdit with args=["amount"] and
+   * source_value = the new buffer "axb". */
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    const lk_command *cmd = &q->cmds[0];
+    CHECK_EQ(cmd->name, lk_intern_id(ui->intern, lk_str_c("FieldEdit")));
+    CHECK_EQ(cmd->arg_count, 1);
+    CHECK_EQ(cmd->args[0].tag, UIV_STR);
+    CHECK_EQ(cmd->source_value.tag, UIV_STR);
+    {
+      lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+      CHECK_EQ(sv.len, 3u);
+      CHECK(memcmp(sv.ptr, "axb", 3) == 0);
+    }
+    {
+      lk_str av = lk_intern_str(ui->intern, cmd->args[0].as.str_id);
+      CHECK(av.len == 6 && memcmp(av.ptr, "amount", 6) == 0);
+    }
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_backspace_emits_value_changed(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("text_input: backspace emits VALUE_CHANGED");
+
+  ui = make_text_input_ui("hi", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "", 0, 0, 0, 0, "Edited");
+
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix ti2 = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_tree_add_prop(t, ti2, UIP_TEXT, lk_v_cstr(t->intern, "hi"));
+    lk_tree_add_prop(t, ti2, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_add_presentation_s(t, ti2, "whatever", lk_v_i32(0));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, ti2);
+    lk_ui_end_frame(ui);
+  }
+  ti = lk_tree_find_by_id(lk_ui_tree(ui),
+                           lk_intern_id(ui->intern, lk_str_c("ti")));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(2));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_BACKSPACE;
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    const lk_command *cmd = &q->cmds[0];
+    CHECK_EQ(cmd->source_value.tag, UIV_STR);
+    {
+      lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+      CHECK(sv.len == 1 && sv.ptr[0] == 'h');
+    }
+  }
 
   END_TEST();
   lk_ui_destroy(ui);
@@ -5384,6 +6790,596 @@ static void test_text_input_select_all(void) {
   lk_ui_destroy(ui);
 }
 
+/* ---- Controlled mode (UIP_CONTROLLED on a text input) ----
+ *
+ * The app owns the text: the widget reads UIP_TEXT only, never writes
+ * LKS_TEXT_BUF, and every edit emits VALUE_CHANGED with the candidate.
+ * A value_changed translator on a "field" presentation turns each
+ * candidate into a command whose source_value we can read back. */
+
+static void build_controlled_frame(lk_ui *ui, const char *text,
+                                   lk_ix *out_ti) {
+  lk_tree *t = lk_ui_begin_frame(ui);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_value pvs[1];
+
+  lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, text));
+  lk_tree_add_prop(t, ti, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, ti, UIP_CONTROLLED, lk_v_i32(1));
+  pvs[0] = lk_v_cstr(t->intern, "cell");
+  lk_tree_add_presentation_sv(t, ti, "field", pvs, 1);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ti);
+  lk_ui_end_frame(ui);
+
+  *out_ti = lk_tree_find_by_id(lk_ui_tree(ui),
+                               lk_intern_id(ui->intern, lk_str_c("ti")));
+}
+
+static lk_ui *make_controlled_text_input_ui(const char *text, lk_ix *out_ti) {
+  lk_ui *ui = lk_ui_create(NULL);
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
+                          "FieldEdit");
+  build_controlled_frame(ui, text, out_ti);
+  lk_focus_set(ui, lk_ui_tree(ui), lk_intern_id(ui->intern, lk_str_c("ti")));
+  return ui;
+}
+
+/* The candidate text of the i-th queued command (0 when absent). */
+static int cmd_candidate(lk_ui *ui, lk_u32 i, const char *expect) {
+  const lk_command_queue *q = lk_ui_commands(ui);
+  lk_str sv;
+
+  if (i >= q->count || q->cmds[i].source_value.tag != UIV_STR) {
+    return 0;
+  }
+
+  sv = lk_intern_str(ui->intern, q->cmds[i].source_value.as.str_id);
+  return sv.len == strlen(expect) && memcmp(sv.ptr, expect, sv.len) == 0;
+}
+
+static void send_text(lk_ui *ui, lk_ix ti, char c) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = c;
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+}
+
+static void send_key(lk_ui *ui, lk_ix ti, lk_u16 kc, lk_u8 mods) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = kc;
+  ev.mods = mods;
+  lk_event_route(ui, &ev);
+}
+
+static void test_text_input_controlled_candidate(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_state *st;
+  lk_node_id ti_id;
+
+  BEGIN_TEST("text_input controlled: emits candidate, no buffer");
+
+  ui = make_controlled_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  send_text(ui, ti, 'x');
+  CHECK(cmd_candidate(ui, 0, "axb"));
+  CHECK_EQ(lk_ui_commands(ui)->count, 1u);
+  /* Nothing retained: the prop is still the text. */
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_TEXT_BUF).tag,
+           (unsigned)UIV_NONE);
+  /* The cursor moved as if accepted. */
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_CURSOR_POS).as.i, 2u);
+
+  /* The app did NOT echo: the next edit bases on the prop "ab" with
+   * the cursor clamped to it, not on the unaccepted "axb". */
+  lk_ui_clear_commands(ui);
+  send_text(ui, ti, 'y');
+  CHECK(cmd_candidate(ui, 0, "aby"));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_controlled_echo(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_state *st;
+  lk_node_id ti_id;
+
+  BEGIN_TEST("text_input controlled: app echo continues the edit");
+
+  ui = make_controlled_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  send_text(ui, ti, 'x');
+  CHECK(cmd_candidate(ui, 0, "axb"));
+
+  /* Accept: the app re-supplies the candidate as the prop. */
+  lk_ui_clear_commands(ui);
+  build_controlled_frame(ui, "axb", &ti);
+  send_text(ui, ti, 'y');
+  CHECK(cmd_candidate(ui, 0, "axyb"));
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_CURSOR_POS).as.i, 3u);
+
+  /* Rewrite: the app normalises to something shorter; the cursor
+   * clamps rather than indexing past the end. */
+  lk_ui_clear_commands(ui);
+  build_controlled_frame(ui, "A", &ti);
+  send_text(ui, ti, 'z');
+  CHECK(cmd_candidate(ui, 0, "Az"));
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_TEXT_BUF).tag,
+           (unsigned)UIV_NONE);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_controlled_replace_selection(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_state *st;
+  lk_node_id ti_id;
+
+  BEGIN_TEST("text_input controlled: replace-selection is one candidate");
+
+  ui = make_controlled_text_input_ui("hello", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  send_key(ui, ti, LKK_A, LK_MOD_CTRL);
+  send_text(ui, ti, 'z');
+  /* One VALUE_CHANGED for the whole replace, not cut + insert. */
+  CHECK_EQ(lk_ui_commands(ui)->count, 1u);
+  CHECK(cmd_candidate(ui, 0, "z"));
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_CURSOR_POS).as.i, 1u);
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_SELECTION_END).as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_controlled_cuts(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_state *st;
+  lk_node_id ti_id;
+
+  BEGIN_TEST("text_input controlled: backspace/delete cut candidates");
+
+  ui = make_controlled_text_input_ui("abc", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Cursor at end (3): SHIFT+LEFT selects "c", BACKSPACE cuts it. */
+  send_key(ui, ti, LKK_LEFT, LK_MOD_SHIFT);
+  send_key(ui, ti, LKK_BACKSPACE, 0);
+  CHECK_EQ(lk_ui_commands(ui)->count, 1u);
+  CHECK(cmd_candidate(ui, 0, "ab"));
+  CHECK_EQ((unsigned)lk_state_get(st, ti_id, LKS_TEXT_BUF).tag,
+           (unsigned)UIV_NONE);
+
+  /* Not echoed, so the prop is still "abc"; cursor clamps to 2 after
+   * the cut, DELETE removes the codepoint after it. */
+  lk_ui_clear_commands(ui);
+  send_key(ui, ti, LKK_DELETE, 0);
+  CHECK(cmd_candidate(ui, 0, "ab"));
+
+  /* Plain BACKSPACE at cursor 2 of "abc". */
+  lk_ui_clear_commands(ui);
+  send_key(ui, ti, LKK_BACKSPACE, 0);
+  CHECK(cmd_candidate(ui, 0, "ac"));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ---- text_align / text_valign (label, button, text_input) ----
+ *
+ * The stub backend advances 8 px per codepoint and is 16 px tall, so
+ * "ab" is a 16x16 run.  Styles come from the default theme plus a
+ * rule or a prop; the geometry scratch carries the measured run. */
+
+static lk_rect *layout_styled(const lk_tree *t, const lk_theme *th,
+                              lk_state *state, lk_i32 vw, lk_i32 vh,
+                              lk_style **out_styles,
+                              lk_widget_geom **out_geom) {
+  lk_layout_cfg cfg;
+  lk_rect *rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+  lk_style *styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  lk_widget_geom *geom =
+      (lk_widget_geom *)malloc(sizeof(lk_widget_geom) * t->node_count);
+
+  if (!rects || !styles || !geom) {
+    free(rects);
+    free(styles);
+    free(geom);
+    return NULL;
+  }
+
+  lk_style_resolve(th, t, NULL, styles);
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = vw;
+  cfg.viewport_h = vh;
+  cfg.styles = styles;
+  cfg.state = state;
+  cfg.geom = geom;
+
+  if (!lk_layout(t, &cfg, rects)) {
+    free(rects);
+    free(styles);
+    free(geom);
+    return NULL;
+  }
+
+  *out_styles = styles;
+  *out_geom = geom;
+  return rects;
+}
+
+/* The first DRAW_TEXT for str_id in a freshly built render list; 0/0
+ * when absent. */
+static int find_draw_text(const lk_tree *t, const lk_rect *rects,
+                          const lk_style *styles, const lk_state *state,
+                          const lk_widget_geom *geom, lk_u32 sid, lk_i32 *x,
+                          lk_i32 *y) {
+  lk_render_list rl;
+  lk_u32 i;
+  int found = 0;
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(t, rects, styles, state, geom, &rl);
+
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT && rl.cmds[i].str_id == sid) {
+      *x = rl.cmds[i].rect.x;
+      *y = rl.cmds[i].rect.y;
+      found = 1;
+      break;
+    }
+  }
+
+  lk_render_list_destroy(&rl);
+  return found;
+}
+
+static void test_text_align_label(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_theme *th = lk_theme_default(NULL, NULL, NULL);
+  lk_ix w, l;
+  lk_u32 sid;
+  lk_style *styles = NULL;
+  lk_widget_geom *geom = NULL;
+  lk_rect *r;
+  lk_i32 x = -1, y = -1;
+
+  BEGIN_TEST("text_align: label via theme rule, prop override, no geom");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  l = lk_tree_add_node_s(t, lk_str_c("l"), UIK_LABEL);
+  lk_tree_add_prop(t, l, UIP_TEXT, lk_v_cstr(t->intern, "ab"));
+  lk_tree_add_prop(t, l, UIP_W, lk_v_i32(200));
+  /* window > column > leaf: a window fills its child, a column's
+   * default START keeps the leaf at its own W/H. */
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
+  lk_tree_append_child(t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), l);
+  sid = lk_node_text_id(t, l);
+
+  /* Theme rule: every LABEL aligns END. */
+  {
+    lk_style s;
+    memset(&s, 0, sizeof(s));
+    s.text_align = (lk_u8)LK_ALIGN_END;
+    lk_theme_add_rule(th, UIK_LABEL, 0, 0, &s, LK_SF_TEXT_ALIGN);
+  }
+
+  r = layout_styled(t, th, NULL, 800, 600, &styles, &geom);
+  CHECK(r != NULL);
+
+  if (r) {
+    CHECK_EQ((unsigned)styles[l].text_align, (unsigned)LK_ALIGN_END);
+    CHECK_EQ((unsigned)geom[l].run.w, 16u);
+    CHECK(find_draw_text(t, r, styles, NULL, geom, sid, &x, &y));
+    CHECK_EQ((unsigned)x, (unsigned)(r[l].x + 200 - 16));
+    CHECK_EQ((unsigned)y, (unsigned)r[l].y);
+
+    /* No geom: the run size is unknown, text draws at START. */
+    CHECK(find_draw_text(t, r, styles, NULL, NULL, sid, &x, &y));
+    CHECK_EQ((unsigned)x, (unsigned)r[l].x);
+    free(r);
+    free(styles);
+    free(geom);
+  }
+
+  /* Prop beats the rule (presence-gated: explicit CENTER wins). */
+  lk_tree_add_prop(t, l, UIP_TEXT_ALIGN, lk_v_i32(LK_ALIGN_CENTER));
+  r = layout_styled(t, th, NULL, 800, 600, &styles, &geom);
+  CHECK(r != NULL);
+
+  if (r) {
+    CHECK(find_draw_text(t, r, styles, NULL, geom, sid, &x, &y));
+    CHECK_EQ((unsigned)x, (unsigned)(r[l].x + (200 - 16) / 2));
+    free(r);
+    free(styles);
+    free(geom);
+  }
+
+  END_TEST();
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+}
+
+static void test_text_align_button_both_axes(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_theme *th = lk_theme_default(NULL, NULL, NULL);
+  lk_ix w, b;
+  lk_u32 sid;
+  lk_style *styles = NULL;
+  lk_widget_geom *geom = NULL;
+  lk_rect *r;
+  lk_i32 x = -1, y = -1;
+
+  BEGIN_TEST("text_align: button END + text_valign CENTER inside inset");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+  lk_tree_add_prop(t, b, UIP_TEXT, lk_v_cstr(t->intern, "ab"));
+  lk_tree_add_prop(t, b, UIP_W, lk_v_i32(100));
+  lk_tree_add_prop(t, b, UIP_H, lk_v_i32(60));
+  lk_tree_add_prop(t, b, UIP_TEXT_ALIGN, lk_v_i32(LK_ALIGN_END));
+  lk_tree_add_prop(t, b, UIP_TEXT_VALIGN, lk_v_i32(LK_ALIGN_CENTER));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
+  lk_tree_append_child(t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), b);
+  sid = lk_node_text_id(t, b);
+
+  r = layout_styled(t, th, NULL, 800, 600, &styles, &geom);
+  CHECK(r != NULL);
+
+  if (r) {
+    lk_i32 inset = styles[b].padding + styles[b].border_width;
+
+    CHECK_EQ((unsigned)r[b].w, 100u);
+    CHECK_EQ((unsigned)r[b].h, 60u);
+    CHECK(find_draw_text(t, r, styles, NULL, geom, sid, &x, &y));
+    CHECK_EQ((unsigned)x, (unsigned)(r[b].x + inset + (100 - 2 * inset - 16)));
+    CHECK_EQ((unsigned)y,
+             (unsigned)(r[b].y + inset + (60 - 2 * inset - 16) / 2));
+    free(r);
+    free(styles);
+    free(geom);
+  }
+
+  END_TEST();
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+}
+
+static void test_text_align_text_input_cursor_origin(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_theme *th = lk_theme_default(NULL, NULL, NULL);
+  lk_style *styles = NULL;
+  lk_widget_geom *geom = NULL;
+  lk_rect *r;
+  const lk_tree *cur;
+  lk_u32 sid;
+  lk_i32 x = -1, y = -1;
+
+  BEGIN_TEST("text_align: text_input END shifts run, cursor, click origin");
+
+  ui = make_text_input_ui("ab", &ti);
+  /* Rebuild with a fixed width and END alignment. */
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix n = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_tree_add_prop(t, n, UIP_TEXT, lk_v_cstr(t->intern, "ab"));
+    lk_tree_add_prop(t, n, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_add_prop(t, n, UIP_W, lk_v_i32(200));
+    lk_tree_add_prop(t, n, UIP_TEXT_ALIGN, lk_v_i32(LK_ALIGN_END));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
+    lk_tree_append_child(t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), n);
+    lk_ui_end_frame(ui);
+  }
+  cur = lk_ui_tree(ui);
+  ti = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("ti")));
+  sid = lk_node_text_id(cur, ti);
+  lk_state_set(lk_ui_state(ui), cur->nodes[ti].id, LKS_CURSOR_POS,
+               lk_v_i32(2));
+
+  r = layout_styled(cur, th, lk_ui_state(ui), 800, 600, &styles, &geom);
+  CHECK(r != NULL);
+
+  if (r) {
+    lk_i32 inset = styles[ti].padding + styles[ti].border_width;
+    lk_i32 off = 200 - 2 * inset - 16;
+    lk_render_list rl;
+    lk_u32 i;
+    int cursor_seen = 0;
+
+    CHECK_EQ((unsigned)geom[ti].text.run_w, 16u);
+    /* Layout-time origin for click-to-position includes the offset. */
+    CHECK_EQ((unsigned)geom[ti].text.origin_x,
+             (unsigned)(r[ti].x + inset + off));
+    CHECK(find_draw_text(cur, r, styles, lk_ui_state(ui), geom, sid, &x, &y));
+    CHECK_EQ((unsigned)x, (unsigned)(r[ti].x + inset + off));
+
+    /* The cursor bar (1 px wide FILL_RECT) sits at the run end. */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(cur, r, styles, lk_ui_state(ui), geom, &rl);
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+        CHECK_EQ((unsigned)rl.cmds[i].rect.x,
+                 (unsigned)(r[ti].x + inset + off + 16));
+        cursor_seen = 1;
+      }
+    }
+
+    CHECK(cursor_seen);
+    lk_render_list_destroy(&rl);
+    free(r);
+    free(styles);
+    free(geom);
+  }
+
+  END_TEST();
+  lk_theme_destroy(th);
+  lk_ui_destroy(ui);
+}
+
+/* The spreadsheet's ordering question: a candidate proposed by typing
+ * must reach the app BEFORE a focus transition triggered in the same
+ * dispatch (Enter = accept + move down).  Both are synthetic events on
+ * the one FIFO: VALUE_CHANGED drains (and its command fires) at the
+ * end of the TEXT event; the RETURN key's command moves focus, whose
+ * FOCUS_CHANGED drains after it within the RETURN dispatch. */
+
+struct order_rec {
+  lk_ui *ui;
+  lk_node_id other;
+  int seq[8];
+  int n;
+  lk_u32 cmds_at_focus;
+};
+
+static void order_cmd_handler(const lk_command *cmd, void *ud) {
+  struct order_rec *rec = (struct order_rec *)ud;
+
+  if (cmd->name == lk_intern_id(rec->ui->intern, lk_str_c("Commit"))) {
+    lk_focus_set(rec->ui, lk_ui_tree(rec->ui), rec->other);
+  }
+}
+
+static int order_ev_handler(lk_event *ev, lk_ix n, void *ud) {
+  struct order_rec *rec = (struct order_rec *)ud;
+  (void)n;
+
+  if (ev->phase != LK_PHASE_TARGET) {
+    return 0;
+  }
+
+  if (rec->n < 8) {
+    rec->seq[rec->n++] = (int)ev->type;
+  }
+
+  if (ev->type == LK_EVENT_FOCUS_CHANGED) {
+    rec->cmds_at_focus = lk_ui_commands(rec->ui)->count;
+  }
+
+  return 0;
+}
+
+static void test_text_input_controlled_candidate_before_focus(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_ix ti;
+  struct order_rec rec;
+  lk_event ev;
+  const lk_command_queue *q;
+  int i, vc_at = -1, fc_at = -1;
+
+  BEGIN_TEST("text_input controlled: candidate lands before Enter's focus move");
+
+  memset(&rec, 0, sizeof(rec));
+  rec.ui = ui;
+  rec.other = lk_intern_id(ui->intern, lk_str_c("ti2"));
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
+                          "FieldEdit");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "field", 0, LKK_RETURN, 0, 0,
+                          "Commit");
+  lk_ui_set_command_handler(ui, order_cmd_handler, &rec);
+  lk_ui_set_event_handler(ui, order_ev_handler, &rec);
+
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix c = lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN);
+    lk_ix a = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_ix b = lk_tree_add_node_s(t, lk_str_c("ti2"), UIK_TEXT_INPUT);
+    lk_value pvs[1];
+
+    lk_tree_add_prop(t, a, UIP_TEXT, lk_v_cstr(t->intern, "ab"));
+    lk_tree_add_prop(t, a, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_add_prop(t, a, UIP_CONTROLLED, lk_v_i32(1));
+    pvs[0] = lk_v_cstr(t->intern, "A1");
+    lk_tree_add_presentation_sv(t, a, "field", pvs, 1);
+    lk_tree_add_prop(t, b, UIP_TEXT, lk_v_cstr(t->intern, ""));
+    lk_tree_add_prop(t, b, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, c);
+    lk_tree_append_child(t, c, a);
+    lk_tree_append_child(t, c, b);
+    lk_ui_end_frame(ui);
+  }
+
+  lk_focus_set(ui, lk_ui_tree(ui), lk_intern_id(ui->intern, lk_str_c("ti")));
+  lk_ui_flush_events(ui, lk_ui_tree(ui));
+  rec.n = 0; /* ignore the setup focus event */
+  ti = lk_tree_find_by_id(lk_ui_tree(ui),
+                          lk_intern_id(ui->intern, lk_str_c("ti")));
+
+  /* Type, then Enter -- two host events, as the run loop delivers them. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_RETURN;
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 2u);
+
+  if (q->count == 2) {
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("FieldEdit")));
+    CHECK(cmd_candidate(ui, 0, "abx"));
+    CHECK_EQ(q->cmds[1].name, lk_intern_id(ui->intern, lk_str_c("Commit")));
+  }
+
+  for (i = 0; i < rec.n; i++) {
+    if (rec.seq[i] == LK_EVENT_VALUE_CHANGED && vc_at < 0) {
+      vc_at = i;
+    }
+
+    if (rec.seq[i] == LK_EVENT_FOCUS_CHANGED && fc_at < 0) {
+      fc_at = i;
+    }
+  }
+
+  CHECK(vc_at >= 0 && fc_at >= 0 && vc_at < fc_at);
+  /* When focus moved, the candidate's command was already queued. */
+  CHECK_EQ(rec.cmds_at_focus, 2u);
+  CHECK_EQ(ui->focused_id, rec.other);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static void test_text_input_initial_text(void) {
   lk_ui *ui;
   lk_ix ti;
@@ -5477,8 +7473,7 @@ static lk_rect *run_layout_with_state(lk_tree *t, lk_i32 vw, lk_i32 vh,
   lk_rect *rects;
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
-  cfg.measure_ud = NULL;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = vw;
   cfg.viewport_h = vh;
   cfg.state = state;
@@ -5489,6 +7484,36 @@ static lk_rect *run_layout_with_state(lk_tree *t, lk_i32 vw, lk_i32 vh,
   }
 
   if (!lk_layout(t, &cfg, rects)) {
+    free(rects);
+    return NULL;
+  }
+
+  return rects;
+}
+
+/* helper: layout the ui's current tree with retained state AND the
+ * ui-owned per-frame geometry scratch wired (lk_ui_geom), the way
+ * the SDL run loop does — geometry-dependent widget events (wheel
+ * clamping, divider drags, click-to-position) read ui->geom, so
+ * tests that route such events must lay out through this. */
+static lk_rect *run_layout_ui(lk_ui *ui, lk_i32 vw, lk_i32 vh) {
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  const lk_tree *cur = lk_ui_tree(ui);
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = vw;
+  cfg.viewport_h = vh;
+  cfg.state = lk_ui_state(ui);
+  cfg.geom = lk_ui_geom(ui);
+
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * cur->node_count);
+  if (!rects) {
+    return NULL;
+  }
+
+  if (!lk_layout(cur, &cfg, rects)) {
     free(rects);
     return NULL;
   }
@@ -5637,7 +7662,7 @@ static void test_scroll_render_clips(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(cur, r, NULL, NULL, &rl);
+    lk_render_build(cur, r, NULL, NULL, NULL, &rl);
 
     for (i = 0; i < rl.count; i++) {
       if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) found_clip_begin++;
@@ -5670,8 +7695,9 @@ static void test_scroll_wheel_event(void) {
 
   sc_id = cur->nodes[sc].id;
 
-  /* Need to do layout first so scroll_max is computed */
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  /* Layout with the ui geom scratch wired: the wheel handler clamps
+   * against the layout-derived max in ui->geom */
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
     /* Scroll on the scroll node itself */
@@ -5708,17 +7734,17 @@ static void test_scroll_clamp_bounds(void) {
 
   sc_id = cur->nodes[sc].id;
 
-  /* Layout to compute scroll_max */
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  /* Layout computes the max into the per-frame geom scratch */
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
-    scroll_max = (lk_i32)lk_state_get(st, sc_id, LKS_SCROLL_MAX).as.i;
+    scroll_max = lk_ui_geom(ui)[sc].scroll.max;
     CHECK(scroll_max > 0);
 
     /* Set scroll_y way past max, then do layout again to clamp */
     lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(scroll_max + 1000));
     free(r);
-    r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+    r = run_layout_ui(ui, 800, 600);
     if (r) {
       v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
       CHECK_EQ((unsigned)(lk_i32)v.as.i, (unsigned)scroll_max);
@@ -5727,7 +7753,7 @@ static void test_scroll_clamp_bounds(void) {
 
     /* Set scroll_y negative, layout clamps to 0 */
     lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(-100));
-    r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+    r = run_layout_ui(ui, 800, 600);
     if (r) {
       v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
       CHECK_EQ((unsigned)(lk_i32)v.as.i, 0u);
@@ -5756,8 +7782,8 @@ static void test_scroll_wheel_bubbles(void) {
   sc_id = cur->nodes[sc].id;
   first_child = cur->nodes[sc].first_child;
 
-  /* Layout to compute scroll_max */
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  /* Layout with the ui geom scratch (wheel clamping reads it) */
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
     /* Send wheel to child label, should bubble to scroll */
@@ -5819,15 +7845,16 @@ static void test_scroll_bar_rendered(void) {
   BEGIN_TEST("scroll: scroll bar rendered when content > viewport");
 
   sc_id = cur->nodes[sc].id;
+  (void)sc_id;
 
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
-    lk_i32 smax = (lk_i32)lk_state_get(st, sc_id, LKS_SCROLL_MAX).as.i;
+    lk_i32 smax = lk_ui_geom(ui)[sc].scroll.max;
     CHECK(smax > 0);
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(cur, r, NULL, st, &rl);
+    lk_render_build(cur, r, NULL, st, lk_ui_geom(ui), &rl);
 
     /* Count FILL_RECTs. Should include: window bg, scroll bg,
      * scroll track, scroll thumb = at least 4 FILL_RECTs
@@ -5907,8 +7934,4844 @@ static void test_widget_bubble_no_break_text_input(void) {
 }
 
 /* ================================================================
+ * Border rendering tests
+ * ================================================================ */
+
+static void test_border_render_four_fill_rects(void) {
+  /* Node with border_width=2 via styles -> 4 extra FILL_RECTs */
+  lk_tree *t;
+  lk_style *styles;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_ix w, btn;
+  lk_u32 i;
+  int border_count;
+
+  BEGIN_TEST("border: emits 4 fill rects");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    memset(styles, 0, sizeof(lk_style) * t->node_count);
+    /* window style */
+    styles[w].bg.a = 255;
+    /* button style with border */
+    styles[btn].bg.r = 60; styles[btn].bg.g = 60; styles[btn].bg.b = 60;
+    styles[btn].bg.a = 255;
+    styles[btn].fg.r = 255; styles[btn].fg.g = 255; styles[btn].fg.b = 255;
+    styles[btn].fg.a = 255;
+    styles[btn].padding = 4;
+    styles[btn].border_width = 2;
+    styles[btn].border_color.r = 100;
+    styles[btn].border_color.g = 150;
+    styles[btn].border_color.b = 200;
+    styles[btn].border_color.a = 255;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
+
+    /* Count FILL_RECTs with border color */
+    border_count = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
+          rl.cmds[i].color.r == 100 &&
+          rl.cmds[i].color.g == 150 &&
+          rl.cmds[i].color.b == 200) {
+        border_count++;
+      }
+    }
+    CHECK_EQ((unsigned)border_count, 4u);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  free(styles);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_border_inset_layout(void) {
+  /* border_width + padding insets the content rect */
+  lk_tree *t;
+  lk_style *styles;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, lbl;
+
+  BEGIN_TEST("border: insets layout content rect");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    memset(styles, 0, sizeof(lk_style) * t->node_count);
+    /* column: padding=5, border_width=3 -> inset=8 */
+    styles[col].padding = 5;
+    styles[col].border_width = 3;
+    styles[col].align = LK_ALIGN_STRETCH;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 400;
+    cfg.viewport_h = 300;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    /* Column fills viewport (from window layout).
+     * Label should be inset by 5+3=8 from column origin.
+     */
+    CHECK_EQ((unsigned)rects[lbl].x, 8u);
+    CHECK_EQ((unsigned)rects[lbl].y, 8u);
+    /* Width should be 400 - 8*2 = 384 (stretch) */
+    CHECK_EQ((unsigned)rects[lbl].w, 384u);
+  }
+
+  free(rects);
+  free(styles);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_border_zero_no_extra_commands(void) {
+  /* border_width=0 should not emit extra FILL_RECTs */
+  lk_tree *t;
+  lk_style *styles;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_render_list rl2;
+  lk_ix w, btn;
+
+  BEGIN_TEST("border: zero width = no extra commands");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    memset(styles, 0, sizeof(lk_style) * t->node_count);
+    styles[btn].bg.a = 255;
+    styles[btn].fg.a = 255;
+    styles[btn].padding = 4;
+    styles[btn].border_width = 0;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    /* Render with border_width=0 */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
+
+    /* Render without styles (fallback, also no border) */
+    memset(&rl2, 0, sizeof(rl2));
+    lk_render_build(t, rects, NULL, NULL, NULL, &rl2);
+
+    /* Same number of commands — no border extras */
+    CHECK_EQ(rl.count, rl2.count);
+
+    lk_render_list_destroy(&rl);
+    lk_render_list_destroy(&rl2);
+  }
+
+  free(rects);
+  free(styles);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_border_theme_integration(void) {
+  /* Theme rule with border -> resolve -> render -> border commands present */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_ix w, btn;
+  lk_u32 i;
+  int border_count;
+
+  BEGIN_TEST("border: theme rule integration");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  th = lk_theme_new(NULL, NULL, NULL);
+  memset(&s, 0, sizeof(s));
+  s.border_width = 1;
+  s.border_color.r = 80;
+  s.border_color.g = 140;
+  s.border_color.b = 220;
+  s.border_color.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s,
+                    LK_SF_BORDER_WIDTH | LK_SF_BORDER_COLOR);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (th && styles && rects) {
+    lk_style_resolve(th, t, NULL, styles);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
+
+    /* Should find 4 FILL_RECTs with the theme border color */
+    border_count = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
+          rl.cmds[i].color.r == 80 &&
+          rl.cmds[i].color.g == 140 &&
+          rl.cmds[i].color.b == 220) {
+        border_count++;
+      }
+    }
+    CHECK_EQ((unsigned)border_count, 4u);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ---- clipboard mock + tests ---- */
+
+static char g_mock_clipboard[1024];
+
+static const char *mock_clipboard_get(void *ud) {
+  (void)ud;
+  return g_mock_clipboard;
+}
+
+static void mock_clipboard_set(void *ud, const char *text) {
+  size_t len;
+  (void)ud;
+  len = strlen(text);
+  if (len >= sizeof(g_mock_clipboard)) {
+    len = sizeof(g_mock_clipboard) - 1;
+  }
+  memcpy(g_mock_clipboard, text, len);
+  g_mock_clipboard[len] = '\0';
+}
+
+static void test_text_input_ctrl_c(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+
+  BEGIN_TEST("text_input: Ctrl+C copies selection to clipboard");
+
+  ui = make_text_input_ui("hello world", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+  g_mock_clipboard[0] = '\0';
+
+  /* Select "llo w" (positions 2..7) */
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(2));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(7));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(7));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_C;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK(strcmp(g_mock_clipboard, "llo w") == 0);
+
+  /* Text should be unchanged */
+  {
+    lk_value v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+    lk_str text = lk_intern_str(ui->intern, v.as.str_id);
+    CHECK_EQ(text.len, 11u);
+    CHECK(memcmp(text.ptr, "hello world", 11) == 0);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_ctrl_v(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: Ctrl+V pastes from clipboard");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+  strcpy(g_mock_clipboard, "XY");
+
+  /* Cursor at position 1 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_V;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  /* Text should be "aXYb" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "aXYb", 4) == 0);
+
+  /* Cursor at 3 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_ctrl_x(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: Ctrl+X cuts selection");
+
+  ui = make_text_input_ui("abcde", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+  g_mock_clipboard[0] = '\0';
+
+  /* Select "bcd" (positions 1..4) */
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(4));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(4));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_X;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK(strcmp(g_mock_clipboard, "bcd") == 0);
+
+  /* Text should be "ae" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 2u);
+  CHECK(memcmp(text.ptr, "ae", 2) == 0);
+
+  /* Cursor at 1 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_ctrl_v_no_clipboard(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+
+  BEGIN_TEST("text_input: Ctrl+V no-op without clipboard");
+
+  ui = make_text_input_ui("ab", &ti);
+  /* No clipboard installed */
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_V;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  /* Should not be handled (bubbles up) */
+  CHECK_EQ((unsigned)ev.handled, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Dropdown widget tests
+ * ================================================================ */
+
+static lk_ui *make_dropdown_ui(lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd, o1, o2, o3;
+  const lk_tree *cur;
+  lk_node_id dd_id;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  *out_dd = lk_tree_find_by_id(cur, dd_id);
+  return ui;
+}
+
+/* Open a dropdown by routing a trigger click — the real open path,
+ * which pushes the popup overlay AND sets LKS_EXPANDED (the two are
+ * kept in sync; the overlay stack drives the overlay passes). */
+static void open_dropdown(lk_ui *ui, lk_ix dd) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  lk_event_route(ui, &ev);
+}
+
+static void test_dropdown_pointer_down_toggles(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: pointer_down toggles expanded");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  /* Initially not expanded — tag is UIV_NONE when unset */
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).tag,
+           (unsigned)UIV_NONE);
+
+  /* Click */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1u);
+
+  /* Click again — closes */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_arrow_keys_navigate(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: arrow keys move hover index");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  /* Open via Down */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_DOWN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1u);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 0);
+
+  /* Down -> 1 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_DOWN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 1);
+
+  /* Up -> 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_UP;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Build a dropdown UI whose tree structure will stay stable across
+ * frames (window > col > dd > options).  With an attached presentation
+ * on the dropdown so translators can match.  Returns dd index. */
+static lk_ui *make_dropdown_ui_with_pres(lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd, o1, o2, o3;
+  lk_node_id dd_id;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  lk_tree_add_presentation_s(t, dd, "picker", lk_v_i32(0));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  *out_dd = lk_tree_find_by_id(lk_ui_tree(ui), dd_id);
+  return ui;
+}
+
+static void test_dropdown_return_commits(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: RETURN commits hover to selection and closes");
+
+  ui = make_dropdown_ui_with_pres(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  /* Register translator so commit emits a command we can inspect */
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "picker", 0, 0, 0, 0,
+                          "Selected");
+
+  /* Open + navigate to index 1 */
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+  lk_state_set(st, dd_id, LKS_HOVER_INDEX, lk_v_i32(1));
+
+  /* Commit */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_RETURN;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_SELECTED_INDEX).as.i, 1);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+
+  /* Verify value_changed command was dispatched with source_value="Banana" */
+  {
+    const lk_command_queue *q = lk_ui_commands(ui);
+    CHECK_EQ(q->count, 1);
+    if (q->count >= 1) {
+      const lk_command *cmd = &q->cmds[0];
+      CHECK_EQ(cmd->source_value.tag, UIV_STR);
+      {
+        lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+        CHECK(sv.len == 6 && memcmp(sv.ptr, "Banana", 6) == 0);
+      }
+    }
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_escape_closes(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: ESCAPE closes expanded popup");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_ESCAPE;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_overlay_hit_test(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_ix hit;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: overlay hit-test returns option under cursor");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  open_dropdown(ui, dd);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Popup starts below trigger. Click on row 1 (second option). */
+  {
+    lk_rect tr = rects[dd];
+    lk_i32 row_h = 20 + 4 * 2; /* DROPDOWN_MIN_OPTION_H is 20, pad 4 each side */
+    lk_i32 click_y = tr.y + tr.h + 7 + row_h + row_h / 2; /* inset + 1 row + middle */
+    lk_i32 click_x = tr.x + tr.w / 2;
+
+    hit = lk_hit_test_overlay(ui, rects, &cfg, click_x, click_y);
+    /* Expect an option node ix (one of o1/o2/o3). */
+    CHECK(hit > 0);
+    if (hit > 0) {
+      CHECK_EQ((unsigned)lk_ui_tree(ui)->nodes[hit].kind,
+               (unsigned)UIK_OPTION);
+    }
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_click_outside_closes(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+  int dismissed;
+
+  BEGIN_TEST("dropdown: click outside dismisses popup");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  open_dropdown(ui, dd);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Far-away click (outside both trigger and popup) */
+  dismissed = lk_overlay_dismiss_outside(ui, rects, &cfg, 700, 500);
+  CHECK_EQ(dismissed, LK_DISMISS_DISMISSED);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).tag,
+           (unsigned)UIV_I32);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_overlay_render_when_expanded(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+  lk_render_list rl;
+  lk_u32 cmds_collapsed, cmds_expanded;
+
+  BEGIN_TEST("dropdown: overlay render emits commands only when expanded");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  /* Collapsed: no overlay on the stack, no overlay commands */
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+  cmds_collapsed = rl.count;
+  CHECK_EQ(cmds_collapsed, 0u);
+
+  /* Expand (pushes the popup overlay), re-run */
+  open_dropdown(ui, dd);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+  rl.count = 0;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+  cmds_expanded = rl.count;
+  CHECK(cmds_expanded > 0u);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Overlay generalization tests (lk-overlay.c, UIP_HIDDEN,
+ * lk_layout_subtree, ESC-in-core, focus traps)
+ * ================================================================ */
+
+static void test_anchor_below_fits(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: BELOW fits under owner");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  owner.x = 100;
+  owner.y = 100;
+  owner.w = 80;
+  owner.h = 30;
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 200);
+  CHECK_EQ(r.x, 100);
+  CHECK_EQ(r.y, 130);
+  CHECK_EQ(r.w, 120);
+  CHECK_EQ(r.h, 200);
+
+  END_TEST();
+}
+
+static void test_anchor_below_flips_above(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: BELOW flips above at bottom edge");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  owner.x = 100;
+  owner.y = 500;
+  owner.w = 80;
+  owner.h = 30;
+
+  /* Below would end at 530+200=730 > 600; room above (500-200 >= 0). */
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 200);
+  CHECK_EQ(r.x, 100);
+  CHECK_EQ(r.y, 300); /* owner.y - h */
+  CHECK_EQ(r.h, 200);
+
+  /* No room above either (owner near top of a short viewport):
+   * stays below but clamps to the viewport bottom. */
+  owner.y = 50;
+  r = lk_anchor_resolve(&ov, owner, 800, 200, 120, 180);
+  CHECK_EQ(r.y, 20); /* clamped: 200 - 180 */
+
+  END_TEST();
+}
+
+static void test_anchor_x_clamp(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: x clamped into viewport");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  owner.x = 750;
+  owner.y = 100;
+  owner.w = 80;
+  owner.h = 30;
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 50);
+  CHECK_EQ(r.x, 680); /* 800 - 120 */
+  CHECK_EQ(r.y, 130);
+
+  /* Left edge */
+  owner.x = -40;
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 50);
+  CHECK_EQ(r.x, 0);
+
+  END_TEST();
+}
+
+static void test_anchor_center_viewport(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: CENTER_VIEWPORT centers");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  memset(&owner, 0, sizeof(owner));
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 200, 100);
+  CHECK_EQ(r.x, 300);
+  CHECK_EQ(r.y, 250);
+  CHECK_EQ(r.w, 200);
+  CHECK_EQ(r.h, 100);
+
+  END_TEST();
+}
+
+static void test_anchor_at_cursor(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: AT_CURSOR uses offset point + clamps");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_AT_CURSOR;
+  ov.offset.x = 333;
+  ov.offset.y = 222;
+  memset(&owner, 0, sizeof(owner));
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 50, 40);
+  CHECK_EQ(r.x, 333);
+  CHECK_EQ(r.y, 222);
+
+  /* Cursor near the bottom-right corner clamps back inside. */
+  ov.offset.x = 790;
+  ov.offset.y = 590;
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 50, 40);
+  CHECK_EQ(r.x, 750);
+  CHECK_EQ(r.y, 560);
+
+  END_TEST();
+}
+
+static void test_overlay_push_pop_count(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_overlay ov;
+
+  BEGIN_TEST("overlay: push/pop/pop_owner/top/count");
+
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+  CHECK(lk_overlay_top(ui) == NULL);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
+  ov.owner_id = 11;
+  CHECK_EQ(lk_overlay_push(ui, &ov), 1);
+
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.owner_id = 22;
+  CHECK_EQ(lk_overlay_push(ui, &ov), 1);
+
+  CHECK_EQ(lk_overlay_count(ui), 2u);
+  CHECK(lk_overlay_top(ui) != NULL);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, 22u);
+
+  lk_overlay_pop(ui);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, 11u);
+
+  /* pop_owner removes mid-stack entries */
+  ov.owner_id = 22;
+  lk_overlay_push(ui, &ov);
+  CHECK_EQ(lk_overlay_pop_owner(ui, 11), 1);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, 22u);
+
+  /* pop_owner on an absent owner is a no-op */
+  CHECK_EQ(lk_overlay_pop_owner(ui, 99), 0);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* pop on empty is safe */
+  lk_overlay_pop(ui);
+  lk_overlay_pop(ui);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Build w > colA + colB, with button "b" under colA (moved=0) or
+ * colB (moved=1), or omitted entirely (present=0). */
+static void build_move_tree(lk_tree *t, int present, int moved) {
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix ca = lk_tree_add_node_s(t, lk_str_c("colA"), UIK_COLUMN);
+  lk_ix cb = lk_tree_add_node_s(t, lk_str_c("colB"), UIK_COLUMN);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ca);
+  lk_tree_append_child(t, w, cb);
+
+  if (present) {
+    lk_ix b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+    lk_tree_append_child(t, moved ? cb : ca, b);
+  }
+}
+
+static void test_overlay_end_frame_gc(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_overlay ov;
+  lk_node_id b_id;
+
+  BEGIN_TEST("overlay: end_frame pops on owner removal, not move");
+
+  t = lk_ui_begin_frame(ui);
+  build_move_tree(t, 1, 0);
+  lk_ui_end_frame(ui);
+
+  b_id = lk_intern_id(ui->intern, lk_str_c("b"));
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
+  ov.owner_id = b_id;
+  lk_overlay_push(ui, &ov);
+
+  /* Move "b" to a different parent: REMOVED+ADDED — overlay stays. */
+  t = lk_ui_begin_frame(ui);
+  build_move_tree(t, 1, 1);
+  lk_ui_end_frame(ui);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Remove "b" entirely — overlay popped. */
+  t = lk_ui_begin_frame(ui);
+  build_move_tree(t, 0, 0);
+  lk_ui_end_frame(ui);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_overlay_escape_pops(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("overlay: ESC pops topmost + syncs dropdown state");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  open_dropdown(ui, dd);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+
+  /* ESC routed anywhere (target = root, as when nothing is focused)
+   * is consumed by the pre-step in lk_event_route. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = lk_ui_tree(ui)->root;
+  ev.data.key.keycode = LKK_ESCAPE;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+
+  /* With no overlay open, ESC is NOT consumed by the pre-step. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = lk_ui_tree(ui)->root;
+  ev.data.key.keycode = LKK_ESCAPE;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_bottom_edge_flips(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, sp, dd, o1, o2, o3;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect popup;
+
+  BEGIN_TEST("dropdown: popup flips above near bottom edge");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_H, lk_v_i32(150));
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  dd = lk_tree_find_by_id(lk_ui_tree(ui),
+                          lk_intern_id(ui->intern, lk_str_c("dd")));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+
+  /* Short viewport: popup would overflow the bottom -> flips above,
+   * sitting exactly on top of the trigger. */
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 200;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+  popup = lk_dropdown_popup_rect(lk_ui_tree(ui), dd, rects, cfg.styles, &cfg);
+  CHECK(popup.y < rects[dd].y);
+  CHECK_EQ(popup.y + popup.h, rects[dd].y);
+  CHECK(popup.y >= 0);
+
+  /* Tall viewport: same tree, popup stays below the trigger. */
+  cfg.viewport_h = 600;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+  popup = lk_dropdown_popup_rect(lk_ui_tree(ui), dd, rects, cfg.styles, &cfg);
+  CHECK_EQ(popup.y, rects[dd].y + rects[dd].h);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Build a tree with a hidden modal subtree:
+ *   w > col > btn "outside" (focusable)
+ *           > col "modal" (hidden) > btn "m1", btn "m2" (focusable)
+ * Returns node indices via out params. */
+static lk_ui *make_modal_ui(lk_ix *out_outside, lk_ix *out_modal) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, bo, modal, m1, m2;
+  const lk_tree *cur;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  bo = lk_tree_add_node_s(t, lk_str_c("outside"), UIK_BUTTON);
+  lk_tree_add_prop(t, bo, UIP_TEXT, lk_v_cstr(t->intern, "Open"));
+  lk_tree_add_prop(t, bo, UIP_FOCUSABLE, lk_v_bool(1));
+  modal = lk_tree_add_node_s(t, lk_str_c("modal"), UIK_COLUMN);
+  lk_tree_add_prop(t, modal, UIP_HIDDEN, lk_v_bool(1));
+  m1 = lk_tree_add_node_s(t, lk_str_c("m1"), UIK_BUTTON);
+  lk_tree_add_prop(t, m1, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, m1, UIP_FOCUSABLE, lk_v_bool(1));
+  m2 = lk_tree_add_node_s(t, lk_str_c("m2"), UIK_BUTTON);
+  lk_tree_add_prop(t, m2, UIP_TEXT, lk_v_cstr(t->intern, "Cancel"));
+  lk_tree_add_prop(t, m2, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, bo);
+  lk_tree_append_child(t, col, modal);
+  lk_tree_append_child(t, modal, m1);
+  lk_tree_append_child(t, modal, m2);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  *out_outside =
+      lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("outside")));
+  *out_modal =
+      lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("modal")));
+  return ui;
+}
+
+static void test_overlay_modal_blocks(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_overlay ov;
+  lk_node_id modal_id;
+  int rc;
+
+  BEGIN_TEST("overlay: modal consumes outside click, no dismiss");
+
+  ui = make_modal_ui(&outside, &modal);
+  modal_id = lk_intern_id(ui->intern, lk_str_c("modal"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  ov.dismiss_on_outside = 0;
+  ov.traps_focus = 1;
+  ov.owner_id = modal_id;
+  ov.content_root_id = modal_id;
+  lk_overlay_push(ui, &ov);
+
+  /* Outside click: blocked (consumed), overlay NOT dismissed. */
+  rc = lk_overlay_dismiss_outside(ui, rects, &cfg, 5, 595);
+  CHECK_EQ(rc, LK_DISMISS_BLOCKED);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Click inside the centered modal: nothing dismissed or blocked. */
+  rc = lk_overlay_dismiss_outside(ui, rects, &cfg, 400, 300);
+  CHECK_EQ(rc, LK_DISMISS_NONE);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* The modal content is hit-testable through the overlay pass. */
+  CHECK(lk_hit_test_overlay(ui, rects, &cfg, 400, 300) != 0);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_overlay_modal_scrim(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_overlay ov;
+  lk_render_list rl;
+  lk_u32 main_count;
+  const lk_render_cmd *scrim;
+
+  BEGIN_TEST("overlay: modal renders a viewport scrim, dismissible doesn't");
+
+  ui = make_modal_ui(&outside, &modal);
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  ov.dismiss_on_outside = 0;
+  ov.traps_focus = 1;
+  ov.owner_id = lk_ui_tree(ui)->nodes[modal].id;
+  ov.content_root_id = lk_ui_tree(ui)->nodes[modal].id;
+  lk_overlay_push(ui, &ov);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
+  main_count = rl.count;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+
+  /* First overlay command is the scrim: viewport-covering FILL_RECT,
+   * black at LK_MODAL_SCRIM_ALPHA (150). */
+  CHECK(rl.count > main_count);
+  scrim = &rl.cmds[main_count];
+  CHECK_EQ((unsigned)scrim->op, (unsigned)LK_ROP_FILL_RECT);
+  CHECK_EQ(scrim->rect.x, 0);
+  CHECK_EQ(scrim->rect.y, 0);
+  CHECK_EQ(scrim->rect.w, 400);
+  CHECK_EQ(scrim->rect.h, 300);
+  CHECK_EQ((unsigned)scrim->color.a, 150u);
+  CHECK_EQ((unsigned)scrim->color.r, 0u);
+
+  /* A dismissible, non-trapping overlay of the same shape gets no
+   * scrim: its first command must not be a viewport-covering fill. */
+  lk_overlay_pop(ui);
+  ov.dismiss_on_outside = 1;
+  ov.traps_focus = 0;
+  lk_overlay_push(ui, &ov);
+
+  rl.count = 0;
+  rl.bytes_count = 0;
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
+  main_count = rl.count;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+  CHECK(rl.count > main_count);
+  CHECK(!(rl.cmds[main_count].op == LK_ROP_FILL_RECT &&
+          rl.cmds[main_count].rect.w == 400 &&
+          rl.cmds[main_count].rect.h == 300));
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_container_bg_renders(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, la;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_style s;
+  lk_u32 i;
+  int found;
+
+  BEGIN_TEST("render: container (render-less kind) bg from theme rule");
+
+  /* User rule: every COLUMN gets an opaque bg.  Containers have no
+   * widget render fn, so this plate comes from the engine — the
+   * regression was rules matching (borders drew) while the bg fill
+   * was silently never emitted. */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 40;
+  s.bg.g = 45;
+  s.bg.b = 58;
+  s.bg.a = 255;
+  lk_theme_add_rule(lk_ui_theme(ui), UIK_COLUMN, 0, 0, &s, LK_SF_BG);
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
+
+  found = 0;
+
+  for (i = 0; i < rl.count; i++) {
+    const lk_render_cmd *c = &rl.cmds[i];
+
+    if (c->op == LK_ROP_FILL_RECT && c->color.r == 40 &&
+        c->color.g == 45 && c->color.b == 58 && c->color.a == 255) {
+      found = 1;
+    }
+  }
+
+  CHECK(found);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_hidden_subtree_layout(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, la, hid, lb, lc;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+
+  BEGIN_TEST("hidden: subtree excluded from layout stacking");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "aa"));
+  hid = lk_tree_add_node_s(t, lk_str_c("hid"), UIK_COLUMN);
+  lk_tree_add_prop(t, hid, UIP_HIDDEN, lk_v_bool(1));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "hidden"));
+  lc = lk_tree_add_node_s(t, lk_str_c("lc"), UIK_LABEL);
+  lk_tree_add_prop(t, lc, UIP_TEXT, lk_v_cstr(t->intern, "cc"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_tree_append_child(t, col, hid);
+  lk_tree_append_child(t, col, lc);
+  lk_tree_append_child(t, hid, lb);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  /* styles == NULL: layout reads tree props (no theme padding/gap),
+   * so the geometry below is exact stub arithmetic. */
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix ila = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("la")));
+    lk_ix ihid = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                      lk_str_c("hid")));
+    lk_ix ilb = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("lb")));
+    lk_ix ilc = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("lc")));
+
+    /* la at y=0 h=16; lc packs directly under it (hidden col skipped,
+     * contributes no height and no gap). */
+    CHECK_EQ(rects[ila].y, 0);
+    CHECK_EQ(rects[ila].h, 16);
+    CHECK_EQ(rects[ilc].y, 16);
+
+    /* Hidden nodes keep zeroed rects. */
+    CHECK_EQ(rects[ihid].w, 0);
+    CHECK_EQ(rects[ihid].h, 0);
+    CHECK_EQ(rects[ilb].w, 0);
+    CHECK_EQ(rects[ilb].h, 0);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_hidden_subtree_render_hit(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, la, hid, lb;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_u32 i, draw_text_count;
+
+  BEGIN_TEST("hidden: subtree skipped by render and hit-test");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "aa"));
+  hid = lk_tree_add_node_s(t, lk_str_c("hid"), UIK_COLUMN);
+  lk_tree_add_prop(t, hid, UIP_HIDDEN, lk_v_bool(1));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "hidden"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_tree_append_child(t, col, hid);
+  lk_tree_append_child(t, hid, lb);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix ila = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("la")));
+    lk_ix ihid = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                      lk_str_c("hid")));
+    lk_ix ilb = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("lb")));
+
+    /* Render: only the visible label's text is emitted. */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(cur, rects, NULL, lk_ui_state(ui), NULL, &rl);
+    draw_text_count = 0;
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+        draw_text_count++;
+      }
+    }
+
+    CHECK_EQ(draw_text_count, 1u);
+
+    /* Hit-test: even with stale rects overlapping visible content,
+     * hidden nodes are never returned. */
+    rects[ihid] = rects[ila];
+    rects[ilb] = rects[ila];
+    CHECK_EQ(lk_hit_test(cur, rects,
+                         rects[ila].x + 1, rects[ila].y + 1), ila);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_hidden_focus_next_skips(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_node_id got;
+
+  BEGIN_TEST("hidden: focus_next skips hidden subtree");
+
+  /* modal subtree is hidden and no trapping overlay is active, so
+   * m1/m2 are not focus-collectable — only "outside" is. */
+  ui = make_modal_ui(&outside, &modal);
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("outside")));
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("outside"))); /* wraps */
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_layout_subtree_positions(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, ov, l1, l2;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+
+  BEGIN_TEST("layout_subtree: column laid out at origin");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  ov = lk_tree_add_node_s(t, lk_str_c("ov"), UIK_COLUMN);
+  lk_tree_add_prop(t, ov, UIP_HIDDEN, lk_v_bool(1));
+  lk_tree_add_prop(t, ov, UIP_GAP, lk_v_i32(4));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "abc"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "de"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, ov);
+  lk_tree_append_child(t, ov, l1);
+  lk_tree_append_child(t, ov, l2);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  /* styles NULL: exact tree-prop arithmetic (no theme padding). */
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix iov = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("ov")));
+    lk_ix il1 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("l1")));
+    lk_ix il2 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("l2")));
+
+    CHECK_EQ(lk_layout_subtree(cur, &cfg, iov, 100, 50, rects), 1);
+
+    /* Stub text: 8 px per codepoint, 16 px tall.
+     * "abc" = 24x16, "de" = 16x16, gap 4.
+     * Column: w = 24, h = 16 + 4 + 16 = 36. */
+    CHECK_EQ(rects[iov].x, 100);
+    CHECK_EQ(rects[iov].y, 50);
+    CHECK_EQ(rects[iov].w, 24);
+    CHECK_EQ(rects[iov].h, 36);
+
+    CHECK_EQ(rects[il1].x, 100);
+    CHECK_EQ(rects[il1].y, 50);
+    CHECK_EQ(rects[il1].w, 24); /* stretched to column width */
+    CHECK_EQ(rects[il1].h, 16);
+
+    CHECK_EQ(rects[il2].y, 70); /* 50 + 16 + gap 4 */
+    CHECK_EQ(rects[il2].h, 16);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_trap_scopes_tab(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_overlay ov;
+  lk_node_id modal_id, got;
+
+  BEGIN_TEST("focus trap: tab-cycling scoped to trap subtree");
+
+  ui = make_modal_ui(&outside, &modal);
+  modal_id = lk_intern_id(ui->intern, lk_str_c("modal"));
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  ov.dismiss_on_outside = 0;
+  ov.traps_focus = 1;
+  ov.owner_id = modal_id;
+  ov.content_root_id = modal_id;
+  lk_overlay_push(ui, &ov);
+
+  /* Cycling only visits m1 and m2 — never "outside". */
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m1")));
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m2")));
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m1"))); /* wraps */
+
+  got = lk_focus_prev(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m2")));
+
+  /* Popping the modal restores whole-tree cycling (hidden subtree
+   * skipped again). */
+  lk_overlay_pop(ui);
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("outside")));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Tooltip tests (UIP_TOOLTIP prop, lk-tooltip.c, hover hook)
+ * ================================================================ */
+
+/* w > col > b1 (tooltip), b2 (tooltip), lab (plain) */
+static lk_ui *make_tooltip_ui(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, b1, b2, lab;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_TEXT, lk_v_cstr(t->intern, "Save"));
+  lk_tree_add_prop(t, b1, UIP_TOOLTIP, lk_v_cstr(t->intern, "Saves the file"));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_TEXT, lk_v_cstr(t->intern, "Undo"));
+  lk_tree_add_prop(t, b2, UIP_TOOLTIP, lk_v_cstr(t->intern, "Reverts"));
+  lab = lk_tree_add_node_s(t, lk_str_c("lab"), UIK_LABEL);
+  lk_tree_add_prop(t, lab, UIP_TEXT, lk_v_cstr(t->intern, "plain"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  lk_tree_append_child(t, col, b2);
+  lk_tree_append_child(t, col, lab);
+  lk_ui_end_frame(ui);
+
+  return ui;
+}
+
+static void test_tooltip_hover_push_pop(void) {
+  lk_ui *ui;
+  lk_node_id b1_id, b2_id, lab_id;
+
+  BEGIN_TEST("tooltip: hover transitions push/pop/swap");
+
+  ui = make_tooltip_ui();
+  b1_id = lk_intern_id(ui->intern, lk_str_c("b1"));
+  b2_id = lk_intern_id(ui->intern, lk_str_c("b2"));
+  lab_id = lk_intern_id(ui->intern, lk_str_c("lab"));
+
+  /* Hover onto a tooltip'd button pushes exactly one TOOLTIP overlay. */
+  lk_hover_set(ui, b1_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ((unsigned)lk_overlay_top(ui)->kind, (unsigned)LK_OVERLAY_TOOLTIP);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, b1_id);
+
+  /* Re-hovering the same node is not a transition — still one. */
+  lk_hover_set(ui, b1_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Hover between two tooltip'd nodes swaps cleanly (count stays 1). */
+  lk_hover_set(ui, b2_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, b2_id);
+
+  /* Moving hover to a plain node pops it. */
+  lk_hover_set(ui, lab_id);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  /* And hover_clear pops too. */
+  lk_hover_set(ui, b1_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  lk_hover_clear(ui);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tooltip_render_on_top(void) {
+  lk_ui *ui;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_u32 main_count;
+  lk_u32 tip_sid;
+
+  BEGIN_TEST("tooltip: render list gets tooltip text on top");
+
+  ui = make_tooltip_ui();
+  tip_sid = lk_intern_id(ui->intern, lk_str_c("Saves the file"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b1")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
+  main_count = rl.count;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+
+  /* Tooltip commands (bg + 4 border strips + text) appended on top;
+   * the final command is the tooltip's DRAW_TEXT. */
+  CHECK_EQ(rl.count, main_count + 6);
+  CHECK_EQ((unsigned)rl.cmds[rl.count - 1].op, (unsigned)LK_ROP_DRAW_TEXT);
+  CHECK_EQ(rl.cmds[rl.count - 1].str_id, tip_sid);
+  CHECK_EQ((unsigned)rl.cmds[main_count].op, (unsigned)LK_ROP_FILL_RECT);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tooltip_passive(void) {
+  lk_ui *ui;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect tip;
+  lk_ix b1;
+  int rc;
+
+  BEGIN_TEST("tooltip: passive — no hit, no click consumption");
+
+  ui = make_tooltip_ui();
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b1")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Pointer-down far outside is NOT consumed and does not pop. */
+  rc = lk_overlay_dismiss_outside(ui, rects, &cfg, 399, 299);
+  CHECK_EQ(rc, LK_DISMISS_NONE);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* The tooltip rect itself is transparent to the overlay hit-test. */
+  b1 = lk_tree_find_by_id(lk_ui_tree(ui),
+                          lk_intern_id(ui->intern, lk_str_c("b1")));
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b1, lk_overlay_top(ui), rects, &cfg);
+  CHECK(tip.w > 0 && tip.h > 0);
+  CHECK_EQ(lk_hit_test_overlay(ui, rects, &cfg, tip.x + tip.w / 2,
+                               tip.y + tip.h / 2), 0u);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tooltip_bottom_edge_flips(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, sp, b;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect tip;
+
+  BEGIN_TEST("tooltip: flips above near bottom edge");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_H, lk_v_i32(150));
+  b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+  lk_tree_add_prop(t, b, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_add_prop(t, b, UIP_TOOLTIP, lk_v_cstr(t->intern, "Runs it"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, b);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 200; /* short: below the button would overflow */
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  b = lk_tree_find_by_id(lk_ui_tree(ui),
+                         lk_intern_id(ui->intern, lk_str_c("b")));
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b, lk_overlay_top(ui), rects, &cfg);
+  CHECK(tip.y < rects[b].y);
+  CHECK_EQ(tip.y + tip.h, rects[b].y); /* sits directly above */
+  CHECK(tip.y >= 0);
+
+  /* Tall viewport: same tree, tooltip stays below. */
+  cfg.viewport_h = 600;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b, lk_overlay_top(ui), rects, &cfg);
+  CHECK_EQ(tip.y, rects[b].y + rects[b].h);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Bug-fix regression tests
+ * ================================================================ */
+
+static void test_value_none_zeroed(void) {
+  BEGIN_TEST("value: NONE has zeroed union");
+
+  {
+    lk_value v = lk_v_none();
+    CHECK_EQ((unsigned)v.tag, (unsigned)UIV_NONE);
+    CHECK_EQ((unsigned)v.as.i, 0u);
+  }
+
+  /* lk_command_arg out-of-range path returns the same zeroed none */
+  {
+    lk_value a = lk_command_arg(NULL, 0);
+    CHECK_EQ((unsigned)a.tag, (unsigned)UIV_NONE);
+    CHECK_EQ((unsigned)a.as.i, 0u);
+  }
+
+  END_TEST();
+}
+
+/* Counting allocator for intern alloc/dealloc symmetry check */
+static int g_cnt_allocs = 0;
+static int g_cnt_deallocs = 0;
+
+static void *counting_alloc(void *ud, lk_u32 bytes) {
+  (void)ud;
+  g_cnt_allocs++;
+  return malloc(bytes);
+}
+
+static void counting_dealloc(void *ud, void *ptr) {
+  (void)ud;
+  g_cnt_deallocs++;
+  free(ptr);
+}
+
+static void test_intern_custom_alloc_balanced(void) {
+  lk_intern *it;
+  int i;
+  char buf[32];
+
+  BEGIN_TEST("intern: custom alloc/dealloc counts balance");
+
+  g_cnt_allocs = 0;
+  g_cnt_deallocs = 0;
+
+  it = lk_intern_new(counting_alloc, counting_dealloc, NULL);
+  CHECK(it != NULL);
+
+  /* Force table growth (>44 entries at 70% of 64) and pool growth
+   * (>1024 bytes) so grow paths free through the custom dealloc. */
+  for (i = 0; i < 200; i++) {
+    sprintf(buf, "intern-key-%d", i);
+    CHECK(lk_intern_cid(it, buf) != 0);
+  }
+
+  lk_intern_destroy(it);
+
+  CHECK(g_cnt_allocs > 0);
+  CHECK_EQ((unsigned)g_cnt_allocs, (unsigned)g_cnt_deallocs);
+
+  END_TEST();
+}
+
+static void test_translator_disabled_no_command(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, bd, be, dcol, bs;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: disabled nodes emit no commands");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  bd = lk_tree_add_node_s(t, lk_str_c("bd"), UIK_BUTTON);
+  lk_tree_add_prop(t, bd, UIP_DISABLED, lk_v_bool(1));
+  lk_tree_add_presentation_s(t, bd, "act", lk_v_i32(1));
+  be = lk_tree_add_node_s(t, lk_str_c("be"), UIK_BUTTON);
+  lk_tree_add_presentation_s(t, be, "act", lk_v_i32(2));
+  dcol = lk_tree_add_node_s(t, lk_str_c("dcol"), UIK_COLUMN);
+  lk_tree_add_prop(t, dcol, UIP_DISABLED, lk_v_bool(1));
+  bs = lk_tree_add_node_s(t, lk_str_c("bs"), UIK_BUTTON);
+  lk_tree_add_presentation_s(t, bs, "act", lk_v_i32(3));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, bd);
+  lk_tree_append_child(t, col, be);
+  lk_tree_append_child(t, col, dcol);
+  lk_tree_append_child(t, dcol, bs);
+  lk_ui_end_frame(ui);
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "act", 0, 0, 0, 0, "Do");
+  q = lk_ui_commands(ui);
+
+  /* Click disabled button: no command */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = bd;
+  lk_event_route(ui, &ev);
+  CHECK_EQ(q->count, 0u);
+
+  /* Click enabled twin: command fires */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = be;
+  lk_event_route(ui, &ev);
+  CHECK_EQ(q->count, 1u);
+
+  /* Click button inside disabled subtree: suppressed too */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = bs;
+  lk_event_route(ui, &ev);
+  CHECK_EQ(q->count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_state_survives_reparent(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, ca, cb, ti;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+
+  BEGIN_TEST("state: node move keeps state and focus");
+
+  /* Frame 1: ti under column A */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  ca = lk_tree_add_node_s(t, lk_str_c("ca"), UIK_COLUMN);
+  cb = lk_tree_add_node_s(t, lk_str_c("cb"), UIK_COLUMN);
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, "hello"));
+  lk_tree_add_prop(t, ti, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ca);
+  lk_tree_append_child(t, w, cb);
+  lk_tree_append_child(t, ca, ti);
+  lk_ui_end_frame(ui);
+
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  CHECK(lk_focus_set(ui, lk_ui_tree(ui), ti_id));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+
+  /* Frame 2: same nodes, ti moved under column B */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  ca = lk_tree_add_node_s(t, lk_str_c("ca"), UIK_COLUMN);
+  cb = lk_tree_add_node_s(t, lk_str_c("cb"), UIK_COLUMN);
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, "hello"));
+  lk_tree_add_prop(t, ti, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ca);
+  lk_tree_append_child(t, w, cb);
+  lk_tree_append_child(t, cb, ti);
+  lk_ui_end_frame(ui);
+
+  /* Retained state survived the move */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  /* Focus survived the move */
+  CHECK_EQ(ui->focused_id, ti_id);
+
+  /* Frame 3: ti actually removed — state and focus must be cleared */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  ca = lk_tree_add_node_s(t, lk_str_c("ca"), UIK_COLUMN);
+  cb = lk_tree_add_node_s(t, lk_str_c("cb"), UIK_COLUMN);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ca);
+  lk_tree_append_child(t, w, cb);
+  lk_ui_end_frame(ui);
+
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_NONE);
+  CHECK_EQ(ui->focused_id, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_cursor_only_when_focused(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_u32 focused_count;
+  lk_u32 i;
+  int cursor_found;
+
+  BEGIN_TEST("text_input: cursor renders only when focused");
+
+  ui = make_text_input_ui("hello", &ti); /* focuses ti */
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = lk_ui_state(ui);
+  cfg.geom = lk_ui_geom(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  /* Focused: render list contains the 1px cursor bar */
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom,
+                  &rl);
+  focused_count = rl.count;
+  cursor_found = 0;
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+      cursor_found = 1;
+    }
+  }
+  CHECK(cursor_found);
+
+  /* Unfocused: exactly the cursor command disappears */
+  lk_focus_clear(ui);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom,
+                  &rl);
+  CHECK_EQ(rl.count + 1, focused_count);
+  cursor_found = 0;
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+      cursor_found = 1;
+    }
+  }
+  CHECK(!cursor_found);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_padding_click_stays_open(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+  lk_event ev;
+  lk_rect tr;
+  lk_ix hit;
+
+  BEGIN_TEST("dropdown: popup-padding click keeps popup open");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects); /* stores trigger rect in geom */
+
+  tr = rects[dd];
+
+  /* Open by clicking the trigger */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  ev.data.pointer.x = tr.x + tr.w / 2;
+  ev.data.pointer.y = tr.y + tr.h / 2;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+
+  /* Click in the popup's padding zone (inside popup, above the first
+   * option row: inset is padding 6 + border 1 = 7). */
+  {
+    lk_i32 px = tr.x + tr.w / 2;
+    lk_i32 py = tr.y + tr.h + 2;
+
+    hit = lk_hit_test_overlay(ui, rects, &cfg, px, py);
+    CHECK_EQ(hit, dd); /* padding resolves to the dropdown itself */
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = hit;
+    ev.data.pointer.x = px;
+    ev.data.pointer.y = py;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    /* Popup must stay open */
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+  }
+
+  /* A real trigger click still closes */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  ev.data.pointer.x = tr.x + tr.w / 2;
+  ev.data.pointer.y = tr.y + tr.h / 2;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_hover_follows_pointer(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+  lk_event ev;
+  lk_rect tr;
+  lk_ix hit;
+  lk_i32 row_h = 24;   /* stub text height 16 + option pad 4*2 */
+  lk_i32 inset = 7;    /* dropdown default padding 6 + border 1 */
+
+  BEGIN_TEST("dropdown: pointer move updates hover index");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  open_dropdown(ui, dd); /* hover starts at selection (0) */
+
+  tr = rects[dd];
+
+  /* Move over option row 1 (second option) */
+  {
+    lk_i32 px = tr.x + tr.w / 2;
+    lk_i32 py = tr.y + tr.h + inset + row_h + row_h / 2;
+
+    hit = lk_hit_test_overlay(ui, rects, &cfg, px, py);
+    CHECK(hit > 0);
+    CHECK_EQ((unsigned)lk_ui_tree(ui)->nodes[hit].kind, (unsigned)UIK_OPTION);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = hit;
+    ev.data.pointer.x = px;
+    ev.data.pointer.y = py;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 1);
+  }
+
+  /* Move over option row 2 (third option) */
+  {
+    lk_i32 px = tr.x + tr.w / 2;
+    lk_i32 py = tr.y + tr.h + inset + row_h * 2 + row_h / 2;
+
+    hit = lk_hit_test_overlay(ui, rects, &cfg, px, py);
+    CHECK(hit > 0);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = hit;
+    ev.data.pointer.x = px;
+    ev.data.pointer.y = py;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 2);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Tests: per-frame geometry scratch (Stage F3) + dropdown value /
+ * popup scrolling
+ * ================================================================ */
+
+static void test_geom_scratch_populated(void) {
+  /* The layout pass fills each widget's geom arm with exact stub
+   * values (styles NULL: insets from tree props, fonts 0). */
+  lk_ix dd;
+  lk_ui *ui = make_dropdown_ui(&dd);
+  lk_rect *r;
+  lk_widget_geom *geom;
+
+  BEGIN_TEST("geom: layout fills the dropdown trigger arm");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    geom = lk_ui_geom(ui);
+    CHECK(geom != NULL);
+    CHECK_EQ((unsigned)geom[dd].trigger.x, (unsigned)r[dd].x);
+    CHECK_EQ((unsigned)geom[dd].trigger.y, (unsigned)r[dd].y);
+    CHECK_EQ((unsigned)geom[dd].trigger.w, (unsigned)r[dd].w);
+    CHECK_EQ((unsigned)geom[dd].trigger.h, (unsigned)r[dd].h);
+    /* stub text: h 16 -> max(16, 12) + 2*4 pad = 24; styles NULL ->
+     * inset 0 */
+    CHECK_EQ((unsigned)geom[dd].trigger.row_h, 24u);
+    CHECK_EQ((unsigned)geom[dd].trigger.inset, 0u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* helper for the rects test: window > column > button "b" (+ a hidden
+ * label "hid" when with_hidden), n extra spacers to grow the tree. */
+static void build_rects_frame(lk_ui *ui, int with_hidden, int extra) {
+  lk_tree *t = lk_ui_begin_frame(ui);
+  lk_ix win = lk_tree_add_node_c(t, "w", UIK_WINDOW);
+  lk_ix col = lk_tree_add_node_c(t, "col", UIK_COLUMN);
+  lk_ix b = lk_tree_add_node_c(t, "b", UIK_BUTTON);
+  int i;
+
+  lk_tree_set_root(t, win);
+  lk_tree_append_child(t, win, col);
+  lk_tree_append_child(t, col, b);
+  lk_tree_add_prop(t, b, UIP_TEXT, lk_v_cstr(t->intern, "go"));
+
+  if (with_hidden) {
+    lk_ix h = lk_tree_add_node_c(t, "hid", UIK_LABEL);
+    lk_tree_append_child(t, col, h);
+    lk_tree_add_prop(t, h, UIP_HIDDEN, lk_v_bool(1));
+  }
+
+  for (i = 0; i < extra; i++) {
+    lk_tree_append_child(t, col, lk_tree_add_node_c(t, "sp", UIK_SPACER));
+  }
+
+  lk_ui_end_frame(ui);
+}
+
+static int layout_into_ui_rects(lk_ui *ui) {
+  lk_layout_cfg cfg;
+  lk_rect *rects = lk_ui_rects(ui);
+
+  if (!rects) {
+    return 0;
+  }
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 300;
+  cfg.viewport_h = 200;
+  cfg.state = lk_ui_state(ui);
+  cfg.geom = lk_ui_geom(ui);
+
+  return lk_layout(lk_ui_tree(ui), &cfg, rects);
+}
+
+static void test_ui_rects_node_rect(void) {
+  /* lk_ui_rects is the ui-owned rects array (geom pattern); laying out
+   * into it is what makes lk_node_rect answer by stable node id. */
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_rect r;
+  lk_rect *rects;
+  lk_ix b;
+
+  BEGIN_TEST("ui: lk_ui_rects + lk_node_rect by stable id");
+
+  build_rects_frame(ui, 1, 0);
+
+  /* before any layout into the ui array: nothing to report */
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "b"), &r), 0);
+
+  CHECK(layout_into_ui_rects(ui));
+  rects = lk_ui_rects(ui);
+  b = lk_tree_find_by_id(lk_ui_tree(ui), lk_intern_cid(ui->intern, "b"));
+  CHECK(b != 0);
+
+  memset(&r, 0xAA, sizeof(r));
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "b"), &r), 1);
+  CHECK(r.w > 0 && r.h > 0);
+  CHECK_EQ(r.x, rects[b].x);
+  CHECK_EQ(r.y, rects[b].y);
+  CHECK_EQ(r.w, rects[b].w);
+  CHECK_EQ(r.h, rects[b].h);
+
+  /* root fills the viewport */
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "w"), &r), 1);
+  CHECK_EQ(r.w, 300);
+  CHECK_EQ(r.h, 200);
+
+  /* a hidden node is laid out to zero, still reported */
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "hid"), &r), 1);
+  CHECK_EQ(r.w, 0);
+  CHECK_EQ(r.h, 0);
+
+  /* unknown id / zero id / NULL args */
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "nope"), &r), 0);
+  CHECK_EQ(lk_node_rect(ui, 0, &r), 0);
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "b"), NULL), 0);
+  CHECK_EQ(lk_node_rect(NULL, lk_intern_cid(ui->intern, "b"), &r), 0);
+
+  /* the array grows with the tree; stale-frame ids past the old cap
+   * are covered after the next lk_ui_rects call */
+  build_rects_frame(ui, 0, 40);
+  CHECK(lk_ui_rects(ui) != NULL);
+  CHECK(ui->rects_cap >= lk_ui_tree(ui)->node_count);
+  CHECK(layout_into_ui_rects(ui));
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "b"), &r), 1);
+  CHECK(r.w > 0);
+  /* "hid" left the tree: unknown again */
+  CHECK_EQ(lk_node_rect(ui, lk_intern_cid(ui->intern, "hid"), &r), 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_geom_null_degrades_safely(void) {
+  /* NULL cfg->geom (and no ui geom wired): layout, render, and the
+   * geometry-dependent events must all be safe — cursor bar absent,
+   * click-to-position bubbles, wheel bubbles past the scroll. */
+  lk_ix ti;
+  lk_ui *ui = make_text_input_ui("ab", &ti);
+  lk_state *st = lk_ui_state(ui);
+  lk_rect *r;
+  lk_render_list rl;
+  lk_event ev;
+  lk_u32 i;
+  int cursor_found;
+
+  BEGIN_TEST("geom: NULL scratch degrades safely");
+
+  r = run_layout_with_state((lk_tree *)lk_ui_tree(ui), 800, 600, st);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* Render without geom: no 1px cursor bar even though focused */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(lk_ui_tree(ui), r, NULL, st, NULL, &rl);
+    cursor_found = 0;
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+        cursor_found = 1;
+      }
+    }
+
+    CHECK(!cursor_found);
+    lk_render_list_destroy(&rl);
+
+    /* Click-to-position bubbles despite an installed text backend */
+    lk_ui_set_text_backend(ui, lk_text_backend_stub());
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = ti;
+    ev.data.pointer.x = 5;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 0u);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+
+  /* Scroll: wheel without geom bubbles (no max to clamp against) */
+  {
+    lk_ix sc;
+    lk_ui *sui = make_scroll_ui(10, &sc);
+    lk_state *sst = lk_ui_state(sui);
+    lk_node_id sc_id = lk_ui_tree(sui)->nodes[sc].id;
+    lk_rect *sr =
+        run_layout_with_state((lk_tree *)lk_ui_tree(sui), 800, 600, sst);
+
+    CHECK(sr != NULL);
+
+    if (sr) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_WHEEL;
+      ev.target = sc;
+      ev.data.wheel.dy = -1;
+      lk_event_route(sui, &ev);
+      CHECK_EQ((unsigned)ev.handled, 0u);
+      CHECK_EQ((unsigned)(lk_i32)lk_state_get(sst, sc_id, LKS_SCROLL_Y).as.i,
+               0u);
+      free(sr);
+    }
+
+    lk_ui_destroy(sui);
+  }
+}
+
+/* make_dropdown_ui + a UIP_VALUE prop on the dropdown. */
+static lk_ui *make_dropdown_value_ui(const char *value, lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd, o1, o2, o3;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  lk_tree_add_prop(t, dd, UIP_VALUE, lk_v_cstr(t->intern, value));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  *out_dd = lk_tree_find_by_id(lk_ui_tree(ui),
+                               lk_intern_id(ui->intern, lk_str_c("dd")));
+  return ui;
+}
+
+/* str_id of the trigger's DRAW_TEXT in a fresh render of the tree. */
+static lk_u32 dropdown_rendered_text_id(lk_ui *ui, lk_ix dd) {
+  lk_rect *r = run_layout_ui(ui, 800, 600);
+  lk_render_list rl;
+  lk_u32 i;
+  lk_u32 found = 0;
+
+  if (!r) {
+    return 0;
+  }
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), r, NULL, lk_ui_state(ui), lk_ui_geom(ui),
+                  &rl);
+
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT && rl.cmds[i].rect.x >= r[dd].x &&
+        rl.cmds[i].rect.x < r[dd].x + r[dd].w &&
+        rl.cmds[i].rect.y >= r[dd].y &&
+        rl.cmds[i].rect.y < r[dd].y + r[dd].h) {
+      found = rl.cmds[i].str_id;
+    }
+  }
+
+  lk_render_list_destroy(&rl);
+  free(r);
+  return found;
+}
+
+static void test_dropdown_value_prop(void) {
+  /* UIP_VALUE selects the matching option initially; user interaction
+   * (state) overrides it afterwards; an unmatched value falls back to
+   * option 0. */
+  lk_ix dd;
+  lk_ui *ui = make_dropdown_value_ui("Banana", &dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_u32 banana_id = lk_intern_cid(ui->intern, "Banana");
+  lk_u32 apple_id = lk_intern_cid(ui->intern, "Apple");
+  lk_event ev;
+
+  BEGIN_TEST("dropdown: value prop = state > prop > 0 priority");
+
+  /* Initial render shows the prop-selected option */
+  CHECK_EQ(dropdown_rendered_text_id(ui, dd), banana_id);
+
+  /* Keyboard: open (hover starts at the effective selection, 1),
+   * move up, commit -> state now holds 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_DOWN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 1);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_UP;
+  lk_event_route(ui, &ev);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_RETURN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_SELECTED_INDEX).as.i, 0);
+
+  /* State overrides the (unchanged) prop */
+  CHECK_EQ(dropdown_rendered_text_id(ui, dd), apple_id);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+
+  /* Unmatched value: falls back to option 0 */
+  {
+    lk_ix dd2;
+    lk_ui *ui2 = make_dropdown_value_ui("Durian", &dd2);
+    lk_u32 apple2 = lk_intern_cid(ui2->intern, "Apple");
+
+    CHECK_EQ(dropdown_rendered_text_id(ui2, dd2), apple2);
+    lk_ui_destroy(ui2);
+  }
+}
+
+/* A dropdown with `count` options ("Item 0".."Item N-1"), enough to
+ * overflow DROPDOWN_POPUP_MAX_HEIGHT when count * 24 > 240. */
+static lk_ui *make_big_dropdown_ui(int count, lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd;
+  int i;
+  char idbuf[16];
+  char txtbuf[24];
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+
+  for (i = 0; i < count; i++) {
+    lk_ix o;
+
+    sprintf(idbuf, "o%d", i);
+    sprintf(txtbuf, "Item %d", i);
+    o = lk_tree_add_node_s(t, lk_str_c(idbuf), UIK_OPTION);
+    lk_tree_add_prop(t, o, UIP_TEXT, lk_v_cstr(t->intern, txtbuf));
+    lk_tree_append_child(t, dd, o);
+  }
+
+  lk_ui_end_frame(ui);
+
+  *out_dd = lk_tree_find_by_id(lk_ui_tree(ui),
+                               lk_intern_id(ui->intern, lk_str_c("dd")));
+  return ui;
+}
+
+static void test_dropdown_popup_scroll_wheel(void) {
+  /* 15 options * 24 px = 360 > 240 -> inner 240 (inset 0 without
+   * styles), max scroll 120.  Wheel over the open popup scrolls,
+   * clamped at both ends; the overlay render clips, offsets the
+   * visible options, and draws a track + thumb indicator. */
+  lk_ix dd;
+  lk_ui *ui = make_big_dropdown_ui(15, &dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("dropdown: wheel scrolls the open popup (clamped)");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    open_dropdown(ui, dd);
+    CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Wheel up at the top: clamped at 0 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = dd;
+    ev.data.wheel.dy = 1;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Wheel down: one row per step (24 px).  Targeted at an option
+     * node — the option ignores wheel, so it bubbles to the dropdown
+     * (the overlay hit-test path). */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = lk_ui_tree(ui)->nodes[dd].first_child;
+    ev.data.wheel.dy = -1;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 24);
+
+    /* Ten more: clamped at max = 360 - 240 = 120 */
+    {
+      int k;
+
+      for (k = 0; k < 10; k++) {
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LK_EVENT_WHEEL;
+        ev.target = dd;
+        ev.data.wheel.dy = -1;
+        lk_event_route(ui, &ev);
+      }
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 120);
+
+    /* Overlay render: clip + offset options + indicator */
+    {
+      lk_layout_cfg cfg;
+      lk_render_list rl;
+      lk_u32 i;
+      int clip_found = 0;
+      lk_u32 text_count = 0;
+      lk_u32 first_text = 0;
+      lk_u32 bar_fills = 0;
+      lk_u32 item5 = lk_intern_cid(ui->intern, "Item 5");
+
+      memset(&cfg, 0, sizeof(cfg));
+      cfg.text = lk_text_backend_stub();
+      cfg.viewport_w = 800;
+      cfg.viewport_h = 600;
+      cfg.state = st;
+      cfg.geom = lk_ui_geom(ui);
+
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build_overlays(ui, r, &cfg, &rl);
+
+      for (i = 0; i < rl.count; i++) {
+        if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) {
+          clip_found = 1;
+        }
+
+        if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+          if (text_count == 0) {
+            first_text = rl.cmds[i].str_id;
+          }
+
+          text_count++;
+        }
+
+        if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 6) {
+          bar_fills++;
+        }
+      }
+
+      CHECK(clip_found);
+      /* Scrolled by 120 px = 5 rows: rows 5..14 visible = 10 texts */
+      CHECK_EQ(text_count, 10u);
+      CHECK_EQ(first_text, item5);
+      /* Indicator = track + thumb */
+      CHECK_EQ(bar_fills, 2u);
+
+      lk_render_list_destroy(&rl);
+    }
+
+    /* Reopen resets the offset */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = dd;
+    ev.data.pointer.x = r[dd].x + 5;
+    ev.data.pointer.y = r[dd].y + 5;
+    lk_event_route(ui, &ev); /* closes (click on trigger) */
+    CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+    open_dropdown(ui, dd);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_popup_scroll_keyboard(void) {
+  /* Down/Up keep the hovered row inside the 240 px inner viewport;
+   * reopening scrolls the remembered selection back into view. */
+  lk_ix dd;
+  lk_ui *ui = make_big_dropdown_ui(15, &dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_rect *r;
+  lk_event ev;
+  int k;
+
+  BEGIN_TEST("dropdown: keyboard navigation scrolls hover into view");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* Open via Down: hover 0, scroll 0 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = dd;
+    ev.data.key.keycode = LKK_DOWN;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Walk down to row 10: bottom = 11*24 = 264 -> scroll 24 */
+    for (k = 0; k < 10; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_DOWN;
+      lk_event_route(ui, &ev);
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 10);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 24);
+
+    /* Walk to the last row: scroll clamps at max 120 */
+    for (k = 0; k < 10; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_DOWN;
+      lk_event_route(ui, &ev);
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 14);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 120);
+
+    /* Walk back up to row 0: scroll follows the hover back to 0 */
+    for (k = 0; k < 14; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_UP;
+      lk_event_route(ui, &ev);
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 0);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Select row 14, reopen: the remembered selection is scrolled
+     * into view on open */
+    for (k = 0; k < 14; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_DOWN;
+      lk_event_route(ui, &ev);
+    }
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = dd;
+    ev.data.key.keycode = LKK_RETURN;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_SELECTED_INDEX).as.i, 14);
+    CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = dd;
+    ev.data.key.keycode = LKK_DOWN;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 14);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 120);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_popup_short_unaffected(void) {
+  /* A popup that fits emits no clip and no indicator, and wheel keeps
+   * the offset at 0 (consumed so the page under the popup never
+   * scrolls). */
+  lk_ix dd;
+  lk_ui *ui = make_dropdown_ui(&dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("dropdown: short popup unaffected by scrolling");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    open_dropdown(ui, dd);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = dd;
+    ev.data.wheel.dy = -1;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    {
+      lk_layout_cfg cfg;
+      lk_render_list rl;
+      lk_u32 i;
+      int clip_found = 0;
+      lk_u32 bar_fills = 0;
+
+      memset(&cfg, 0, sizeof(cfg));
+      cfg.text = lk_text_backend_stub();
+      cfg.viewport_w = 800;
+      cfg.viewport_h = 600;
+      cfg.state = st;
+      cfg.geom = lk_ui_geom(ui);
+
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build_overlays(ui, r, &cfg, &rl);
+
+      for (i = 0; i < rl.count; i++) {
+        if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN ||
+            rl.cmds[i].op == LK_ROP_CLIP_END) {
+          clip_found = 1;
+        }
+
+        if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 6) {
+          bar_fills++;
+        }
+      }
+
+      CHECK(!clip_found);
+      CHECK_EQ(bar_fills, 0u);
+      lk_render_list_destroy(&rl);
+    }
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
+
+/* ---- text backend contract tests (stage A) ----
+ *
+ * Stub metrics: 8 px advance per codepoint, h=16, baseline=12,
+ * line_height=16, independent of font_id/font_size.
+ */
+
+static void test_text_stub_measure_x_agree(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  lk_text_metrics m;
+  lk_str run;
+
+  BEGIN_TEST("text stub: x_from_index(len) == measure().w");
+
+  /* ASCII run: 5 codepoints -> 40 px */
+  run = lk_str_c("hello");
+  tb->measure(tb->ud, run, 0, 0, &m);
+  CHECK_EQ((unsigned)m.w, 40u);
+  CHECK_EQ((unsigned)m.h, 16u);
+  CHECK_EQ((unsigned)m.baseline, 12u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, run.len),
+           (unsigned)m.w);
+
+  /* Empty run */
+  run = lk_str_c("");
+  tb->measure(tb->ud, run, 0, 0, &m);
+  CHECK_EQ((unsigned)m.w, 0u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 0), 0u);
+
+  /* Multibyte run: "a" + e-acute (2 bytes) + CJK (3 bytes) = 3 cp */
+  run = lk_str_c("a\xC3\xA9\xE6\x97\xA5");
+  tb->measure(tb->ud, run, 0, 0, &m);
+  CHECK_EQ((unsigned)m.w, 24u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, run.len),
+           (unsigned)m.w);
+
+  /* Metrics independent of font_id/font_size */
+  run = lk_str_c("hello");
+  tb->measure(tb->ud, run, 7, 99, &m);
+  CHECK_EQ((unsigned)m.w, 40u);
+  CHECK_EQ((unsigned)m.h, 16u);
+  CHECK_EQ((unsigned)tb->line_height(tb->ud, 0, 0), 16u);
+  CHECK_EQ((unsigned)tb->line_height(tb->ud, 7, 99), 16u);
+
+  END_TEST();
+}
+
+static void test_text_stub_x_from_index_multibyte(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  /* bytes: 'a' [0], e-acute [1..2], CJK [3..5]; len 6, 3 codepoints */
+  lk_str run = lk_str_c("a\xC3\xA9\xE6\x97\xA5");
+
+  BEGIN_TEST("text stub: x_from_index counts codepoints");
+
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 0), 0u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 1), 8u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 3), 16u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 6), 24u);
+
+  /* Mid-codepoint indices snap DOWN to the previous boundary */
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 2), 8u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 4), 16u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 5), 16u);
+
+  /* Out-of-range clamps to len */
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 99), 24u);
+
+  END_TEST();
+}
+
+static void test_text_stub_index_from_x_rounding(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  lk_str run;
+
+  BEGIN_TEST("text stub: index_from_x nearest boundary");
+
+  /* ASCII "ab": boundaries at byte 0 (x=0), 1 (x=8), 2 (x=16) */
+  run = lk_str_c("ab");
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, -5), 0u); /* clamp low */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 0), 0u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 3), 0u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 4), 1u); /* tie rounds up */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 11), 1u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 12), 2u); /* tie rounds up */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 100), 2u); /* clamp high */
+
+  /* Multibyte: e-acute [0..1], CJK [2..4]; boundaries at bytes 0, 2, 5 */
+  run = lk_str_c("\xC3\xA9\xE6\x97\xA5");
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 4), 2u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 7), 2u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 11), 2u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 12), 5u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 100), 5u); /* clamp to len */
+
+  END_TEST();
+}
+
+static void test_text_stub_register_font_ids(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  lk_u16 a;
+  lk_u16 b;
+
+  BEGIN_TEST("text stub: register_font increasing ids");
+
+  a = tb->register_font(tb->ud, "fake-a.ttf");
+  b = tb->register_font(tb->ud, "fake-b.ttf");
+  CHECK(a >= 1);
+  CHECK_EQ((unsigned)b, (unsigned)(a + 1));
+
+  END_TEST();
+}
+
+static void test_render_text_carries_font(void) {
+  lk_ui *ui;
+  lk_tree *tree;
+  lk_theme *th;
+  lk_style s;
+  lk_ix w, lbl;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  const lk_style *styles;
+  lk_u32 i;
+  int found;
+
+  BEGIN_TEST("render: DRAW_TEXT carries style font_id/size");
+
+  ui = lk_ui_create(NULL);
+
+  /* Theme rule: labels use font_id 3 at size 24 */
+  th = lk_ui_theme(ui);
+  memset(&s, 0, sizeof(s));
+  s.font_id = 3;
+  s.font_size = 24;
+  lk_theme_add_rule(th, UIK_LABEL, 0, 0, &s,
+                    LK_SF_FONT_ID | LK_SF_FONT_SIZE);
+
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  lbl = lk_tree_add_node_s(tree, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(tree, lbl, UIP_TEXT, lk_v_cstr(tree->intern, "Hi"));
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, lbl);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles != NULL);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.styles = styles;
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, styles, NULL, NULL, &rl);
+
+  found = 0;
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+      found = 1;
+      CHECK_EQ((unsigned)rl.cmds[i].font_id, 3u);
+      CHECK_EQ((unsigned)rl.cmds[i].font_size, 24u);
+    }
+  }
+  CHECK(found);
+
+  /* Without styles (fallback path): default theme sets no fonts,
+   * so DRAW_TEXT carries 0/0 */
+  lk_render_build(lk_ui_tree(ui), rects, NULL, NULL, NULL, &rl);
+  found = 0;
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+      found = 1;
+      CHECK_EQ((unsigned)rl.cmds[i].font_id, 0u);
+      CHECK_EQ((unsigned)rl.cmds[i].font_size, 0u);
+    }
+  }
+  CHECK(found);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ---- text input correctness tests (stage C) ----
+ *
+ * Multibyte fixture used throughout: "a\xC3\xA9\xE6\x97\xA5"
+ * ("a" + e-acute + CJK) — bytes: 'a' [0], e-acute [1..2], CJK [3..5];
+ * len 6, 3 codepoints.  Stub advance: 8 px per codepoint.
+ */
+
+static void test_text_input_multibyte_arrows(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  static const unsigned expected_left[3] = {3u, 1u, 0u};
+  static const unsigned expected_right[3] = {1u, 3u, 6u};
+  int i;
+
+  BEGIN_TEST("text_input: LEFT/RIGHT move whole codepoints");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
+
+  /* LEFT walks boundaries 6 -> 3 -> 1 -> 0, then stays at 0 */
+  for (i = 0; i < 3; i++) {
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = ti;
+    ev.data.key.keycode = LKK_LEFT;
+    lk_event_route(ui, &ev);
+    v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+    CHECK_EQ((unsigned)v.as.i, expected_left[i]);
+  }
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_LEFT;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* RIGHT walks 0 -> 1 -> 3 -> 6, then stays at 6 */
+  for (i = 0; i < 3; i++) {
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = ti;
+    ev.data.key.keycode = LKK_RIGHT;
+    lk_event_route(ui, &ev);
+    v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+    CHECK_EQ((unsigned)v.as.i, expected_right[i]);
+  }
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_RIGHT;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 6u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_multibyte_backspace_delete(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: BACKSPACE/DELETE remove whole codepoints");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Cursor after e-acute (byte 3); BACKSPACE removes both its bytes */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_BACKSPACE;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "a\xE6\x97\xA5", 4) == 0);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  /* DELETE removes all three bytes of the CJK codepoint */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_DELETE;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1u);
+  CHECK(text.ptr[0] == 'a');
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_insert_cap_boundary(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+  char big[LK_TEXT_INPUT_MAX];
+
+  BEGIN_TEST("text_input: cap truncation lands on codepoint boundary");
+
+  ui = make_text_input_ui("", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Fill the buffer to 2 bytes below the max payload (1023) */
+  memset(big, 'a', 1021);
+  text.ptr = big;
+  text.len = 1021;
+  v.tag = UIV_STR;
+  v.as.str_id = lk_intern_id(ui->intern, text);
+  lk_state_set(st, ti_id, LKS_TEXT_BUF, v);
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1021));
+
+  /* Insert "a" + e-acute (3 bytes): only 2 fit, and byte 2 is
+   * mid-sequence, so exactly "a" (1 byte) must be inserted */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'a';
+  ev.data.text.buf[1] = (char)0xC3;
+  ev.data.text.buf[2] = (char)0xA9;
+  ev.data.text.len = 3;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1022u);
+  CHECK(text.ptr[1021] == 'a');
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1022u);
+
+  /* Insert CJK (3 bytes): 1 byte of room, boundary snap drops the
+   * whole codepoint — consumed, buffer unchanged */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = (char)0xE6;
+  ev.data.text.buf[1] = (char)0x97;
+  ev.data.text.buf[2] = (char)0xA5;
+  ev.data.text.len = 3;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1022u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_paste_cap_boundary(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+  char big[LK_TEXT_INPUT_MAX];
+
+  BEGIN_TEST("text_input: paste at cap truncates on codepoint boundary");
+
+  ui = make_text_input_ui("", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+
+  /* Buffer at 1021 bytes; clipboard "a" + e-acute + CJK (6 bytes).
+   * 2 bytes of room: "a" fits, e-acute would be split — so exactly
+   * 1 byte is pasted. */
+  memset(big, 'a', 1021);
+  text.ptr = big;
+  text.len = 1021;
+  v.tag = UIV_STR;
+  v.as.str_id = lk_intern_id(ui->intern, text);
+  lk_state_set(st, ti_id, LKS_TEXT_BUF, v);
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1021));
+
+  strcpy(g_mock_clipboard, "a\xC3\xA9\xE6\x97\xA5");
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_V;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1022u);
+  CHECK(text.ptr[1021] == 'a');
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_cursor_x_from_index(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+
+  BEGIN_TEST("text_input: cursor x via x_from_index (multibyte exact)");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
+  (void)v;
+
+  /* Cursor after e-acute (byte 3, 2 codepoints in) -> 16 px, written
+   * to the per-frame geom scratch by measure */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+  CHECK_EQ((unsigned)cfg.geom[ti].text.cursor_x, 16u);
+
+  /* Cursor at end (byte 6, 3 codepoints) -> 24 px == measure().w */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+  CHECK_EQ((unsigned)cfg.geom[ti].text.cursor_x, 24u);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_selection_rect_exact(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_render_list rl;
+  lk_u32 i;
+  int found;
+
+  BEGIN_TEST("text_input: selection rect exact px (multibyte)");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Select e-acute + CJK: bytes 1..6 = codepoints 1..3, so the
+   * highlight must span exactly 8..24 px from the text origin */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(6));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+
+  /* Endpoint x-offsets stashed by measure in the geom scratch are
+   * exact: 1 cp -> 8 px, 3 cp -> 24 px */
+  CHECK_EQ((unsigned)cfg.geom[ti].text.sel_x0, 8u);
+  CHECK_EQ((unsigned)cfg.geom[ti].text.sel_x1, 24u);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, NULL, st, cfg.geom, &rl);
+
+  /* Selection fill is the only command with alpha 128.  Anchor the
+   * x assertion to the DRAW_TEXT origin so the render-side inset
+   * (fallback theme padding/border) cancels out. */
+  {
+    lk_i32 text_x = 0;
+    int text_found = 0;
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+        text_x = rl.cmds[i].rect.x;
+        text_found = 1;
+      }
+    }
+    CHECK(text_found);
+
+    found = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.a == 128) {
+        found = 1;
+        CHECK_EQ((unsigned)rl.cmds[i].rect.x, (unsigned)(text_x + 8));
+        CHECK_EQ((unsigned)rl.cmds[i].rect.w, 16u);
+      }
+    }
+    CHECK(found);
+  }
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_click_to_position(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_event ev;
+  lk_value v;
+  lk_i32 origin;
+
+  BEGIN_TEST("text_input: click-to-position via index_from_x");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects)); /* stashes origin */
+
+  CHECK_EQ((unsigned)cfg.geom[ti].text.placed, 1u);
+  origin = cfg.geom[ti].text.origin_x;
+  CHECK_EQ((unsigned)origin, (unsigned)rects[ti].x);
+
+  /* No backend installed on the UI: event bubbles (handled == 0) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 5;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 0u);
+
+  lk_ui_set_text_backend(ui, lk_text_backend_stub());
+
+  /* Left half of first glyph -> boundary before it (byte 0) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 3;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* Right half of first glyph -> boundary after it (byte 1) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 5;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  /* Right half of e-acute -> boundary after it (byte 3) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 13;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  /* Click past the end -> clamp to len (byte 6) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 500;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 6u);
+
+  /* Click before the origin -> 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin - 50;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* Click clears any selection and keeps focus on the input */
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(6));
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 5;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_START);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_END);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+  CHECK_EQ(ui->focused_id, ti_id);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Tests: split panes (UIK_SPLIT_H / UIK_SPLIT_V) + pointer capture
+ * ================================================================ */
+
+/* Build a plain tree: window "w" > split "sp" > column "c1", column
+ * "c2".  Caller owns the tree. */
+static lk_tree *make_split_tree(lk_kind kind, lk_ix *out_sp, lk_ix *out_c1,
+                                lk_ix *out_c2) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sp = lk_tree_add_node_s(t, lk_str_c("sp"), kind);
+  lk_ix c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
+  lk_ix c2 = lk_tree_add_node_s(t, lk_str_c("c2"), UIK_COLUMN);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+  lk_tree_append_child(t, sp, c1);
+  lk_tree_append_child(t, sp, c2);
+
+  *out_sp = sp;
+  *out_c1 = c1;
+  *out_c2 = c2;
+  return t;
+}
+
+/* Same shape via lk_ui (retained state + stashed geometry).
+ * controlled != 0 adds UIP_SPLIT_CONTROLLED=1; with_pres != 0 attaches
+ * a "pane" presentation to the split so a value_changed translator
+ * can match the drag notification. */
+static lk_ui *make_split_ui_ex(lk_kind kind, lk_i32 ratio_prop, int controlled,
+                               int with_pres, lk_ix *out_sp, lk_ix *out_c1,
+                               lk_ix *out_c2) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, sp, c1, c2;
+  const lk_tree *cur;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), kind);
+
+  if (ratio_prop >= 0) {
+    lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(ratio_prop));
+  }
+
+  if (controlled) {
+    lk_tree_add_prop(t, sp, UIP_SPLIT_CONTROLLED, lk_v_i32(1));
+  }
+
+  if (with_pres) {
+    lk_tree_add_presentation_s(t, sp, "pane", lk_v_i32(0));
+  }
+
+  c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
+  c2 = lk_tree_add_node_s(t, lk_str_c("c2"), UIK_COLUMN);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+  lk_tree_append_child(t, sp, c1);
+  lk_tree_append_child(t, sp, c2);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  *out_sp = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("sp")));
+  *out_c1 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("c1")));
+  *out_c2 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("c2")));
+  return ui;
+}
+
+static lk_ui *make_split_ui(lk_kind kind, lk_i32 ratio_prop, lk_ix *out_sp,
+                            lk_ix *out_c1, lk_ix *out_c2) {
+  return make_split_ui_ex(kind, ratio_prop, 0, 0, out_sp, out_c1, out_c2);
+}
+
+static void test_split_h_layout_default_ratio(void) {
+  /* Viewport 400x300, padding 0.  avail = 400 - 5 = 395.
+   * first = 395*500/1000 = 197; divider at x=197..202; second = 198. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split_h: default ratio halves minus divider");
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 197, 300);
+    CHECK_RECT(r[c2], 202, 0, 198, 300);
+
+    /* Divider band renders in the gap (from the split's own rect) */
+    {
+      lk_render_list rl;
+      int found_band = 0;
+      lk_u32 i;
+
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build(t, r, NULL, NULL, NULL, &rl);
+
+      for (i = 0; i < rl.count; i++) {
+        if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.x == 197 &&
+            rl.cmds[i].rect.y == 0 && rl.cmds[i].rect.w == 5 &&
+            rl.cmds[i].rect.h == 300) {
+          found_band = 1;
+        }
+      }
+
+      CHECK(found_band);
+      lk_render_list_destroy(&rl);
+    }
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_v_layout_default_ratio(void) {
+  /* avail = 300 - 5 = 295; first = 147; second = 148. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_V, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split_v: default ratio stacks minus divider");
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 400, 147);
+    CHECK_RECT(r[c2], 0, 152, 400, 148);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_ratio_prop_initial(void) {
+  /* UIP_SPLIT_RATIO=250: first = 395*250/1000 = 98. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: UIP_SPLIT_RATIO sets initial position");
+
+  lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(250));
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 98, 300);
+    CHECK_RECT(r[c2], 103, 0, 297, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_state_overrides_prop(void) {
+  /* Prop says 250 but LKS_SPLIT_RATIO=750 (a drag happened):
+   * first = 395*750/1000 = 296. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui(UIK_SPLIT_H, 250, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_rect *r;
+
+  BEGIN_TEST("split: state ratio overrides prop");
+
+  lk_state_set(st, cur->nodes[sp].id, LKS_SPLIT_RATIO, lk_v_i32(750));
+
+  r = run_layout_with_state((lk_tree *)cur, 400, 300, st);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 296, 300);
+    CHECK_RECT(r[c2], 301, 0, 99, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_split_ratio_clamped_min_pane(void) {
+  /* Extreme ratios clamp so each pane keeps >= 40 px:
+   * ratio 10 -> first 40; ratio 990 -> first 355 (= 395 - 40). */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: ratio clamped to MIN_PANE");
+
+  lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(10));
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 40, 300);
+    CHECK_RECT(r[c2], 45, 0, 355, 300);
+    free(r);
+  }
+
+  lk_tree_destroy(t);
+
+  t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(990));
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 355, 300);
+    CHECK_RECT(r[c2], 360, 0, 40, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_single_child_fills(void) {
+  /* One child: plain container, child fills content rect. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPLIT_H);
+  lk_ix c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
+  lk_rect *r;
+
+  BEGIN_TEST("split: single child fills whole rect");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+  lk_tree_append_child(t, sp, c1);
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 400, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_zero_children_bg_only(void) {
+  /* Zero children: background fill only, no divider. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPLIT_V);
+  lk_rect *r;
+
+  BEGIN_TEST("split: zero children renders bg only");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    lk_render_list rl;
+    lk_u32 i;
+    lk_u32 fills = 0;
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
+
+    /* window bg + split bg, nothing else */
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT) {
+        fills++;
+      }
+    }
+
+    CHECK_EQ(fills, 2u);
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_hidden_child_full_fill(void) {
+  /* One of two children hidden: the visible one fills everything. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: hidden child leaves full fill");
+
+  lk_tree_add_prop(t, c1, UIP_HIDDEN, lk_v_bool(1));
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c2], 0, 0, 400, 300);
+    /* Hidden child never laid out */
+    CHECK_RECT(r[c1], 0, 0, 0, 0);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_nested_exact_rects(void) {
+  /* split_h "outer" > column "left", split_v "inner" > "top","bottom".
+   * Outer: left (0,0,197,300), inner (202,0,198,300).
+   * Inner: avail = 300-5 = 295; top h=147, bottom y=152 h=148.
+   * Divider geometry must come from the inner split's own rect. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix outer = lk_tree_add_node_s(t, lk_str_c("outer"), UIK_SPLIT_H);
+  lk_ix left = lk_tree_add_node_s(t, lk_str_c("left"), UIK_COLUMN);
+  lk_ix inner = lk_tree_add_node_s(t, lk_str_c("inner"), UIK_SPLIT_V);
+  lk_ix top = lk_tree_add_node_s(t, lk_str_c("top"), UIK_COLUMN);
+  lk_ix bottom = lk_tree_add_node_s(t, lk_str_c("bottom"), UIK_COLUMN);
+  lk_rect *r;
+
+  BEGIN_TEST("split: nested split_v in split_h exact rects");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, outer);
+  lk_tree_append_child(t, outer, left);
+  lk_tree_append_child(t, outer, inner);
+  lk_tree_append_child(t, inner, top);
+  lk_tree_append_child(t, inner, bottom);
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[left], 0, 0, 197, 300);
+    CHECK_RECT(r[inner], 202, 0, 198, 300);
+    CHECK_RECT(r[top], 202, 0, 198, 147);
+    CHECK_RECT(r[bottom], 202, 152, 198, 148);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_hit_test_divider_band(void) {
+  /* A point in the divider band (197..202) hits the split node itself
+   * — the band is owned by the split, not a child. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: hit-test in divider band returns split");
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_EQ(lk_hit_test(t, r, 199, 150), sp);
+    CHECK_EQ(lk_hit_test(t, r, 100, 150), c1);
+    CHECK_EQ(lk_hit_test(t, r, 300, 150), c2);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_drag_sequence(void) {
+  /* Full drag through routed events.  Content rect (0,0,400,300)
+   * stashed by layout; avail = 395; MOVE maps pointer x to per-mille
+   * via rel = (x - 2), ratio = rel*1000/395 (divider centered under
+   * the cursor), clamped to [ceil(40000/395), 355000/395] = [102,898]. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui(UIK_SPLIT_H, -1, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sp_id = cur->nodes[sp].id;
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("split: drag sequence updates ratio via capture");
+
+  r = run_layout_ui(ui, 400, 300);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* Pane click bubbling through the split is NOT consumed */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 50, 150);
+    ev.data.pointer.x = 50;
+    ev.data.pointer.y = 150;
+    CHECK_EQ(ev.target, c1);
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 0u);
+    CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+
+    /* DOWN in the band starts the drag and takes the capture */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 199, 150);
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    CHECK_EQ(ev.target, sp);
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 1u);
+    CHECK_EQ(lk_capture_current(ui), sp_id);
+
+    /* MOVE to x=100: ratio = (100-2)*1000/395 = 248 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp; /* capture targets the split (see lk-sdl.c) */
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 248);
+
+    /* MOVE far outside the band (and the content rect) still updates
+     * — that is what the capture is for: (350-2)*1000/395 = 881 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 350;
+    ev.data.pointer.y = 400;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 881);
+
+    /* MOVE to the far left clamps at MIN_PANE: ratio 102 -> 40 px */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 5;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 102);
+
+    free(r);
+    r = run_layout_ui(ui, 400, 300);
+    CHECK(r != NULL);
+    if (r) {
+      CHECK_EQ((unsigned)r[c1].w, 40u);
+      free(r);
+    }
+
+    /* UP ends the drag and releases the capture */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_UP;
+    ev.target = sp;
+    ev.data.pointer.x = 5;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 0u);
+    CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_split_controlled_drag(void) {
+  /* UIP_SPLIT_CONTROLLED=1: a drag MOVE writes NO LKS_SPLIT_RATIO
+   * state, but still emits the synthetic VALUE_CHANGED whose payload
+   * is the clamped per-mille ratio as a decimal string — delivered as
+   * a command through a presentation + value_changed translator.
+   * Same geometry as test_split_drag_sequence: MOVE to x=100 maps to
+   * ratio (100-2)*1000/395 = 248. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui_ex(UIK_SPLIT_H, -1, 1, 1, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sp_id = cur->nodes[sp].id;
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("split: controlled drag emits, writes no state");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "pane", 0, 0, 0, 0,
+                         "SplitRatio");
+
+  r = run_layout_ui(ui, 400, 300);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* DOWN in the band still starts the drag in controlled mode */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 199, 150);
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    CHECK_EQ(ev.target, sp);
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 1u);
+    CHECK_EQ(lk_capture_current(ui), sp_id);
+
+    /* MOVE: no ratio state appears... */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).tag,
+             (unsigned)UIV_NONE);
+
+    /* ...but the translated command reaches the queue with the
+     * per-mille ratio string as source_value. */
+    {
+      const lk_command_queue *q = lk_ui_commands(ui);
+
+      CHECK_EQ(q->count, 1);
+
+      if (q->count >= 1) {
+        const lk_command *cmd = &q->cmds[0];
+
+        CHECK_EQ(cmd->name, lk_intern_id(ui->intern, lk_str_c("SplitRatio")));
+        CHECK_EQ(cmd->source_node, sp);
+        CHECK_EQ((unsigned)cmd->source_value.tag, (unsigned)UIV_STR);
+
+        {
+          lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+
+          CHECK(sv.len == 3 && memcmp(sv.ptr, "248", 3) == 0);
+        }
+      }
+    }
+
+    /* Layout still uses the prop/default ratio (no state override) */
+    free(r);
+    r = run_layout_ui(ui, 400, 300);
+    CHECK(r != NULL);
+
+    if (r) {
+      CHECK_EQ((unsigned)r[c1].w, 197u);
+      free(r);
+    }
+
+    /* UP still ends the drag and releases the capture */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_UP;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 0u);
+    CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_split_uncontrolled_drag_emits(void) {
+  /* Default (uncontrolled) splits keep the state write AND emit the
+   * same VALUE_CHANGED notification. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui_ex(UIK_SPLIT_H, -1, 0, 1, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sp_id = cur->nodes[sp].id;
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("split: uncontrolled drag writes state + emits");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "pane", 0, 0, 0, 0,
+                         "SplitRatio");
+
+  r = run_layout_ui(ui, 400, 300);
+  CHECK(r != NULL);
+
+  if (r) {
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 199, 150);
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 248);
+
+    {
+      const lk_command_queue *q = lk_ui_commands(ui);
+
+      CHECK_EQ(q->count, 1);
+
+      if (q->count >= 1) {
+        const lk_command *cmd = &q->cmds[0];
+        lk_str sv;
+
+        CHECK_EQ(cmd->name, lk_intern_id(ui->intern, lk_str_c("SplitRatio")));
+        CHECK_EQ((unsigned)cmd->source_value.tag, (unsigned)UIV_STR);
+        sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+        CHECK(sv.len == 3 && memcmp(sv.ptr, "248", 3) == 0);
+      }
+    }
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_ui_time_ms(void) {
+  /* Backend-stamped monotonic frame time: default 0, set/get
+   * round-trip, NULL-safe.  Core never reads clocks itself. */
+  lk_ui *ui = lk_ui_create(NULL);
+
+  BEGIN_TEST("ui: time_ms default 0, set/get, NULL-safe");
+
+  CHECK_EQ(lk_ui_time_ms(ui), 0u);
+  lk_ui_set_time_ms(ui, 1234u);
+  CHECK_EQ(lk_ui_time_ms(ui), 1234u);
+
+  /* wrap-friendly: the value is stored verbatim */
+  lk_ui_set_time_ms(ui, 0xFFFFFFFFu);
+  CHECK_EQ(lk_ui_time_ms(ui), 0xFFFFFFFFu);
+
+  lk_ui_set_time_ms(NULL, 1u);
+  CHECK_EQ(lk_ui_time_ms(NULL), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_capture_api(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_node_id id;
+
+  BEGIN_TEST("capture: set/current/clear");
+
+  prime_base(ui);
+  id = lk_intern_id(ui->intern, lk_str_c("inc"));
+
+  CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+  lk_capture_set(ui, id);
+  CHECK_EQ(lk_capture_current(ui), id);
+  lk_capture_clear(ui);
+  CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+
+  /* NULL-safe */
+  lk_capture_set(NULL, id);
+  lk_capture_clear(NULL);
+  CHECK_EQ((unsigned)lk_capture_current(NULL), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_capture_end_frame_gc(void) {
+  /* end_frame clears the capture when the node is removed, but a
+   * REMOVED+ADDED move keeps it (same filter as focus). */
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_node_id id;
+  lk_tree *t;
+  lk_ix w, col, btn;
+
+  BEGIN_TEST("capture: cleared on removal, survives move");
+
+  prime_base(ui);
+  id = lk_intern_id(ui->intern, lk_str_c("inc"));
+  lk_capture_set(ui, id);
+
+  /* Move "inc" from column "root" to window "main" — capture stays */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("main"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("root"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("inc"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, w, btn);
+  lk_ui_end_frame(ui);
+  CHECK_EQ(lk_capture_current(ui), id);
+
+  /* Drop "inc" entirely — capture cleared */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("main"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("root"), UIK_COLUMN);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_ui_end_frame(ui);
+  CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dump_kind_names(void) {
+  /* lk_tree_dump prints real names for all registered kinds. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sh = lk_tree_add_node_s(t, lk_str_c("sh"), UIK_SPLIT_H);
+  lk_ix sv = lk_tree_add_node_s(t, lk_str_c("sv"), UIK_SPLIT_V);
+  lk_ix ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_ix sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  lk_ix dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_ix op = lk_tree_add_node_s(t, lk_str_c("op"), UIK_OPTION);
+  lk_ix ed = lk_tree_add_node_s(t, lk_str_c("ed"), UIK_EDITOR);
+  test_buf buf;
+
+  BEGIN_TEST("dump: names for all widget kinds");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sh);
+  lk_tree_append_child(t, sh, sv);
+  lk_tree_append_child(t, sv, ti);
+  lk_tree_append_child(t, sv, sc);
+  lk_tree_append_child(t, sh, dd);
+  lk_tree_append_child(t, dd, op);
+  lk_tree_append_child(t, sv, ed);
+
+  memset(&buf, 0, sizeof(buf));
+  lk_tree_dump(t, test_buf_write, &buf);
+
+  CHECK(strstr(buf.buf, "split_h") != NULL);
+  CHECK(strstr(buf.buf, "split_v") != NULL);
+  CHECK(strstr(buf.buf, "text_input") != NULL);
+  CHECK(strstr(buf.buf, "scroll") != NULL);
+  CHECK(strstr(buf.buf, "dropdown") != NULL);
+  CHECK(strstr(buf.buf, "option") != NULL);
+  CHECK(strstr(buf.buf, "(editor") != NULL);
+  CHECK(strstr(buf.buf, "unknown") == NULL);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+/* ---- Synthetic event queue + FOCUS_CHANGED (polish F2) ---- */
+
+/* Shared recorder: user handlers log events at TARGET phase into
+ * these arrays; each test resets synq_reset() first. */
+#define SYNQ_LOG_MAX 80
+static lk_u8 g_synq_type[SYNQ_LOG_MAX];
+static lk_ix g_synq_target[SYNQ_LOG_MAX];
+static lk_u32 g_synq_str[SYNQ_LOG_MAX];
+static lk_node_id g_synq_prev[SYNQ_LOG_MAX];
+static lk_node_id g_synq_next[SYNQ_LOG_MAX];
+static lk_u32 g_synq_count;
+
+static void synq_reset(void) {
+  g_synq_count = 0;
+}
+
+static void synq_log(const lk_event *event) {
+  if (g_synq_count >= SYNQ_LOG_MAX) {
+    return;
+  }
+
+  g_synq_type[g_synq_count] = event->type;
+  g_synq_target[g_synq_count] = event->target;
+  g_synq_str[g_synq_count] = 0;
+  g_synq_prev[g_synq_count] = 0;
+  g_synq_next[g_synq_count] = 0;
+
+  if (event->type == LK_EVENT_VALUE_CHANGED) {
+    g_synq_str[g_synq_count] = event->data.value_changed.str_id;
+  }
+
+  if (event->type == LK_EVENT_FOCUS_CHANGED) {
+    g_synq_prev[g_synq_count] = event->data.focus.prev_id;
+    g_synq_next[g_synq_count] = event->data.focus.next_id;
+  }
+
+  g_synq_count++;
+}
+
+/* Plain recording handler (never consumes). */
+static int synq_record_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  (void)node_ix;
+  (void)ud;
+
+  if (event->phase == LK_PHASE_TARGET) {
+    synq_log(event);
+  }
+
+  return 0;
+}
+
+/* Text-input widget wrapper for the ordering test: stamps a shared
+ * sequence counter when the TEXT dispatch enters and exits. */
+static lk_widget_def g_synq_ti_orig;
+static int g_synq_seq;
+static int g_synq_text_enter;
+static int g_synq_text_exit;
+static int g_synq_vc_seq;
+
+static int synq_wrap_ti_event(lk_ui *ui, const lk_tree *t, lk_ix n,
+                              lk_event *ev) {
+  int r;
+
+  if (ev->type == LK_EVENT_TEXT) {
+    g_synq_text_enter = g_synq_seq++;
+  }
+
+  r = g_synq_ti_orig.event(ui, t, n, ev);
+
+  if (ev->type == LK_EVENT_TEXT) {
+    g_synq_text_exit = g_synq_seq++;
+  }
+
+  return r;
+}
+
+static int synq_vc_seq_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  (void)node_ix;
+  (void)ud;
+
+  if (event->phase == LK_PHASE_TARGET &&
+      event->type == LK_EVENT_VALUE_CHANGED && g_synq_vc_seq < 0) {
+    g_synq_vc_seq = g_synq_seq++;
+  }
+
+  return 0;
+}
+
+static void test_queue_value_changed_after_route(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_widget_def wrapped;
+
+  BEGIN_TEST("queue: VALUE_CHANGED after originating event");
+
+  ui = make_text_input_ui("ab", &ti);
+  lk_state_set(lk_ui_state(ui), lk_intern_id(ui->intern, lk_str_c("ti")),
+               LKS_CURSOR_POS, lk_v_i32(1));
+  lk_ui_flush_events(ui, NULL); /* drop the focus event from setup */
+
+  g_synq_ti_orig = *lk_widget_get(UIK_TEXT_INPUT);
+  wrapped = g_synq_ti_orig;
+  wrapped.event = synq_wrap_ti_event;
+  lk_widget_register(UIK_TEXT_INPUT, &wrapped);
+
+  g_synq_seq = 0;
+  g_synq_text_enter = -1;
+  g_synq_text_exit = -1;
+  g_synq_vc_seq = -1;
+  lk_ui_set_event_handler(ui, synq_vc_seq_handler, NULL);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  /* The synthetic VALUE_CHANGED must run AFTER the originating TEXT
+   * dispatch completed — queued, not interleaved. */
+  CHECK(g_synq_text_enter == 0);
+  CHECK(g_synq_text_exit == 1);
+  CHECK(g_synq_vc_seq == 2);
+
+  lk_widget_register(UIK_TEXT_INPUT, &g_synq_ti_orig);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* FIFO test handler: receiving "a" enqueues "b" then "c". */
+static int synq_fifo_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  lk_ui *ui = (lk_ui *)ud;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET) {
+    return 0;
+  }
+
+  synq_log(event);
+
+  if (event->type == LK_EVENT_VALUE_CHANGED &&
+      event->data.value_changed.str_id ==
+          lk_intern_id(ui->intern, lk_str_c("a"))) {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_VALUE_CHANGED;
+    ev.target = event->target;
+    ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("b"));
+    lk_event_enqueue(ui, &ev);
+    ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("c"));
+    lk_event_enqueue(ui, &ev);
+  }
+
+  return 0;
+}
+
+static void test_queue_nested_fifo(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: nested emissions drain FIFO");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_fifo_handler, ui);
+
+  /* Enqueue "a" and route an unrelated event: the drain at its end
+   * processes "a"; the handler's nested enqueues of "b" and "c"
+   * append and drain in the same loop. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("a"));
+  lk_event_enqueue(ui, &ev);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ(g_synq_count, 4u); /* pointer_down + a + b + c */
+  if (g_synq_count == 4) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_POINTER_DOWN);
+    CHECK_EQ(g_synq_str[1], lk_intern_id(ui->intern, lk_str_c("a")));
+    CHECK_EQ(g_synq_str[2], lk_intern_id(ui->intern, lk_str_c("b")));
+    CHECK_EQ(g_synq_str[3], lk_intern_id(ui->intern, lk_str_c("c")));
+  }
+
+  CHECK_EQ(ui->pending_count, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Re-entrancy handler: on KEY_DOWN enqueue a synthetic, then call
+ * lk_event_route re-entrantly with KEY_UP.  The nested route must NOT
+ * drain — the synthetic arrives after the whole outer dispatch. */
+static int synq_reentrant_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  lk_ui *ui = (lk_ui *)ud;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET) {
+    return 0;
+  }
+
+  synq_log(event);
+
+  if (event->type == LK_EVENT_KEY_DOWN) {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_VALUE_CHANGED;
+    ev.target = event->target;
+    ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("q"));
+    lk_event_enqueue(ui, &ev);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_UP;
+    ev.target = event->target;
+    lk_event_route(ui, &ev); /* nested */
+  }
+
+  return 0;
+}
+
+static void test_queue_reentrant_no_double_drain(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: re-entrant route drains once");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_reentrant_handler, ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.key.keycode = LKK_SPACE;
+  lk_event_route(ui, &ev);
+
+  /* Order: KEY_DOWN, nested KEY_UP, THEN the queued synthetic —
+   * exactly once (a double drain would dispatch it inside the nested
+   * route as well). */
+  CHECK_EQ(g_synq_count, 3u);
+  if (g_synq_count == 3) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_KEY_DOWN);
+    CHECK_EQ((unsigned)g_synq_type[1], (unsigned)LK_EVENT_KEY_UP);
+    CHECK_EQ((unsigned)g_synq_type[2], (unsigned)LK_EVENT_VALUE_CHANGED);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_queue_flush_outside_routing(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: flush_events drains outside routing");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("v"));
+  CHECK(lk_event_enqueue(ui, &ev) == 1);
+
+  /* Nothing dispatched until the flush */
+  CHECK_EQ(g_synq_count, 0u);
+  CHECK_EQ(ui->pending_count, 1u);
+
+  lk_ui_flush_events(ui, NULL);
+  CHECK_EQ(g_synq_count, 1u);
+  CHECK_EQ(ui->pending_count, 0u);
+
+  /* Second flush is a no-op */
+  lk_ui_flush_events(ui, NULL);
+  CHECK_EQ(g_synq_count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Self-feeding handler: every received synthetic enqueues another. */
+static int synq_feeder_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  lk_ui *ui = (lk_ui *)ud;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET ||
+      event->type != LK_EVENT_VALUE_CHANGED) {
+    return 0;
+  }
+
+  synq_log(event);
+
+  {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_VALUE_CHANGED;
+    ev.target = event->target;
+    ev.data.value_changed.str_id = event->data.value_changed.str_id;
+    lk_event_enqueue(ui, &ev);
+  }
+
+  return 0;
+}
+
+static void test_queue_drain_cap(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: drain cap stops self-feeding handler");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_feeder_handler, ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("loop"));
+  lk_event_enqueue(ui, &ev);
+  lk_ui_flush_events(ui, NULL);
+
+  /* 64 dispatches, the one overflow event dropped and counted */
+  CHECK_EQ(g_synq_count, 64u);
+  CHECK_EQ(ui->pending_dropped, 1u);
+  CHECK_EQ(ui->pending_count, 0u);
+
+  /* The queue is usable again afterwards */
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+  synq_reset();
+  lk_event_enqueue(ui, &ev);
+  lk_ui_flush_events(ui, NULL);
+  CHECK_EQ(g_synq_count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Two focusable buttons under a window. */
+static lk_ui *make_two_button_ui(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t = lk_ui_begin_frame(ui);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_ix b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, b2, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, b1);
+  lk_tree_append_child(t, w, b2);
+  lk_ui_end_frame(ui);
+
+  return ui;
+}
+
+static void test_focus_changed_set_and_redundant(void) {
+  lk_ui *ui = make_two_button_ui();
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_node_id id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+  lk_node_id id2 = lk_intern_id(ui->intern, lk_str_c("b2"));
+
+  BEGIN_TEST("focus_changed: set fires, redundant set doesn't");
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  CHECK(lk_focus_set(ui, cur, id1) == 1);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 1u);
+  if (g_synq_count >= 1) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_FOCUS_CHANGED);
+    CHECK_EQ(g_synq_prev[0], 0u);
+    CHECK_EQ(g_synq_next[0], id1);
+    CHECK_EQ((unsigned)g_synq_target[0],
+             (unsigned)lk_tree_find_by_id(cur, id1));
+  }
+
+  CHECK(lk_focus_set(ui, cur, id2) == 1);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 2u);
+  if (g_synq_count >= 2) {
+    CHECK_EQ(g_synq_prev[1], id1);
+    CHECK_EQ(g_synq_next[1], id2);
+  }
+
+  /* Redundant set: no event */
+  CHECK(lk_focus_set(ui, cur, id2) == 1);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 2u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_clear(void) {
+  lk_ui *ui = make_two_button_ui();
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_node_id id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+
+  BEGIN_TEST("focus_changed: clear fires with next=0");
+
+  lk_focus_set(ui, cur, id1);
+  lk_ui_flush_events(ui, cur);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+  lk_focus_clear(ui);
+  lk_ui_flush_events(ui, cur);
+
+  CHECK_EQ(g_synq_count, 1u);
+  if (g_synq_count >= 1) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_FOCUS_CHANGED);
+    CHECK_EQ(g_synq_prev[0], id1);
+    CHECK_EQ(g_synq_next[0], 0u);
+    CHECK_EQ((unsigned)g_synq_target[0], (unsigned)lk_tree_root(cur));
+  }
+
+  /* Clear with no focus: no event */
+  lk_focus_clear(ui);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_next_prev(void) {
+  lk_ui *ui = make_two_button_ui();
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_node_id id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+  lk_node_id id2 = lk_intern_id(ui->intern, lk_str_c("b2"));
+
+  BEGIN_TEST("focus_changed: next/prev fire with ids");
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  CHECK_EQ(lk_focus_next(ui, cur), id1); /* none -> b1 */
+  CHECK_EQ(lk_focus_next(ui, cur), id2); /* b1 -> b2 */
+  CHECK_EQ(lk_focus_prev(ui, cur), id1); /* b2 -> b1 */
+  lk_ui_flush_events(ui, cur);
+
+  CHECK_EQ(g_synq_count, 3u);
+  if (g_synq_count >= 3) {
+    CHECK_EQ(g_synq_prev[0], 0u);
+    CHECK_EQ(g_synq_next[0], id1);
+    CHECK_EQ(g_synq_prev[1], id1);
+    CHECK_EQ(g_synq_next[1], id2);
+    CHECK_EQ(g_synq_prev[2], id2);
+    CHECK_EQ(g_synq_next[2], id1);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_end_frame_gc(void) {
+  lk_ui *ui = make_two_button_ui();
+  lk_node_id id2 = lk_intern_id(ui->intern, lk_str_c("b2"));
+
+  BEGIN_TEST("focus_changed: end_frame GC clear fires");
+
+  lk_focus_set(ui, lk_ui_tree(ui), id2);
+  lk_ui_flush_events(ui, NULL);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  /* Rebuild without b2: the GC clears focus and enqueues the event;
+   * the host drains it via flush after end_frame. */
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+
+    lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, b1);
+    lk_ui_end_frame(ui);
+  }
+
+  CHECK_EQ(g_synq_count, 0u); /* end_frame itself never routes */
+  lk_ui_flush_events(ui, NULL);
+
+  CHECK_EQ(g_synq_count, 1u);
+  if (g_synq_count >= 1) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_FOCUS_CHANGED);
+    CHECK_EQ(g_synq_prev[0], id2);
+    CHECK_EQ(g_synq_next[0], 0u);
+    CHECK_EQ((unsigned)g_synq_target[0],
+             (unsigned)lk_tree_root(lk_ui_tree(ui)));
+  }
+
+  CHECK_EQ(ui->focused_id, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_translator(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_node_id id1;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("focus_changed: translator emits command");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+
+    lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_add_presentation_s(t, b1, "pane", lk_v_i32(7));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, b1);
+  }
+  lk_ui_end_frame(ui);
+
+  lk_ui_add_translator_s(ui, LK_EVENT_FOCUS_CHANGED, "pane", 0, 0, 0, 0,
+                         "Activate");
+
+  id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+  CHECK(lk_focus_set(ui, lk_ui_tree(ui), id1) == 1);
+  lk_ui_flush_events(ui, NULL);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1u);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("Activate")));
+    CHECK_EQ(q->cmds[0].args[0].tag, UIV_I32);
+    CHECK(q->cmds[0].args[0].as.i == 7);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
 
 int main(void) {
   printf("lk diff tests:\n");
@@ -5980,6 +12843,28 @@ int main(void) {
   test_layout_row_align_center();
   test_layout_row_justify_end();
 
+  /* grow layout (docs/grow-layout.md) */
+  test_grow_thirds();
+  test_grow_text_input_row();
+  test_grow_one_two();
+  test_grow_legacy_remainder_order();
+  test_grow_mixed_legacy_and_grow();
+  test_grow_zero_pins_spacer();
+  test_grow_sized_spacer_basis();
+  test_grow_negative_clamped();
+  test_grow_huge_weights_capped();
+  test_grow_hidden_children_inert();
+  test_grow_all_hidden();
+  test_grow_single_child();
+  test_grow_zero_extent_and_negative_leftover();
+  test_grow_padding_gap_accounting();
+  test_grow_repeated_layout_identical();
+  test_grow_measure_unaffected();
+  test_grow_justify_gate();
+  test_grow_nested_containers();
+  test_style_theme_align_precedence();
+  test_style_window_stretch_default();
+
   /* render list */
   printf("\nlk render tests:\n");
   test_render_empty_tree();
@@ -6035,6 +12920,9 @@ int main(void) {
   test_pres_none_returns_null();
   test_pres_survives_frame();
   test_pres_change_triggers_updated();
+  test_pres_multi_arg();
+  test_pres_multi_arg_cmd();
+  test_pres_multi_arg_change_detected();
 
   /* command / translator */
   printf("\nlk command/translator tests:\n");
@@ -6042,6 +12930,12 @@ int main(void) {
   test_translator_no_match();
   test_translator_walks_ancestors();
   test_translator_ptype_and_kind();
+  test_translator_keycode_match();
+  test_translator_keycode_wrong_key();
+  test_translator_keycode_wrong_mods();
+  test_translator_keycode_no_pres_required();
+  test_translator_keycode_on_pointer_event();
+  test_translator_keycode_zero_mods();
   test_command_handler_fires();
 
   /* introspection */
@@ -6113,6 +13007,14 @@ int main(void) {
   test_ui_owns_default_theme();
   test_ui_resolve_styles_headless();
   test_ui_set_theme_custom();
+  test_ui_hover_state();
+
+  /* border rendering */
+  printf("\nlk border tests:\n");
+  test_border_render_four_fill_rects();
+  test_border_inset_layout();
+  test_border_zero_no_extra_commands();
+  test_border_theme_integration();
 
   /* deferred prop append */
   printf("\nlk deferred prop tests:\n");
@@ -6123,13 +13025,24 @@ int main(void) {
   /* text input widget */
   printf("\nlk text input tests:\n");
   test_text_input_measure();
+  test_text_input_empty_height();
   test_text_input_render();
   test_text_input_insert();
+  test_text_input_emits_value_changed();
+  test_text_input_backspace_emits_value_changed();
   test_text_input_backspace();
   test_text_input_delete();
   test_text_input_cursor_movement();
   test_text_input_selection();
   test_text_input_select_all();
+  test_text_input_controlled_candidate();
+  test_text_input_controlled_echo();
+  test_text_input_controlled_replace_selection();
+  test_text_input_controlled_cuts();
+  test_text_input_controlled_candidate_before_focus();
+  test_text_align_label();
+  test_text_align_button_both_axes();
+  test_text_align_text_input_cursor_origin();
   test_text_input_initial_text();
   test_text_input_cursor_clamp();
 
@@ -6145,6 +13058,148 @@ int main(void) {
   test_scroll_empty();
   test_scroll_bar_rendered();
   test_widget_bubble_no_break_text_input();
+
+  /* clipboard */
+  printf("\nlk clipboard tests:\n");
+  test_text_input_ctrl_c();
+  test_text_input_ctrl_v();
+  test_text_input_ctrl_x();
+  test_text_input_ctrl_v_no_clipboard();
+
+  /* dropdown */
+  printf("\nlk dropdown tests:\n");
+  test_dropdown_pointer_down_toggles();
+  test_dropdown_arrow_keys_navigate();
+  test_dropdown_return_commits();
+  test_dropdown_escape_closes();
+  test_dropdown_overlay_hit_test();
+  test_dropdown_click_outside_closes();
+  test_dropdown_overlay_render_when_expanded();
+
+  /* overlay generalization */
+  printf("\nlk overlay tests:\n");
+  test_anchor_below_fits();
+  test_anchor_below_flips_above();
+  test_anchor_x_clamp();
+  test_anchor_center_viewport();
+  test_anchor_at_cursor();
+  test_overlay_push_pop_count();
+  test_overlay_end_frame_gc();
+  test_overlay_escape_pops();
+  test_dropdown_bottom_edge_flips();
+  test_overlay_modal_blocks();
+  test_overlay_modal_scrim();
+  test_container_bg_renders();
+  test_hidden_subtree_layout();
+  test_hidden_subtree_render_hit();
+  test_hidden_focus_next_skips();
+  test_layout_subtree_positions();
+  test_focus_trap_scopes_tab();
+
+  /* tooltips (overlay step 6) */
+  printf("\nlk tooltip tests:\n");
+  test_tooltip_hover_push_pop();
+  test_tooltip_render_on_top();
+  test_tooltip_passive();
+  test_tooltip_bottom_edge_flips();
+
+  /* text backend contract (stage A) */
+  printf("\nlk text backend tests:\n");
+  test_text_stub_measure_x_agree();
+  test_text_stub_x_from_index_multibyte();
+  test_text_stub_index_from_x_rounding();
+  test_text_stub_register_font_ids();
+  test_render_text_carries_font();
+
+  /* text input correctness (stage C) */
+  printf("\nlk text-contract stage C tests:\n");
+  test_text_input_multibyte_arrows();
+  test_text_input_multibyte_backspace_delete();
+  test_text_input_insert_cap_boundary();
+  test_text_input_paste_cap_boundary();
+  test_text_input_cursor_x_from_index();
+  test_text_input_selection_rect_exact();
+  test_text_input_click_to_position();
+
+  /* bug-fix regressions */
+  printf("\nlk bug-fix regression tests:\n");
+  test_value_none_zeroed();
+  test_intern_custom_alloc_balanced();
+  test_translator_disabled_no_command();
+  test_state_survives_reparent();
+  test_text_input_cursor_only_when_focused();
+  test_dropdown_padding_click_stays_open();
+  test_dropdown_hover_follows_pointer();
+  test_geom_scratch_populated();
+  test_ui_rects_node_rect();
+  test_geom_null_degrades_safely();
+  test_dropdown_value_prop();
+  test_dropdown_popup_scroll_wheel();
+  test_dropdown_popup_scroll_keyboard();
+  test_dropdown_popup_short_unaffected();
+
+  /* split panes + pointer capture */
+  printf("\nlk split tests:\n");
+  test_split_h_layout_default_ratio();
+  test_split_v_layout_default_ratio();
+  test_split_ratio_prop_initial();
+  test_split_state_overrides_prop();
+  test_split_ratio_clamped_min_pane();
+  test_split_single_child_fills();
+  test_split_zero_children_bg_only();
+  test_split_hidden_child_full_fill();
+  test_split_nested_exact_rects();
+  test_split_hit_test_divider_band();
+  test_split_drag_sequence();
+  test_split_controlled_drag();
+  test_split_uncontrolled_drag_emits();
+  test_ui_time_ms();
+  test_capture_api();
+  test_capture_end_frame_gc();
+  test_dump_kind_names();
+
+  /* synthetic event queue + FOCUS_CHANGED (polish F2) */
+  printf("\nlk synthetic event queue tests:\n");
+  test_queue_value_changed_after_route();
+  test_queue_nested_fifo();
+  test_queue_reentrant_no_double_drain();
+  test_queue_flush_outside_routing();
+  test_queue_drain_cap();
+  test_focus_changed_set_and_redundant();
+  test_focus_changed_clear();
+  test_focus_changed_next_prev();
+  test_focus_changed_end_frame_gc();
+  test_focus_changed_translator();
+
+  /* document + edit history (editor track, stage A) */
+  lk_document_run_tests();
+
+  /* resource refs + run arena (editor track, stage B1) */
+  lk_resource_run_tests();
+
+  /* editor view + command layer + widget (editor track, stage B2) */
+  lk_editor_run_tests();
+
+  /* annotation store + styled spans (editor track, stage C) */
+  lk_annot_run_tests();
+
+  /* interior presentations (weft-surface track, stage S1) */
+  lk_present_run_tests();
+
+  /* forms widgets round: checkbox/radio/slider/tabs/grid */
+  lk_forms_run_tests();
+
+  /* image resource + widget */
+  lk_image_run_tests();
+  lk_styled_text_run_tests();
+  lk_menu_run_tests();
+  lk_list_run_tests();
+
+  /* vector canvas resource + widget */
+  lk_canvas_run_tests();
+
+  /* footgun pass: keybinding fallback + lk_focus_request */
+  lk_focus_run_tests();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

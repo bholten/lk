@@ -1,0 +1,754 @@
+;;; lk-dsl.lcl — Layer 2 declarative DSL for lk (DSL v2, props dicts)
+;;;
+;;; Wraps Layer 1 Lk:: procs with declarative syntax:
+;;;   - Kind names (column, button, ...) are commands
+;;;   - Nesting implies parent-child
+;;;   - Props are passed as a single dict: kind id ?props-dict? ?body-block?
+;;;
+;;; Usage:
+;;;   app "My App" #{font "/path/to/font.ttf" font_size 16} {
+;;;       view {
+;;;           column "main" #{padding 24} {
+;;;               label "title" #{text "Hello!"}
+;;;           }
+;;;       }
+;;;   }
+;;;
+;;; Props dicts are ordinary values: build them in variables, share them
+;;; across widgets, compose with [Dict::merge $base $override].
+;;; Unknown prop keys are hard errors (see _apply_props).
+
+;;; The Layer 2 DSL: `app`, `view`, `theme`, `translator`, `keybinding`,
+;;; `on`, `event_handler`, `clear_translators`, `screenshot`, `quit`, and one command
+;;; per widget kind, all exported
+;;; into the caller's scope.
+;;;
+;;; Every widget command shares one shape — `kind id ?props-dict?
+;;; ?body-block?` — with the two trailing args disambiguated by value
+;;; shape: a dict is props, anything else is the body block.  Known
+;;; prop keys: text, focusable, disabled, w, h, padding, gap, align,
+;;; justify, text_align, text_valign, hidden, tooltip, split_ratio,
+;;; split_controlled, controlled, grow, editor, image, filter, canvas,
+;;; spans, wrap, rows, row_h, row, value, checked, min, max,
+;;; step, columns, tag, present.  `tag` maps to `Lk::tag`, `present`
+;;; (a 2-element ptype + value list) to `Lk::present`, everything else
+;;; to `Lk::prop`.  Unknown keys and malformed trailing args are hard
+;;; errors carrying the widget id.
+namespace LkDsl {
+
+    ;; ---- Module state ----
+    var _tree {}
+    var _parent_stack ()
+    var _ui {}
+    var _win {}
+    var _view_body {}
+    var _cmd_handlers #{}
+
+    ;; ---- Prop schema ----
+    ;; Every key a widget props dict may carry.  `tag` and `present` are
+    ;; handled specially (Lk::tag / Lk::present); the rest map to
+    ;; Lk::prop.  Values are 1 for now; per-kind validation may hang
+    ;; richer descriptors here later.
+    let _prop_schema #{text 1
+                       focusable 1
+                       disabled 1
+                       w 1
+                       h 1
+                       padding 1
+                       gap 1
+                       align 1
+                       justify 1
+                       text_align 1
+                       text_valign 1
+                       hidden 1
+                       tooltip 1
+                       split_ratio 1
+                       split_controlled 1
+                       controlled 1
+                       grow 1
+                       editor 1
+                       image 1
+                       filter 1
+                       canvas 1
+                       spans 1
+                       wrap 1
+                       rows 1
+                       row_h 1
+                       row 1
+                       value 1
+                       checked 1
+                       min 1
+                       max 1
+                       step 1
+                       columns 1
+                       tag 1
+                       present 1}
+
+    let _known_props [String::join [Dict::keys $_prop_schema] ", "]
+
+    ;; ---- Trailing-arg disambiguation ----
+    ;; kind id ?props-dict? ?body-block? — both optional, disambiguated
+    ;; by shape: a dict value is props, anything else is the body block.
+    ;; Strictness (v2): more than two trailing args is an error; with
+    ;; two, the first must be a dict and the second must not be; a lone
+    ;; numeric arg (e.g. `button "x" 42`) or a stale `-flag` arg is an
+    ;; error.  A lone non-dict, non-numeric, non-dash arg is the body
+    ;; (blocks are plain strings in Lcl — not distinguishable by type).
+    ;; Returns #{props <dict> body <block>}.
+    proc _split_args {kind id rest} {
+        var props #{}
+        var body {}
+        let n [len $rest]
+
+        if [> $n 2] {
+            error "$kind \"$id\": too many arguments (expected: $kind id ?props-dict? ?body-block?)"
+        }
+
+        if [== $n 2] {
+            set! props [get $rest 0]
+            set! body [get $rest 1]
+
+            if [not [dict? $props]] {
+                error "$kind \"$id\": expected a props dict (#{...}) before the body block"
+            }
+
+            if [dict? $body] {
+                error "$kind \"$id\": body must be a block, got a second dict"
+            }
+        }
+
+        if [== $n 1] {
+            let a [get $rest 0]
+
+            if [dict? $a] {
+                set! props $a
+            } else {
+                ;; number? first: a typed int/float literal (post-lcl
+                ;; c6b44be) is not a string, so empty?/String::index
+                ;; would error on it before our diagnostic fired.
+                if [number? $a] {
+                    error "$kind \"$id\": expected a props dict (#{...}) or body block, got '$a'"
+                }
+
+                if [not [empty? $a]] {
+                    if [== [String::index $a 0] -] {
+                        error "$kind \"$id\": '-flag' syntax was removed; use a props dict (#{...})"
+                    }
+                }
+
+                set! body $a
+            }
+        }
+
+        return #{props $props body $body}
+    }
+
+    ;; ---- Prop application ----
+    ;; Walks the props dict.  Unknown keys are hard errors carrying the
+    ;; widget id and the known-key list — no silent swallowing.
+    proc _apply_props {kind id node props} {
+        foreach key [Dict::keys $props] {
+            if [not [has? $_prop_schema $key]] {
+                error "$kind \"$id\": unknown prop '$key' (known: $_known_props)"
+            }
+
+            let val [get $props $key]
+
+            if [== $key tag] {
+                Lk::tag $_tree $node $val
+            } else {
+                if [== $key present] {
+                    ;; present (ptype value-or-list) — a list of two elements
+                    Lk::present $_tree $node [get $val 0] [get $val 1]
+                } else {
+                    Lk::prop $_tree $node $key $val
+                }
+            }
+        }
+    }
+
+    ;; ---- Node creation ----
+    proc _make_node {kind id rest} {
+        let parsed [_split_args $kind $id $rest]
+        let props [get $parsed props]
+        let body [get $parsed body]
+
+        let node [Lk::node $_tree $id $kind]
+
+        ;; Append to current parent
+        let stack_len [len $_parent_stack]
+
+        if [> $stack_len 0] {
+            let parent [get $_parent_stack [- $stack_len 1]]
+            Lk::append_child $_tree $parent $node
+        }
+
+        ;; Apply props
+        _apply_props $kind $id $node $props
+
+        ;; If body present, push this node as parent, eval body, pop
+        if [not [empty? $body]] {
+            set! _parent_stack [List::push $_parent_stack $node]
+            ;; The body runs as a zero-arg lambda, not a bare eval: a
+            ;; `return` inside it then ends the BLOCK, instead of
+            ;; unwinding this proc past the pop below and nesting every
+            ;; later sibling one level too deep (Log Lens, 2026-08-28).
+            apply [lambda {} $body]
+            set! _parent_stack [List::slice $_parent_stack 0 [- [len $_parent_stack] 1]]
+        }
+
+        return $node
+    }
+
+    ;;; Vertical stack container.  Children lay out top to bottom;
+    ;;; `gap` spaces them, `align` crosses, `justify` distributes, and
+    ;;; per-child `grow` weights share leftover height.
+    proc column {id *rest} {
+        _make_node column $id $rest
+    }
+
+    ;;; Horizontal stack container (the row-axis twin of `column`).
+    proc row {id *rest} {
+        _make_node row $id $rest
+    }
+
+    ;;; Text display widget; set the string with the `text` prop.
+    proc label {id *rest} {
+        _make_node label $id $rest
+    }
+
+    ;;; Click target.  Give it `focusable 1` for keyboard focus and a
+    ;;; `present` prop to make clicks emit commands via translators.
+    proc button {id *rest} {
+        _make_node button $id $rest
+    }
+
+    ;;; Single-line text input.  Edits emit value_changed events; feed
+    ;;; the edited text back in as the `text` prop each frame.
+    ;;; `controlled 1` makes the app own the text: the widget shows the
+    ;;; `text` prop as-is and each edit only proposes a candidate in
+    ;;; value_changed -- re-supply it to accept, anything else to
+    ;;; reject, normalise or revert (the spreadsheet's cells).
+    proc text_input {id *rest} {
+        _make_node text_input $id $rest
+    }
+
+    ;;; Flexible empty space.  An unsized spacer grows with weight 1;
+    ;;; give it `w`/`h` for fixed space or `grow 0` to pin it.
+    proc spacer {id *rest} {
+        _make_node spacer $id $rest
+    }
+
+    ;;; Vertical scroll container: clips children, wheel-scrolls, and
+    ;;; shows a scrollbar when content overflows.
+    proc scroll {id *rest} {
+        _make_node scroll $id $rest
+    }
+
+    ;;; Dropdown selector; its `option` children are the choices.  The
+    ;;; `value` prop picks the initial selection by option text;
+    ;;; selecting emits value_changed with the option text.
+    proc dropdown {id *rest} {
+        _make_node dropdown $id $rest
+    }
+
+    ;;; One dropdown choice; the `text` prop is its label and value.
+    proc option {id *rest} {
+        _make_node option $id $rest
+    }
+
+    ;;; Two panes side by side with a draggable vertical divider.
+    ;;; `split_ratio` (per-mille, 0..1000) sets the initial split;
+    ;;; `split_controlled 1` makes the app own the ratio (dragging
+    ;;; emits value_changed but writes no state).
+    proc split_h {id *rest} {
+        _make_node split_h $id $rest
+    }
+
+    ;;; Two panes stacked with a draggable horizontal divider (the
+    ;;; vertical twin of `split_h`).
+    proc split_v {id *rest} {
+        _make_node split_v $id $rest
+    }
+
+    ;;; Multi-line editor widget.  Wire it to a document view with the
+    ;;; `editor` prop (an opaque from `Lk::editor_new`):
+    ;;;
+    ;;;   editor "src" #{editor $ed focusable 1}
+    proc editor {id *rest} {
+        _make_node editor $id $rest
+    }
+
+    ;;; Pixel-buffer view.  Wire it to an app-owned image with the
+    ;;; `image` prop (an opaque from `Lk::image_new` /
+    ;;; `Lk::image_load`); it measures at the image's pixel size and
+    ;;; `w`/`h` scale it:
+    ;;;
+    ;;;   image "cover" #{image $img w 400}
+    ;;;   image "sprite" #{image $art w 512 h 512 filter nearest}
+    proc image {id *rest} {
+        _make_node image $id $rest
+    }
+
+    ;;; Vector canvas.  Wire it to an app-owned display list with the
+    ;;; `canvas` prop (an opaque from `Lk::canvas_new`); it measures at
+    ;;; the canvas's size hint, `w`/`h`/`grow` size it, and the list's
+    ;;; ops (`Lk::canvas_line` & co., canvas-local pixels) replay
+    ;;; clipped to the node rect every frame.  Read the laid-out size
+    ;;; back with `Lk::node_rect` to draw at the real size:
+    ;;;
+    ;;;   canvas "plot" #{canvas $cv grow 1}
+    ;;;   canvas "spark" #{canvas $cv w 120 h 24}
+    proc canvas {id *rest} {
+        _make_node canvas $id $rest
+    }
+
+    ;;; Read-only wrapping, per-range styled text: a paragraph that
+    ;;; takes the width it is given and grows to fit its rows (word
+    ;;; wrap by default; `wrap character` / `wrap none`).  Colour,
+    ;;; underline and clickable ranges come from an app-owned span set
+    ;;; (`Lk::spans_new` + `Lk::spans_add` / `Lk::spans_present`) via
+    ;;; the `spans` prop; without one it is simply a label that wraps.
+    ;;; A `pointer_down` translator on a presented range's ptype fires
+    ;;; with the range's value and a `text-range` locus.
+    ;;;
+    ;;;   styled_text "help" #{text $paragraph}
+    ;;;   styled_text "line" #{text $log_line spans $sp wrap none}
+    proc styled_text {id *rest} {
+        _make_node styled_text $id $rest
+    }
+
+    ;;; Virtualized list: `rows` × `row_h` pixels of scrollable extent
+    ;;; (wheel, a draggable bar, Up/Down/PageUp/PageDown/Home/End on
+    ;;; the focused list) in which the body builds ONLY the rows on
+    ;;; screen -- each child carries its index in `row` and is placed
+    ;;; there.  Ask `list_window` which rows to build.  The list keeps
+    ;;; a cursor row (`value` initial, `controlled` to own it) and
+    ;;; emits value_changed with the row index on every move; a click
+    ;;; on a row moves the cursor there AND still fires the row's own
+    ;;; translators.  Selection is yours: tag the rows you built.  A
+    ;;; table is a list of `row`s of cells with per-column widths and
+    ;;; a header row above it (docs/table.md).
+    ;;;
+    ;;; The DSL proc is `listview` (Lcl's own `list` is the list
+    ;;; constructor); the kind name stays `list` (`Lk::node $t id list`).
+    ;;;
+    ;;;   listview "files" #{rows [len $files] row_h 24 focusable 1 grow 1} {
+    ;;;       foreach i [list_window files [len $files]] {
+    ;;;           row "r_$i" #{row $i present (file ([get $files $i]))} { ... }
+    ;;;       }
+    ;;;   }
+    proc listview {id *rest} {
+        _make_node list $id $rest
+    }
+
+    ;;; The rows a `list` should build this frame: the visible window
+    ;;; from the last layout padded by `overscan` rows each side (default
+    ;;; 2), as an index list clamped to `0 .. rows-1`.  The first frame
+    ;;; (no layout yet) answers the first `estimate` rows (default 32).
+    ;;; The window is one frame behind the scroll offset; the margin
+    ;;; hides that for wheel steps, a page jump shows one blank frame.
+    ;;;
+    ;;;   foreach i [list_window files [len $files]] { ... }
+    proc list_window {id rows (overscan 2) (estimate 32)} {
+        let r [Lk::list_range $_ui $id]
+        var first 0
+        var count $estimate
+
+        if [== [len $r] 2] {
+            set! first [- [get $r 0] $overscan]
+            set! count [+ [get $r 1] [* 2 $overscan]]
+        }
+
+        if [< $first 0] { set! count [+ $count $first]; set! first 0 }
+        if [> [+ $first $count] $rows] { set! count [- $rows $first] }
+        if [< $count 0] { set! count 0 }
+
+        List::range $first [+ $first $count]
+    }
+
+    ;;; Toggle with a text label.  `checked 1` sets the initial state;
+    ;;; clicking (or SPACE when focused) toggles and emits
+    ;;; value_changed with "1"/"0".  `controlled 1` makes the app own
+    ;;; the value (no state write; re-supply `checked` each frame):
+    ;;;
+    ;;;   checkbox "loud" #{text "Loud" checked 1 focusable 1}
+    proc checkbox {id *rest} {
+        _make_node checkbox $id $rest
+    }
+
+    ;;; Radio button: like `checkbox`, but exclusive among the radio
+    ;;; siblings under the same parent -- checking one unchecks the
+    ;;; others.  Only the newly checked radio emits value_changed ("1").
+    proc radio {id *rest} {
+        _make_node radio $id $rest
+    }
+
+    ;;; Horizontal integer slider over `min`..`max` (defaults 0..100)
+    ;;; in `step` increments (default 1); `value` is the initial
+    ;;; integer value.  Dragging, clicking the track, and arrow /
+    ;;; Home / End / PageUp / PageDown keys (when focused) change it
+    ;;; and emit value_changed with the new value as a decimal string.
+    ;;; `controlled 1` makes the app own the value:
+    ;;;
+    ;;;   slider "vol" #{min 0 max 10 value 3 focusable 1}
+    proc slider {id *rest} {
+        _make_node slider $id $rest
+    }
+
+    ;;; Tab strip with one visible page.  Children are `tab` widgets;
+    ;;; `value` names the initially selected tab by its id.  Clicking a
+    ;;; header (or Left/Right/Home/End when the tabs widget is
+    ;;; focused) selects and emits value_changed with the tab id.
+    ;;; Unselected pages are not laid out, rendered, or focusable.
+    ;;; `controlled 1` makes the app own the selection:
+    ;;;
+    ;;;   tabs "nb" #{value "two" focusable 1} {
+    ;;;       tab "one" #{text "One"} { label "l1" #{text "First"} }
+    ;;;       tab "two" #{text "Two"} { label "l2" #{text "Second"} }
+    ;;;   }
+    proc tabs {id *rest} {
+        _make_node tabs $id $rest
+    }
+
+    ;;; One page of a `tabs` widget: `text` is the header title; the
+    ;;; body lays out like a column.
+    proc tab {id *rest} {
+        _make_node tab $id $rest
+    }
+
+    ;;; Row-major cell grid with `columns` columns (default 1): every
+    ;;; column is as wide as its widest cell, every row as tall as its
+    ;;; tallest, children fill their cells, `gap` separates them.
+    ;;;
+    ;;;   grid "form" #{columns 2 gap 4} {
+    ;;;       label "k1" #{text "Name"}   text_input "v1"
+    ;;;       label "k2" #{text "Level"}  text_input "v2"
+    ;;;   }
+    proc grid {id *rest} {
+        _make_node grid $id $rest
+    }
+
+    ;;; Declare theme rules.  The body sees a `rule` command:
+    ;;;
+    ;;;   rule <kind> ?selector-dict? style-dict
+    ;;;
+    ;;; kind "*" matches any; one dict arg is the style, two are
+    ;;; selector then style.  Selector keys: `tag`, `state` (focused,
+    ;;; hovered, disabled); unknown keys error.  Style keys are the
+    ;;; `Lk::theme_rule` set (bg, fg, border_color, padding, gap,
+    ;;; align, justify, font_id, font_size, ...):
+    ;;;
+    ;;;   theme {
+    ;;;       rule button #{tag primary state hovered} #{bg (65 120 210)}
+    ;;;   }
+    proc theme {body} {
+        ;; rule <kind> ?selector-dict? style-dict
+        ;; kind "*" matches any.  One dict arg = style; two = selector
+        ;; then style.  Selector keys: tag, state (unknown keys error).
+        proc rule {kind *rest} {
+            var tag {}
+            var state {}
+            var style #{}
+            let n [len $rest]
+
+            if [== $n 1] {
+                set! style [get $rest 0]
+            } else {
+                if [== $n 2] {
+                    let sel [get $rest 0]
+
+                    if [not [dict? $sel]] {
+                        error "rule $kind: selector must be a dict (#{tag <tag> state <state>})"
+                    }
+
+                    foreach k [Dict::keys $sel] {
+                        if [== $k tag] {
+                            set! tag [get $sel $k]
+                        } else {
+                            if [== $k state] {
+                                set! state [get $sel $k]
+                            } else {
+                                error "rule $kind: unknown selector key '$k' (known: tag, state)"
+                            }
+                        }
+                    }
+                    set! style [get $rest 1]
+                } else {
+                    error "rule $kind: expected ?selector-dict? style-dict"
+                }
+            }
+
+            if [not [dict? $style]] {
+                error "rule $kind: style must be a dict (#{bg (r g b) ...})"
+            }
+
+            Lk::theme_rule $_ui $kind $tag $state $style
+        }
+
+        eval $body
+    }
+
+    ;;; Register a translator: gestures on nodes presenting `ptype`
+    ;;; emit `cmd` (handle it with `on`).
+    ;;;
+    ;;; A dict anywhere in the trailing args is the matcher (DSL v2
+    ;;; style): keys `button` (primary|middle|secondary) and `mods`
+    ;;; ("ctrl", "ctrl+shift", ...); unknown keys hard-error.  The
+    ;;; positional forms are unchanged:
+    ;;;   translator pointer_down item Select
+    ;;;   translator pointer_down action button DoIt
+    ;;;   translator pointer_down #{button middle} action Execute
+    ;;; keybinding <keycode> <mods> <cmd_name>
+    ;;; keybinding <keycode> <mods> <ptype> <cmd_name>
+    proc translator {event_type *rest} {
+        var button ""
+        var mods ""
+        var seen_dict 0
+        var pos ()
+
+        foreach a $rest {
+            if [dict? $a] {
+                if [== $seen_dict 1] {
+                    error "translator $event_type: more than one matcher dict"
+                }
+                set! seen_dict 1
+
+                foreach k [Dict::keys $a] {
+                    if [== $k button] {
+                        set! button [get $a $k]
+                    } else {
+                        if [== $k mods] {
+                            set! mods [get $a $k]
+                        } else {
+                            error "translator $event_type: unknown matcher key '$k' (known: button, mods)"
+                        }
+                    }
+                }
+            } else {
+                set! pos [List::push $pos $a]
+            }
+        }
+
+        let np [len $pos]
+
+        if [== $np 2] {
+            ;; translator event ?matcher? ptype cmd
+            Lk::add_translator $_ui $event_type [get $pos 0] "" "" $mods [get $pos 1] $button
+        } else {
+            if [== $np 3] {
+                ;; translator event ?matcher? ptype kind cmd
+                Lk::add_translator $_ui $event_type [get $pos 0] [get $pos 1] "" $mods [get $pos 2] $button
+            } else {
+                error "translator $event_type: expected ?matcher-dict? ptype ?kind? cmd"
+            }
+        }
+    }
+
+    ;;; Drop every translator and keybinding registered so far (wraps
+    ;;; `Lk::clear_translators` on the app's ui).  For keymaps that
+    ;;; change at runtime: clear, then re-run the `translator` /
+    ;;; `keybinding` forms from the new table — typically from the
+    ;;; view body when a keymap generation counter changes, so the
+    ;;; rebinding is live on the next frame.  Safe from any handler.
+    ;;;
+    ;;;   if [!= $bound_gen $keymap_gen] {
+    ;;;       clear_translators
+    ;;;       foreach b $keymap { keybinding [get $b key] [get $b mods] [get $b cmd] }
+    ;;;       set! bound_gen $keymap_gen
+    ;;;   }
+    proc clear_translators {} {
+        Lk::clear_translators $_ui
+    }
+
+    ;;; Bind a key chord to a command: `keybinding <keycode> <mods>
+    ;;; ?<ptype>? <cmd>`.  The 3-arg form is global: it fires whatever
+    ;;; is focused, even with no presentation anywhere on the path (the
+    ;;; core's window-level key fallback); the 4-arg form fires only
+    ;;; with a `ptype` presentation under focus.
+    ;;; Sugar for a key_down translator:
+    ;;;
+    ;;;   keybinding g ctrl GotoLine
+    proc keybinding {keycode mods *rest} {
+        if [== [len $rest] 1] {
+            ;; 3-arg form: keybinding key mods cmd (global, no ptype)
+            Lk::add_translator $_ui "key_down" "" "" $keycode $mods [get $rest 0]
+        } else {
+            ;; 4-arg form: keybinding key mods ptype cmd
+            Lk::add_translator $_ui "key_down" [get $rest 0] "" $keycode $mods [get $rest 1]
+        }
+    }
+
+    ;;; Register a handler for a named command.  The handler receives
+    ;;; the command dict (`name`, `args`, `source_value`,
+    ;;; `source_node_id`, and `hit` for interior presentations):
+    ;;;
+    ;;;   on Select [lambda {cmd} { puts [get $cmd args] }]
+    proc on {cmd_name handler} {
+        set! _cmd_handlers [put $_cmd_handlers $cmd_name $handler]
+    }
+
+    ;;; Queue a screenshot of the window, saved at the end of the
+    ;;; current frame (`.png` with SDL3_image, else BMP bytes).  Works
+    ;;; under `SDL_VIDEODRIVER=offscreen`, so a script can photograph
+    ;;; its own pages headless (the Widget Tour's `--snap` mode).
+    ;;; Returns 1 when queued.
+    ;;;
+    ;;;   screenshot "shots/page-1.png"
+    proc screenshot {path} {
+        Lk::window_screenshot $_win $path
+    }
+
+    ;;; Leave the run loop after the current frame — from a command
+    ;;; handler, the event handler, or the view body.
+    ;;;
+    ;;;   keybinding q ctrl Quit
+    ;;;   on Quit [lambda {cmd} { quit }]
+    proc quit {} {
+        Lk::window_stop $_win
+    }
+
+    ;;; Install an app-level event handler on the window; the callable
+    ;;; receives an event dict for every event no widget consumed.
+    proc event_handler {callable} {
+        Lk::window_set_event_handler $_win $callable
+    }
+
+    ;;; Declare the view: the body re-runs every frame to rebuild the
+    ;;; tree under an implicit root window node.  Keep widget ids
+    ;;; stable across frames — retained state and focus follow ids.
+    proc view {body} {
+        set! _view_body $body
+    }
+
+    ;; ---- Internal: dispatch commands ----
+    proc _dispatch_command {cmd} {
+        let name [get $cmd name]
+
+        if [has? $_cmd_handlers $name] {
+            let handler [get $_cmd_handlers $name]
+            apply $handler $cmd
+        }
+    }
+
+    ;; ---- Internal: frame callback ----
+    proc _frame {tree} {
+        set! _tree $tree
+        set! _parent_stack ()
+
+        ;; Create implicit root window node
+        let root [Lk::node $_tree "root" "window"]
+        Lk::set_root $_tree $root
+        set! _parent_stack [List::push $_parent_stack $root]
+
+        ;; Eval the user's view body
+        eval $_view_body
+
+        set! _parent_stack ()
+    }
+
+    ;;; Create the window and run the app: `app "Title" ?props-dict?
+    ;;; body-block`.
+    ;;;
+    ;;; Props: `width` and `height` (default 800x600), `font` (a .ttf
+    ;;; path), `font_size` (default 16), and `icon` (an image path —
+    ;;; PNG with SDL3_image, BMP always — applied best-effort via
+    ;;; `Lk::window_icon`: an unreadable icon is not an error); unknown
+    ;;; keys hard-error.
+    ;;; The body runs once to register `theme`, `translator`,
+    ;;; `keybinding`, `on`, `view`, and `event_handler`; then the
+    ;;; frame loop runs the view body every frame until the window
+    ;;; closes, and the window is destroyed on the way out.
+    proc app {title *rest} {
+        var props #{}
+        var body {}
+        var width 800
+        var height 600
+        var font {}
+        var font_size 16
+        var icon {}
+        let n [len $rest]
+
+        if [or [< $n 1] [> $n 2]] {
+            error "app \"$title\": expected app title ?props-dict? body-block"
+        }
+
+        if [== $n 2] {
+            set! props [get $rest 0]
+            set! body [get $rest 1]
+
+            if [not [dict? $props]] {
+                error "app \"$title\": expected a props dict (#{...}) before the body block"
+            }
+        } else {
+            set! body [get $rest 0]
+        }
+
+        if [dict? $body] {
+            error "app \"$title\": body must be a block, got a dict"
+        }
+
+        foreach key [Dict::keys $props] {
+            let val [get $props $key]
+
+            if [== $key width] {
+                set! width $val
+            } else {
+                if [== $key height] {
+                    set! height $val
+                } else {
+                    if [== $key font] {
+                        set! font $val
+                    } else {
+                        if [== $key font_size] {
+                            set! font_size $val
+                        } else {
+                            if [== $key icon] {
+                                set! icon $val
+                            } else {
+                                error "app \"$title\": unknown key '$key' (known: width, height, font, font_size, icon)"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ;; Create window and UI
+        if [empty? $font] {
+            set! _win [Lk::window_create $title $width $height]
+        } else {
+            set! _win [Lk::window_create $title $width $height $font $font_size]
+        }
+
+        set! _ui [Lk::window_ui $_win]
+
+        if [not [empty? $icon]] {
+            Lk::window_icon $_win $icon
+        }
+
+        ;; Eval body — registers theme, translators, on-handlers, view, event_handler
+        eval $body
+
+        ;; Install command dispatcher if any on-handlers were registered
+        if [not [empty? $_cmd_handlers]] {
+            Lk::set_command_handler $_ui [lambda {cmd} {
+                LkDsl::_dispatch_command $cmd
+            }]
+        }
+
+        ;; Run the window loop
+        Lk::window_run $_win [lambda {tree} { LkDsl::_frame $tree }]
+
+        ;; Cleanup
+        Lk::window_destroy $_win
+    }
+}
+
+;; Export all public DSL procs into caller's scope
+import LkDsl app
+import LkDsl view theme translator keybinding clear_translators on event_handler
+import LkDsl screenshot quit
+import LkDsl column row label button text_input spacer scroll
+import LkDsl dropdown option split_h split_v editor
+import LkDsl checkbox radio slider tabs tab grid image canvas styled_text listview list_window

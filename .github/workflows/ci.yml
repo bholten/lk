@@ -1,0 +1,115 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sdl:
+        description: "Also build SDL3 from source and run the offscreen example smoke + Tour snapshots"
+        type: boolean
+        default: false
+
+jobs:
+  core:
+    # C89 core + Lcl bindings, headless.  The lcl pin is fetched by
+    # CMake (FetchContent), so this needs nothing from apt.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        lcl: [ON, OFF]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DLK_BUILD_LCL=${{ matrix.lcl }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Core tests
+        run: build/lk_test
+      - name: Lcl binding tests + doctests
+        if: matrix.lcl == 'ON'
+        run: build/lcl_lk_test
+      - name: Install into a prefix (exercise the CMake package)
+        run: |
+          cmake --install build --prefix "$PWD/prefix"
+          test -f prefix/include/lk.h
+          test -f prefix/lib/cmake/lk/lkConfig.cmake
+
+  asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (ASAN + UBSAN)
+        run: >
+          cmake -B build-asan -DLK_BUILD_LCL=ON -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build build-asan -j
+      - name: Core tests
+        run: build-asan/lk_test
+      - name: Lcl tests (LeakSanitizer on, no suppressions)
+        run: build-asan/lcl_lk_test
+
+  clang-tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy
+      - name: Configure + build with clang-tidy (C89 targets)
+        run: |
+          cmake -B build-tidy -DLK_BUILD_LCL=ON -DLK_ENABLE_CLANG_TIDY=ON
+          cmake --build build-tidy -j
+
+  sdl:
+    # Optional (manual dispatch): builds SDL3 / SDL3_ttf / SDL3_image
+    # from source, then runs every example headless under the offscreen
+    # video driver and uploads the Widget Tour's page snapshots as an
+    # artifact -- the visual regression net (docs/release.md).
+    if: github.event_name == 'workflow_dispatch' && inputs.sdl
+    runs-on: ubuntu-latest
+    env:
+      SDL_TAG: release-3.2.20
+      SDL_TTF_TAG: release-3.2.2
+      SDL_IMAGE_TAG: release-3.2.4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dependencies (SDL_ttf needs FreeType)
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          libfreetype-dev libx11-dev libxext-dev libwayland-dev
+          libxkbcommon-dev libegl1-mesa-dev fonts-liberation
+      - name: Cache SDL prefix
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: sdl-prefix
+          key: sdl-${{ env.SDL_TAG }}-${{ env.SDL_TTF_TAG }}-${{ env.SDL_IMAGE_TAG }}-${{ runner.os }}
+      - name: Build SDL3 from source
+        if: steps.sdl-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          P="$PWD/sdl-prefix"
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git sdl
+          cmake -S sdl -B sdl/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P"
+          cmake --build sdl/build && cmake --install sdl/build
+          git clone --depth 1 --branch "$SDL_TTF_TAG" https://github.com/libsdl-org/SDL_ttf.git sdl_ttf
+          cmake -S sdl_ttf -B sdl_ttf/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$P" -DCMAKE_INSTALL_PREFIX="$P" -DSDLTTF_VENDORED=OFF
+          cmake --build sdl_ttf/build && cmake --install sdl_ttf/build
+          git clone --depth 1 --branch "$SDL_IMAGE_TAG" https://github.com/libsdl-org/SDL_image.git sdl_image
+          cmake -S sdl_image -B sdl_image/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$P" -DCMAKE_INSTALL_PREFIX="$P" -DSDLIMAGE_VENDORED=OFF -DSDLIMAGE_AVIF=OFF -DSDLIMAGE_JXL=OFF -DSDLIMAGE_TIF=OFF -DSDLIMAGE_WEBP=OFF
+          cmake --build sdl_image/build && cmake --install sdl_image/build
+      - name: Configure + build lk with SDL
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DLK_BUILD_LCL=ON -DCMAKE_PREFIX_PATH="$PWD/sdl-prefix"
+          cmake --build build -j
+      - name: Tests
+        run: build/lk_test && build/lcl_lk_test
+      - name: Example smoke + Tour snapshots (offscreen)
+        run: LD_LIBRARY_PATH="$PWD/sdl-prefix/lib" tools/smoke.sh build "$PWD/tour"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: widget-tour-snapshots
+          path: tour/*.png

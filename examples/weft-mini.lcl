@@ -1,0 +1,634 @@
+;; weft-mini.lcl — a tiny Acme-flavored editor in pure Lcl over the lk
+;; bindings.  The north-star proof artifact for docs/weft-surface.md:
+;; every mechanism used here (documents, editors, anchored annotations,
+;; range presentations, translators, io) is a general lk/Lcl facility;
+;; every gesture MEANING is defined in this file and nowhere else.
+;;
+;; Demonstrates: two panes over two documents (the left one reads THIS
+;; file from disk, house tradition; Ctrl+S writes it back); a
+;; revision-driven plumbing producer (rescan only when the revision
+;; changes) annotating file:line references and TODO markers in
+;; prioritized layers with TYPED presentation values (#{file .. line
+;; ..} — the click handler never re-parses display text); per-frame
+;; span projection (underlined plumbs, highlighted TODOs, tinted eval
+;; output); and a Ctrl+F search row built as a conditional branch of
+;; the view body — "open the search UI" is a variable flip.
+;;
+;; The gesture table (all of it lives in the app block below):
+;;
+;;   primary    anywhere            ordinary editing (editor default)
+;;   middle     selection or word   EXECUTE: eval it, insert "=> result"
+;;                                  below the line, same document, undoable
+;;   secondary  a plumb annotation  PLUMB: jump to file:line, opening a
+;;                                  foreign file into the left pane
+;;   secondary  anywhere else       LOOK: jump to the next occurrence of
+;;                                  the clicked word (repeat to cycle)
+;;
+;; Re-binding is one line of policy, not a toolkit change.  Weft
+;; veterans who want PLUMB on middle-click change exactly this much:
+;;   translator pointer_down #{button middle} plumb Plumb
+;;
+;; What real weft adds beyond this file: syntax highlighting, shell
+;; execute and pipe-through-selection, a buffer manager over many open
+;; files, incremental (not drop-and-readd) producers, annotation
+;; persistence, inline rich output records.  None of them change the
+;; mechanisms exercised here — see docs/weft-surface.md.
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- Module state ----
+
+var ui {}          ;; the window's lk_ui, set inside the app body
+var panes #{}      ;; side -> #{doc hist store ed name path scan_rev}
+var active left    ;; pane of the last gesture; Ctrl+F/save target
+var search_open 0
+var search_val ""
+var flash ""       ;; transient status message (left status row)
+var flash_ttl 0
+
+;; Io:: is a separate package (may be compiled out): probe with a
+;; guarded call so the example degrades instead of dying.
+var has_io 0
+if [== 0 [catch { Io::getenv HOME } _r _e]] { set! has_io 1 }
+
+;; ---- Character classes ----
+;; Regex:: exists as a runner package (may be compiled out, like Io::),
+;; so the heuristics stay on literal sets probed with String::find and
+;; work everywhere.  Multi-byte UTF-8 units are simply not in the sets,
+;; which is the right answer for both heuristics below.
+
+let DIGITS "0123456789"
+let FNAME_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./"
+let WORD_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:/"
+
+proc _in_set {set text i n} {
+    if [< $i 0] { return 0 }
+    if [>= $i $n] { return 0 }
+
+    return [>= [String::find $set [String::index $text $i]] 0]
+}
+
+;; ---- Small helpers ----
+
+proc _flash {msg} {
+    set! flash $msg
+    set! flash_ttl 180
+}
+
+proc _ends_with {s suffix} {
+    let n [String::length $s]
+    let m [String::length $suffix]
+
+    if [> $m $n] { return 0 }
+
+    return [== [String::range $s [- $n $m] $n] $suffix]
+}
+
+proc _path_is {path file} {
+    if [== $path $file] { return 1 }
+
+    return [_ends_with $path "/$file"]
+}
+
+proc pane_get {side key} {
+    return [get [get $panes $side] $key]
+}
+
+proc pane_set {side key val} {
+    set! panes [put $panes $side [put [get $panes $side] $key $val]]
+}
+
+;; Build (or wholesale REPLACE) one pane: document, history, annot
+;; store, editor.  Replacement is how foreign-file plumbing works: the
+;; view body reads these refs every frame, so the next frame simply
+;; projects the new editor; the old one is released by refcount and its
+;; stale resource ref degrades to an empty pane for at most the frame
+;; in flight.
+proc _make_pane {side name path text} {
+    let doc [Lk::doc_new $text]
+    let hist [Lk::history_new $doc]
+    let store [Lk::annot_store_new]
+
+    Lk::annot_attach $store $doc
+    Lk::annot_layer_register $store "plumb"
+    Lk::annot_layer_register $store "todo"
+    Lk::annot_layer_register $store "output"
+    ;; explicit precedence: a plumb inside evaluated output must win
+    Lk::annot_layer_priority $store "plumb" 1
+
+    let ed [Lk::editor_new $ui $doc $hist]
+    Lk::editor_wrap $ed character
+    Lk::editor_presentations $ed $store
+
+    set! panes [put $panes $side #{doc $doc hist $hist store $store ed $ed name $name path $path scan_rev -1}]
+}
+
+;; ---- Plumbing producer ----
+;; Revision-driven derived state (docs/weft-surface.md section 4): the
+;; scan runs only when a document's revision changes; per frame only
+;; span projection runs.  weft-mini uses the sanctioned starter form —
+;; drop the layer and rebuild it — not yet incremental.
+
+;; The file:line heuristic, factored pure so it is testable headless:
+;; given text, its length, and the byte index of a ':', match
+;; <name-containing-a-dot>:<digits> and return #{start end file line},
+;; or #{} when the colon is no plumb (Lk::foo, 3:14, ...).
+proc _plumb_at {text n c} {
+    var de [+ $c 1]
+
+    while [_in_set $DIGITS $text $de $n] {
+        set! de [+ $de 1]
+    }
+
+    var fs $c
+
+    while [_in_set $FNAME_CHARS $text [- $fs 1] $n] {
+        set! fs [- $fs 1]
+    }
+
+    let name [String::range $text $fs $c]
+
+    if [== $de [+ $c 1]] { return #{} }
+    if [< [String::find $name "."] 1] { return #{} }
+
+    return #{start $fs end $de file $name line [int [String::range $text [+ $c 1] $de]]}
+}
+
+proc _rescan {side} {
+    let doc [pane_get $side doc]
+    let store [pane_get $side store]
+
+    foreach id [Lk::annot_by_layer $store "plumb"] { Lk::annot_remove $store $id }
+    foreach id [Lk::annot_by_layer $store "todo"] { Lk::annot_remove $store $id }
+
+    let text [Lk::doc_text $doc]
+    let n [String::length $text]
+
+    ;; candidate colons come from Lk::doc_find (C-speed); only the
+    ;; neighborhood of each colon is walked in script
+    var from 0
+    var going 1
+
+    while $going {
+        let c [Lk::doc_find $doc ":" $from]
+
+        if [< $c 0] {
+            set! going 0
+        } else {
+            let m [_plumb_at $text $n $c]
+            if [not [empty? $m]] {
+                let a [Lk::annot_add $store [get $m start] [get $m end] "plumb"]
+                Lk::annot_present $ui $store $a "plumb" #{file [get $m file] line [get $m line]}
+            }
+            set! from [+ $c 1]
+        }
+    }
+
+    set! from 0
+    set! going 1
+
+    while $going {
+        let t [Lk::doc_find $doc "TODO" $from]
+
+        if [< $t 0] {
+            set! going 0
+        } else {
+            let a [Lk::annot_add $store $t [+ $t 4] "todo"]
+            Lk::annot_present $ui $store $a "todo" #{marker "TODO"}
+            set! from [+ $t 4]
+        }
+    }
+}
+
+;; Span projection: annotations -> the editor's styled-range snapshot.
+;; The span contract wants sorted non-overlapping ranges; annotations
+;; may overlap (a plumb inside eval output), so sort and let the first
+;; span win.
+proc _push_span {spans store id style} {
+    let sp [Lk::annot_span $store $id]
+
+    if [<= [get $sp 1] [get $sp 0]] { return $spans }
+
+    return [List::push $spans [Dict::merge #{start [get $sp 0] end [get $sp 1]} $style]]
+}
+
+proc _produce_spans {side} {
+    let doc [pane_get $side doc]
+    let store [pane_get $side store]
+    var spans ()
+
+    foreach id [Lk::annot_by_layer $store "plumb"] {
+        set! spans [_push_span $spans $store $id #{fg (120 190 255) underline 1}]
+    }
+
+    foreach id [Lk::annot_by_layer $store "todo"] {
+        set! spans [_push_span $spans $store $id #{fg (255 214 102) bg (82 62 18)}]
+    }
+
+    foreach id [Lk::annot_by_layer $store "output"] {
+        set! spans [_push_span $spans $store $id #{fg (150 220 160) bg (26 42 30)}]
+    }
+
+    set! spans [List::sort_by $spans [lambda {sp} { get $sp start }]]
+
+    var flat ()
+    var prev 0
+
+    foreach sp $spans {
+        if [>= [get $sp start] $prev] {
+            set! flat [List::push $flat $sp]
+            set! prev [get $sp end]
+        }
+    }
+
+    Lk::editor_set_spans [pane_get $side ed] $doc $flat
+}
+
+;; Per-frame producer tick: rescan only on revision change, project
+;; always (projection is cheap; anchors have already tracked edits).
+proc _tick {side} {
+    let rev [Lk::doc_revision [pane_get $side doc]]
+
+    if [not [== $rev [pane_get $side scan_rev]]] {
+        _rescan $side
+        pane_set $side scan_rev $rev
+    }
+
+    _produce_spans $side
+}
+
+;; ---- Gesture implementations (the policy) ----
+
+;; The word under a byte position: expand over WORD_CHARS.  Newlines
+;; are not word chars, so line bounds are implicit.
+proc _word_at {doc pos} {
+    let text [Lk::doc_text $doc]
+    let n [String::length $text]
+
+    var s $pos
+    var e $pos
+
+    while [_in_set $WORD_CHARS $text [- $s 1] $n] {
+        set! s [- $s 1]
+    }
+    
+    while [_in_set $WORD_CHARS $text $e $n] {
+        set! e [+ $e 1]
+    }
+
+    if [== $s $e] { return #{text ""} }
+
+    return #{start $s end $e text [String::range $text $s $e]}
+}
+
+;; LOOK: search-next for the clicked word from the cursor, wrapping;
+;; repeated clicks on the same word cycle through its occurrences.
+proc _look {side pos} {
+    Lk::focus_set $ui "ed_$side"
+
+    let doc [pane_get $side doc]
+    let ed [pane_get $side ed]
+    let needle [get [_word_at $doc $pos] text]
+
+    if [empty? $needle] { return 0 }
+
+    var hit [Lk::doc_find $doc $needle [+ [Lk::editor_cursor $ed] 1]]
+
+    if [< $hit 0] { set! hit [Lk::doc_find $doc $needle 0] }
+
+    if [>= $hit 0] {
+        ;; Select the match (cursor to start, extend to end) so the
+        ;; find is visible via the ordinary selection highlight —
+        ;; and typing replaces it, the editor convention.
+        Lk::editor_command $ed set_cursor $hit
+        Lk::editor_command $ed set_cursor [+ $hit [String::length $needle]] extend
+    }
+
+    return 1
+}
+
+;; EXECUTE: eval the selection (when the click lands inside it) or the
+;; clicked word; insert "=> result" below the clicked line, INTO THE
+;; SAME DOCUMENT.  catch absorbs both runtime and parse errors, so a
+;; bad execute reports "!! ..." instead of killing the frame loop.
+;; The insertion is an ordinary transaction: Ctrl+Z removes it, and
+;; every annotation anchored below shifts and survives — the
+;; substrate, not this file, keeps them true.
+proc _execute {side pos} {
+    Lk::focus_set $ui "ed_$side"
+
+    let doc [pane_get $side doc]
+    let ed [pane_get $side ed]
+    var code ""
+    let sel [Lk::editor_selection $ed]
+
+    if [== [len $sel] 2] {
+        if [and [>= $pos [get $sel 0]] [< $pos [get $sel 1]]] {
+            set! code [String::range [Lk::doc_text $doc] [get $sel 0] [get $sel 1]]
+        }
+    }
+
+    if [empty? $code] {
+        set! code [get [_word_at $doc $pos] text]
+    }
+
+    if [empty? [String::trim $code]] { return 0 }
+
+    var res ""
+    var err ""
+    var out ""
+
+    if [== 0 [catch { eval $code } res err]] {
+        set! out "=> $res"
+    } else {
+        set! out "!! $err"
+    }
+
+    let le [Lk::doc_line_end $doc [Lk::doc_pos_to_line $doc $pos]]
+    Lk::doc_insert $doc $le "\n$out"
+    Lk::annot_add [pane_get $side store] [+ $le 1] [+ [+ $le 1] [String::length $out]] "output"
+    return 1
+}
+
+proc _goto_line {side ln} {
+    let doc [pane_get $side doc]
+    let lc [Lk::doc_line_count $doc]
+    var l $ln
+
+    if [< $l 1] {
+        set! l 1
+    }
+    
+    if [> $l $lc] {
+        set! l $lc
+    }
+
+    ;; set_cursor requests scroll-to-cursor; the editor's distant
+    ;; re-anchor path brings the line into view
+    Lk::editor_command [pane_get $side ed] set_cursor [Lk::doc_line_start $doc [- $l 1]]
+    Lk::focus_set $ui "ed_$side"
+}
+
+;; PLUMB: the handler receives a typed location value.  Own file ->
+;; jump; readable foreign file -> replace the left pane (see
+;; _make_pane); otherwise say why not.
+proc _plumb_open {file ln} {
+    if [_path_is [pane_get left path] $file] {
+        _goto_line left $ln
+        return ""
+    }
+
+    if [not $has_io] {
+        _flash "plumb: Io:: is off - can only jump within the open file"
+        return ""
+    }
+
+    var text ""
+    var err ""
+    if [not [== 0 [catch { Io::read_file $file } text err]]] {
+        _flash "plumb: cannot read '$file'"
+        return ""
+    }
+
+    _make_pane left $file $file $text
+    _goto_line left $ln
+    _flash "opened $file"
+}
+
+proc _save_left {} {
+    let path [pane_get left path]
+
+    if [or [not $has_io] [empty? $path]] {
+        _flash "save: Io:: unavailable or no path"
+        return ""
+    }
+
+    var r ""
+    var e ""
+
+    if [== 0 [catch { Io::write_file $path [Lk::doc_text [pane_get left doc]] } r e]] {
+        _flash "saved $path"
+    } else {
+        _flash "save FAILED: $path"
+    }
+}
+
+;; A toy verb for middle-click.
+proc greet {} { return "hello from weft-mini" }
+
+;; ---- The two documents ----
+
+let SCRATCH {;; scratch - this pane is a live Lcl buffer.  The gestures:
+;;
+;;   middle-click   EXECUTE  the selection (click inside it) or word
+;;   right-click    PLUMB    on an underlined file:line reference
+;;   right-click    LOOK     elsewhere: jump to next occurrence
+;;
+;; Middle-click the word greet below; select an expression and
+;; middle-click inside the selection to run it whole:
+;;
+;;   greet
+;;   + 40 2
+;;   String::upper "woven"
+;;
+;; The => line that appears is an ordinary edit in an ordinary
+;; transaction: Ctrl+Z removes it, and every annotation below it
+;; shifts and survives.  A word that names nothing simply echoes
+;; itself; a broken expression (select this line and middle-click):
+;;   + 1 oops
+;; reports "!! ..." below it instead of crashing the frame loop.
+;;
+;; Right-click these plumbs (underlined because the producer found
+;; them, not because this text is special):
+;;
+;;   weft-mini.lcl:1            the left pane IS this file - jumps
+;;   docs/weft-surface.md:431   a foreign file - opens on the left
+;;
+;; Right-click the word woven anywhere else to LOOK: the cursor
+;; jumps to the next woven, and clicking again cycles onward.
+;;
+;; Ctrl+F searches the pane you touched last (RETURN = next, ESC =
+;; close).  Ctrl+S writes the left buffer back to disk.
+;;
+;; TODO markers get their own layer and highlight, like this one.
+}
+
+let FALLBACK {;; weft-mini (embedded buffer)
+;;
+;; Io:: is unavailable, so the example could not read its own source
+;; and Ctrl+S is off.  Gestures still work; a foreign plumb such as
+;; docs/weft-surface.md:431 will fail politely.
+;;
+;; TODO rebuild with the lcl-io package for the self-reading demo.
+}
+
+var left_text $FALLBACK
+var left_path ""
+var left_name "embedded"
+
+if $has_io {
+    foreach cand ("examples/weft-mini.lcl" "weft-mini.lcl") {
+        if [empty? $left_path] {
+            var t ""
+            var e ""
+            if [== 0 [catch { Io::read_file $cand } t e]] {
+                set! left_text $t
+                set! left_path $cand
+                set! left_name "weft-mini.lcl"
+            }
+        }
+    }
+}
+
+;; ---- View pieces ----
+
+proc _flash_text {side} {
+    if [and [== $side left] [> $flash_ttl 0]] { return $flash }
+    return ""
+}
+
+;; One pane: editor above, status row below, search row when this pane
+;; owns it.  Body blocks see this proc's locals, so one parameterized
+;; proc serves both sides.
+proc _pane_view {side} {
+    let ed [pane_get $side ed]
+    let doc [pane_get $side doc]
+    let cpos [Lk::editor_cursor $ed]
+
+    column "pane_$side" #{align stretch gap 4 padding 6} {
+        editor "ed_$side" #{editor $ed grow 1 focusable 1 present (buf ($side))}
+
+        row "st_$side" #{gap 12} {
+            label "st_name_$side" #{text [pane_get $side name]}
+            label "st_pos_$side" #{tag dim text "[+ [Lk::doc_pos_to_line $doc $cpos] 1]:[Lk::doc_char_col $doc $cpos]"}
+            label "st_rev_$side" #{tag dim text "rev [Lk::doc_revision $doc]"}
+            label "st_flash_$side" #{tag warn text [_flash_text $side]}
+        }
+
+        if [and [== $search_open 1] [== $active $side]] {
+            row "search_row" #{gap 6} {
+                label "search_lbl" #{tag dim text "find:"}
+                text_input "search_in" #{text $search_val w 240 focusable 1
+                                         present (search_edit (q))}
+                label "search_hint" #{tag dim text "RETURN = next   ESC = close"}
+            }
+        }
+    }
+}
+
+;; ---- The application ----
+
+app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
+
+    theme {
+        rule window #{bg (24 26 32)}
+        rule * #{fg (205 210 220)}
+        rule editor #{bg (28 31 40) padding 8}
+        rule split_h #{border_color (70 75 90)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule label #{tag warn} #{fg (240 180 120)}
+        rule text_input #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
+        rule text_input #{state focused} #{border_color (80 140 220)}
+    }
+
+    ;; ---- Gestures: ALL of Acme's L/M/R policy, right here ----
+    ;; (To re-bind, change a button or key below - one line each.)
+
+    translator pointer_down #{button secondary} plumb Plumb
+    translator value_changed search_edit SearchEdit
+
+    keybinding f ctrl buf SearchOpen
+    keybinding s ctrl buf SaveLeft
+    keybinding return "" search_edit SearchNext
+    keybinding escape "" search_edit SearchClose
+
+    ;; Secondary on a plumb presentation arrives HERE as a command
+    ;; carrying the typed value - no text re-parsing, no re-querying.
+    on Plumb [lambda {cmd} {
+        let v [get [get $cmd hit] value]
+        _plumb_open [get $v file] [get $v line]
+    }]
+
+    ;; active already tracks the focused pane (focus_changed below), so
+    ;; Ctrl+F just opens the search row in it.
+    on SearchOpen [lambda {cmd} {
+        set! search_open 1
+        Lk::focus_set $ui "search_in"
+    }]
+
+    on SearchEdit [lambda {cmd} { set! search_val [get $cmd source_value] }]
+
+    on SearchNext [lambda {cmd} {
+        if [empty? $search_val] { return "" }
+        let doc [pane_get $active doc]
+        let ed [pane_get $active ed]
+        var hit [Lk::doc_find $doc $search_val [+ [Lk::editor_cursor $ed] 1]]
+        if [< $hit 0] { set! hit [Lk::doc_find $doc $search_val 0] }
+
+        if [>= $hit 0] {
+            ;; Select the match so the find is highlighted (and typing
+            ;; replaces it) — same convention as LOOK.
+            Lk::editor_command $ed set_cursor $hit
+            Lk::editor_command $ed set_cursor [+ $hit [String::length $search_val]] extend
+        }
+    }]
+
+    on SearchClose [lambda {cmd} {
+        set! search_open 0
+        Lk::focus_set $ui "ed_$active"
+    }]
+
+    on SaveLeft [lambda {cmd} { _save_left }]
+
+    ;; Middle and secondary clicks the editor does not consume bubble
+    ;; here (primary never does - the editor owns it).  Button ints:
+    ;; 1 = primary, 2 = middle, 3 = secondary.
+    ;;
+    ;; focus_changed drives the active pane: the app never infers
+    ;; focus from gestures — whenever an editor gains keyboard focus
+    ;; (click, LOOK, plumb, Tab, SearchClose) active follows it.
+    event_handler [lambda {ev node} {
+        if [== [get $ev type] focus_changed] {
+            if [== [get $ev next_id] ed_left] { set! active left }
+            if [== [get $ev next_id] ed_right] { set! active right }
+            return 0
+        }
+
+        if [not [== [get $ev type] pointer_down]] { return 0 }
+        if [not [== [get $ev phase] target]] { return 0 }
+        if [not [has? $ev target_id]] { return 0 }
+
+        var side ""
+
+        if [== [get $ev target_id] ed_left] { set! side left }
+        if [== [get $ev target_id] ed_right] { set! side right }
+        if [empty? $side] { return 0 }
+
+        let pos [Lk::editor_pos_at [pane_get $side ed] [get $ev x] [get $ev y]]
+
+        if [< $pos 0] { return 0 }
+
+        if [== [get $ev button] 2] { return [_execute $side $pos] }
+        if [== [get $ev button] 3] { return [_look $side $pos] }
+
+        return 0
+    }]
+
+    set! ui ${LkDsl::_ui}
+
+    _make_pane left $left_name $left_path $left_text
+    _make_pane right "scratch" "" $SCRATCH
+    Lk::focus_set $ui "ed_left"
+
+    view {
+        _tick left
+        _tick right
+
+        if [> $flash_ttl 0] { set! flash_ttl [- $flash_ttl 1] }
+
+        split_h "panes" #{split_ratio 500} {
+            _pane_view left
+            _pane_view right
+        }
+    }
+}

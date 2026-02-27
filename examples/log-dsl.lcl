@@ -1,0 +1,371 @@
+;; log-dsl.lcl — "Log Lens": a build-log viewer, and the styled_text
+;; showcase (docs/styled-text.md section 9).
+;;
+;; Log lines arrive over time and are shown as one `styled_text` per
+;; line inside a `scroll`, wrapping at whatever width the pane has —
+;; paragraphs sized by the width they get (the height-for-width hook).
+;; Each line is classified (error / warning / note / plain) and gets a
+;; span set: the severity word coloured, and every `path:line` range
+;; underlined AND *presented* as `loc #{file .. line ..}` — so a
+;; pointer_down translator on `loc` opens the file in the editor pane
+;; at that line (the Weft plumbing gesture on prop-text, without a
+;; document behind it), and a middle click copies the path.  A filter
+;; `text_input` (controlled, from Cells) narrows the lines; a wrap
+;; checkbox toggles `wrap word` / `wrap none` so clip-vs-wrap is
+;; visible; the help text at the top is itself a wrapping paragraph.
+;;
+;;   build/lcl_lk_main examples/log-dsl.lcl
+;;   SDL_VIDEODRIVER=offscreen build/lcl_lk_main examples/log-dsl.lcl --snap /tmp/log
+;;
+;; Demonstrates:
+;;   - styled_text: wrap word / none, spans (fg, bg, underline),
+;;     presentations on byte ranges with a `text-range` locus
+;;   - one `spans` set per line, rebuilt when the line is classified
+;;   - height-for-width through scroll > styled_text (long lines wrap
+;;     instead of overflowing; the scrollbar follows)
+;;   - controlled text_input as a live filter
+;;   - the editor pane driven from a text presentation: click a
+;;     location, the file opens there (`Lk::doc_new` + `editor_new` +
+;;     `doc_line_start`), middle-click copies via `Lk::clipboard_set`
+;;   - right-click anywhere: a context menu of the translators that
+;;     apply there (`Lk::context_menu`) -- Open / Copy on a location,
+;;     the global chords everywhere; Shift+F10 opens it at the focus
+;;   - `--snap DIR` self-driving screenshot (the Tour's recipe)
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; The log.  Paths point into this repository so clicking works when
+;; run from its root; anywhere else the editor pane says so.  Brace-
+;; quoted: a double-quoted string would try to substitute the "[ 2%]"
+;; progress prefixes as commands.
+let LOG (
+    {cmake --build build -j}
+    {[  2%] Building C object CMakeFiles/lk_core.dir/src/core/lk-tree.c.o}
+    {[  9%] Building C object CMakeFiles/lk_core.dir/src/core/lk-layout.c.o}
+    {note: src/core/lk-layout.c:93: layout_pass runs after every measure_pass; a widget with a fit_height hook is asked again at its final width, so a wrapping paragraph can grow the column that holds it}
+    {[ 15%] Building C object CMakeFiles/lk_core.dir/src/core/lk-widget.c.o}
+    {warning: src/core/lk-widget.c:291: layout_stack apportions leftover space by weight; a growing child that also wraps is estimated from its measured width, which may leave it a row short}
+    {[ 22%] Building C object CMakeFiles/lk_core.dir/src/core/lk-styled-text.c.o}
+    {[ 30%] Building C object CMakeFiles/lk_core.dir/src/core/lk-spans.c.o}
+    {error: src/core/lk-spans.c:113: spans_slot: range [15, 25) overlaps [10, 20) -- spans may touch but never overlap (an identical range would merge)}
+    {[ 37%] Building C object CMakeFiles/lk_core.dir/src/core/lk-scroll.c.o}
+    {[ 44%] Building C object CMakeFiles/lk_core.dir/src/core/lk-text-input.c.o}
+    {warning: src/core/lk-text-input.c:24: controlled mode: the app owns the text, the widget owns cursor and selection; a candidate the app never echoes is simply dropped}
+    {[ 52%] Building C object CMakeFiles/lk_core.dir/src/core/lk-canvas.c.o}
+    {[ 60%] Building C object CMakeFiles/lk_core.dir/src/editor/lk-editor.c.o}
+    {note: src/editor/lk-editor.c:1055: ed_fit_prefix is the one fit-policy function; the styled text kind restates it verbatim (docs/styled-text.md section 4)}
+    {[ 67%] Linking C static library liblk_core.a}
+    {[ 75%] Building C object CMakeFiles/lcl_lk.dir/src/lcl/lcl-lk.c.o}
+    {error: src/lcl/lcl-lk.c:2246: Lk::text_size: a freshly built list value must be released after lcl_list_push retains it -- LeakSanitizer reported 880 bytes in 22 objects}
+    {[ 82%] Building C object CMakeFiles/lcl_lk_main.dir/src/lcl/lcl-lk-main.c.o}
+    {[ 90%] Linking C executable lcl_lk_main}
+    {note: examples/sheet-dsl.lcl:1: Cells is the controlled text_input showcase; this viewer is the styled_text one}
+    {[100%] Built target lcl_lk_main}
+    {tools/smoke.sh: 16 examples ok}
+)
+
+let HELP "Log Lens shows one styled_text per line, wrapped at the pane width. Click any underlined path:line to open it in the editor pane at that line; middle-click copies the path. Type in the filter to narrow the lines, untick Wrap to clip them instead."
+
+;; ---- model ----
+
+var lines ()       ;; list of #{text .. kind .. sp .. locs ..}
+var shown 0        ;; how many of LOG have arrived
+var last_ms 0
+var filter ""
+var wrap_on 1
+var cur_file ""    ;; what the editor pane shows
+var cur_line 0
+var pane_msg "click a path:line in the log"
+var doc ""
+var ed ""
+var UI ""
+
+;; snapshot mode: --snap DIR
+var snap_dir ""
+var frame 0
+
+proc starts_with {s prefix} {
+    let n [String::length $prefix]
+    if [< [String::length $s] $n] { return 0 }
+    == [String::range $s 0 $n] $prefix
+}
+
+proc is_digit {c} {
+    if [not [== [String::length $c] 1]] { return 0 }
+    >= [String::find "0123456789" $c] 0
+}
+
+;; Every `path:NNN` in the line as #{start end file line} (byte
+;; offsets): a token containing a ':' whose tail is all digits and
+;; whose head looks like a path (has a '/' or a '.').
+proc find_locs {s} {
+    var out ()
+    var pos 0
+
+    foreach tok [String::split $s " "] {
+        let n [String::length $tok]
+        let colon [String::find $tok ":"]
+
+        if [and [> $colon 0] [< $colon [- $n 1]]] {
+            let head [String::range $tok 0 $colon]
+            var tail [String::range $tok [+ $colon 1] $n]
+            ;; strip a trailing ':' or ',' from the number
+            var tn [String::length $tail]
+            while [and [> $tn 0] [not [is_digit [String::index $tail [- $tn 1]]]]] {
+                set! tn [- $tn 1]
+            }
+            set! tail [String::range $tail 0 $tn]
+
+            var digits 1
+            var i 0
+            while [< $i $tn] {
+                if [not [is_digit [String::index $tail $i]]] { set! digits 0 }
+                set! i [+ $i 1]
+            }
+
+            if [and [> $tn 0] [and $digits [or [>= [String::find $head "/"] 0] [>= [String::find $head "."] 0]]]] {
+                set! out [List::push $out #{start $pos end [+ $pos [+ $colon [+ 1 $tn]]] file $head line [int $tail]}]
+            }
+        }
+
+        set! pos [+ $pos [+ $n 1]]
+    }
+
+    return $out
+}
+
+proc classify {s} {
+    if [starts_with $s "error"] { return err }
+    if [starts_with $s "warning"] { return warn }
+    if [starts_with $s "note"] { return note }
+    return plain
+}
+
+let SEV_COLOR #{err (255 110 110) warn (255 190 80) note (140 200 255)}
+
+;; Build a line's span set: the severity word coloured, each location
+;; underlined + presented as `loc`.
+proc make_line {s} {
+    let kind [classify $s]
+    let sp [Lk::spans_new $UI]
+    let locs [find_locs $s]
+
+    if [has? $SEV_COLOR $kind] {
+        let colon [String::find $s ":"]
+        if [> $colon 0] { Lk::spans_add $sp 0 $colon #{fg [get $SEV_COLOR $kind]} }
+    }
+
+    foreach l $locs {
+        Lk::spans_add $sp [get $l start] [get $l end] #{fg (140 200 255) underline 1}
+        Lk::spans_present $sp [get $l start] [get $l end] loc #{file [get $l file] line [get $l line]}
+    }
+
+    #{text $s kind $kind sp $sp locs $locs}
+}
+
+proc arrive {n} {
+    var left $n
+
+    while [and [< $shown [len $LOG]] [> $left 0]] {
+        set! lines [List::push $lines [make_line [get $LOG $shown]]]
+        set! shown [+ $shown 1]
+        set! left [- $left 1]
+    }
+}
+
+proc replay {} {
+    set! lines ()
+    set! shown 0
+    arrive 6
+}
+
+;; A line passes the filter when it contains the filter text
+;; (case-insensitive); an empty filter passes everything.
+proc visible? {ln} {
+    if [empty? $filter] { return 1 }
+    >= [String::find [String::lower [get $ln text]] [String::lower $filter]] 0
+}
+
+proc count_kind {k} {
+    List::reduce $lines 0 [lambda {acc ln} {
+        if [== [get $ln kind] $k] { + $acc 1 } else { return $acc }
+    }]
+}
+
+;; ---- the editor pane ----
+
+proc open_loc {file line} {
+    var text ""
+    let ok [catch { set! text [Io::read_file $file] } r e]
+
+    if [== $ok 1] {
+        set! text "could not read $file\n(run from the repository root, with the Io:: package)\n\n$e"
+        set! pane_msg "$file: not readable"
+    } else {
+        set! pane_msg "$file:$line"
+    }
+
+    set! doc [Lk::doc_new $text]
+    set! ed [Lk::editor_new $UI $doc]
+    Lk::editor_wrap $ed none
+    set! cur_file $file
+    set! cur_line $line
+
+    let nlines [Lk::doc_line_count $doc]
+    var target [- $line 1]
+    if [>= $target $nlines] { set! target [- $nlines 1] }
+    if [< $target 0] { set! target 0 }
+    Lk::editor_set_cursor $ed [Lk::doc_line_start $doc $target]
+    Lk::editor_scroll_to_cursor $ed
+}
+
+;; ---- snapshot mode ----
+
+proc snap_tick {} {
+    if [empty? $snap_dir] { return }
+    set! frame [+ $frame 1]
+    if [== $frame 1] {
+        arrive 100
+        open_loc "src/core/lk-spans.c" 113
+    }
+    if [== $frame 2] { screenshot "$snap_dir/log.png" }
+    if [== $frame 3] { quit }
+}
+
+proc parse_args {} {
+    let a [Lk::args]
+    if [and [>= [len $a] 2] [== [get $a 0] "--snap"]] {
+        set! snap_dir [get $a 1]
+    }
+}
+
+;; ---- ticking: a line every 350 ms until the log is complete ----
+
+proc tick {} {
+    if [not [empty? $snap_dir]] { return }
+    let now [Lk::time_ms $UI]
+    if [> [- $now $last_ms] 350] {
+        set! last_ms $now
+        arrive 1
+    }
+}
+
+proc wrap_mode {} {
+    if $wrap_on { return word } else { return none }
+}
+
+proc status_text {} {
+    "[len $lines] lines · [count_kind err] errors · [count_kind warn] warnings · filter \"$filter\""
+}
+
+app "Log Lens" #{font $font font_size 14 width 1100 height 640} {
+
+    theme {
+        rule window #{bg (22 24 30)}
+        rule * #{fg (205 210 220)}
+        rule label #{tag title} #{fg (240 240 245)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule styled_text #{tag help} #{fg (150 158 175) padding 4}
+        rule styled_text #{tag line} #{padding 3}
+        rule styled_text #{tag err} #{bg (60 30 32)}
+        rule styled_text #{tag warn} #{bg (58 48 26)}
+        rule styled_text #{tag note} #{bg (28 36 48)}
+        rule scroll #{bg (18 20 25) padding 4 gap 2}
+        rule text_input #{bg (28 30 38) padding 5 border_width 1 border_color (70 74 88)}
+        rule text_input #{state focused} #{border_color (255 170 60)}
+        rule button #{bg (48 52 64) padding 6 border_width 1 border_color (70 74 88)}
+        rule button #{state hovered} #{bg (62 66 82)}
+        rule checkbox #{padding 4}
+        rule split_h #{border_color (60 64 78)}
+        rule editor #{bg (18 20 25) padding 6}
+    }
+
+    ;; A location range clicked: primary opens it, middle copies it.
+    translator pointer_down #{button primary} loc Open
+    translator pointer_down #{button middle} loc Copy
+    translator value_changed filt Filter
+    translator value_changed wrapbox Wrap
+    translator pointer_down action Action
+    keybinding q ctrl Quit
+    keybinding f12 "" Snap
+
+    on Open [lambda {cmd} {
+        let v [get [get $cmd hit] value]
+        open_loc [get $v file] [get $v line]
+    }]
+    on Copy [lambda {cmd} {
+        let v [get [get $cmd hit] value]
+        Lk::clipboard_set $UI "[get $v file]:[get $v line]"
+        set! pane_msg "copied [get $v file]:[get $v line]"
+    }]
+    on Filter [lambda {cmd} { set! filter [get $cmd source_value] }]
+    on Wrap [lambda {cmd} { set! wrap_on [int [get $cmd source_value]] }]
+    on Action [lambda {cmd} {
+        if [== [get [get $cmd args] 0] replay] { replay }
+    }]
+    on Quit [lambda {cmd} { quit }]
+    on Snap [lambda {cmd} { screenshot "log.png" }]
+
+    ;; Right-click: "what can I do with this?" -- the menu lists the
+    ;; translators that apply under the pointer (Open / Copy on a
+    ;; location, the global keybindings everywhere).  The gesture is
+    ;; ours; the list is read off the translator table by the toolkit.
+    event_handler [lambda {ev node} {
+        if [and [== [get $ev type] pointer_down] [== [get $ev button] 3]] {
+            if [not [== [get $ev phase] target]] { return 0 }
+            Lk::context_menu $UI [get $ev x] [get $ev y]
+            return 1
+        }
+        return 0
+    }]
+    keybinding f10 shift MenuAtFocus
+    on MenuAtFocus [lambda {cmd} { Lk::context_menu_focus $UI }]
+
+    set! UI ${LkDsl::_ui}
+    parse_args
+    replay
+
+    view {
+        snap_tick
+        tick
+
+        split_h "main" #{split_ratio 560} {
+            column "log_pane" #{padding 8 gap 6 align stretch} {
+                row "hdr" #{gap 10 align center} {
+                    label "title" #{text "Log Lens" tag title}
+                    text_input "filt" #{text $filter controlled 1 focusable 1 w 220
+                                        present (filt (f))}
+                    checkbox "wrapbox" #{text "Wrap" checked $wrap_on controlled 1
+                                         present (wrapbox (w))}
+                    button "replay" #{text "Replay" present (action replay)}
+                }
+
+                styled_text "help" #{text $HELP tag help}
+
+                scroll "log" #{grow 1} {
+                    var i 0
+                    foreach ln $lines {
+                        if [visible? $ln] {
+                            let n [styled_text "ln_$i" #{text [get $ln text] spans [get $ln sp]
+                                                          wrap [wrap_mode]
+                                                          tag line}]
+                            Lk::tag ${LkDsl::_tree} $n [get $ln kind]
+                        }
+                        set! i [+ $i 1]
+                    }
+                }
+
+                label "status" #{text [status_text] tag dim}
+            }
+
+            column "src_pane" #{padding 8 gap 6 align stretch} {
+                label "pane_hdr" #{text $pane_msg tag dim}
+                if [not [empty? $ed]] {
+                    editor "src" #{editor $ed focusable 1 grow 1}
+                } else {
+                    styled_text "src_help" #{text "The file opens here, cursor on the line. Word wrap is off in this pane so code keeps its shape." tag help grow 1}
+                }
+            }
+        }
+    }
+}

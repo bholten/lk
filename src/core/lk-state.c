@@ -81,13 +81,16 @@ static int state_grow(lk_state *st, lk_u32 new_cap) {
       if (old_tab[i].used) {
         lk_u32 idx =
             state_hash(old_tab[i].node, old_tab[i].key) & (new_cap - 1);
+
         while (new_tab[idx].used) {
           idx = (idx + 1) & (new_cap - 1);
         }
+
         new_tab[idx] = old_tab[i];
         st->tab_len++;
       }
     }
+
     st->dealloc(st->alloc_ud, old_tab);
   }
 
@@ -98,9 +101,11 @@ static int state_ensure(lk_state *st) {
   if (st->tab_cap == 0) {
     return state_grow(st, LK_STATE_INIT_CAP);
   }
+
   if (st->tab_len * 100 >= st->tab_cap * LK_STATE_LOAD_PCT) {
     return state_grow(st, st->tab_cap * 2);
   }
+
   return 1;
 }
 
@@ -111,11 +116,13 @@ lk_state *lk_state_create(void *(*al)(void *, lk_u32),
   if (!al) {
     al = lk_sys_alloc;
   }
+
   if (!de) {
     de = lk_sys_dealloc;
   }
 
   st = (lk_state *)al(ud, (lk_u32)sizeof(lk_state));
+
   if (!st) {
     return NULL;
   }
@@ -160,6 +167,7 @@ int lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v) {
       st->tab[idx].value = v;
       return 1;
     }
+
     idx = (idx + 1) & (st->tab_cap - 1);
   }
 
@@ -181,10 +189,12 @@ lk_value lk_state_get(const lk_state *st, lk_node_id node, lk_u16 key) {
   }
 
   idx = state_hash(node, key) & (st->tab_cap - 1);
+
   while (st->tab[idx].used) {
     if (st->tab[idx].node == node && st->tab[idx].key == key) {
       return st->tab[idx].value;
     }
+
     idx = (idx + 1) & (st->tab_cap - 1);
   }
 
@@ -215,7 +225,7 @@ void lk_state_remove_node(lk_state *st, lk_node_id node) {
 }
 
 void lk_state_gc(lk_state *st, const lk_changeset *cs) {
-  lk_u32 ci, i;
+  lk_u32 ci, ai, i;
   int any_removed = 0;
 
   if (!st || !cs || st->tab_len == 0) {
@@ -223,7 +233,27 @@ void lk_state_gc(lk_state *st, const lk_changeset *cs) {
   }
 
   for (ci = 0; ci < cs->count; ci++) {
+    int readded;
+
     if (cs->changes[ci].kind != LK_CHANGE_REMOVED) {
+      continue;
+    }
+
+    /* A node id that is both REMOVED and ADDED in the same changeset
+     * moved to a different parent — its retained state must survive.
+     * The nested scan is O(removed * changes); changesets are
+     * typically small, so this beats building a side table. */
+    readded = 0;
+
+    for (ai = 0; ai < cs->count; ai++) {
+      if (cs->changes[ai].kind == LK_CHANGE_ADDED &&
+          cs->changes[ai].id == cs->changes[ci].id) {
+        readded = 1;
+        break;
+      }
+    }
+
+    if (readded) {
       continue;
     }
 

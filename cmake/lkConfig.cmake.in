@@ -1,0 +1,18 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# lk_sdl is a static library: its SDL dependencies must be found by
+# the consumer too.  LK_HAVE_SDL / LK_HAVE_SDL_IMAGE are baked in at
+# lk's configure time.
+if(@LK_HAVE_SDL@)
+  find_dependency(SDL3)
+  find_dependency(SDL3_ttf)
+  if(@LK_HAVE_SDL_IMAGE@)
+    find_dependency(SDL3_image)
+  endif()
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/lkTargets.cmake")
+
+check_required_components(lk)

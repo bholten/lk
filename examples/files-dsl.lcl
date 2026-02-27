@@ -1,0 +1,620 @@
+;; files-dsl.lcl — "File Explorer": the virtualized list showcase
+;; (docs/table.md section 6).
+;;
+;; The repository's tree flattened into rows and shown by a `listview`
+;; whose body builds ONLY the rows on screen: `list_window` answers
+;; which row indices the last layout could see (plus a margin), the
+;; body builds those, the list places each one by its `row` index in a
+;; `rows` x `row_h` extent.  The frame callback is the row source --
+;; there is no row model inside the toolkit.  A "50 000 rows" checkbox
+;; swaps in a synthetic model computed per row on demand (nothing is
+;; materialised, even sorted), so the status line's "built N of 50 000
+;; this frame" is the whole point made visible.
+;;
+;; A table is sugar: a header `row` of buttons presenting `col` (click
+;; = Sort), rows of labels with per-column `w` + `text_align`.  The list
+;; keeps a keyboard cursor (Up/Down/PageUp/PageDown/Home/End, a click);
+;; it is `controlled` here, so the model owns it and hands it back as
+;; `value`, and the cursor row is highlighted through a `sel` tag on
+;; the row the body builds -- selection is application state.
+;;
+;;   build/lcl_lk_main examples/files-dsl.lcl
+;;   SDL_VIDEODRIVER=offscreen build/lcl_lk_main examples/files-dsl.lcl --snap /tmp/files
+;;
+;; Demonstrates:
+;;   - listview + list_window: O(visible) frames over a large model
+;;   - cursor vs selection: `value $cur controlled 1` + value_changed,
+;;     `sel` / `dirname` tags on the rows this frame built
+;;   - table as sugar: header buttons presenting `col` -> Sort
+;;     (`List::sort_by`; `<` is numeric-only in Lcl), per-column `w`
+;;     and `text_align end` for sizes
+;;   - Enter / double-click opens the cursor row in an editor pane
+;;     (Log Lens's pane), middle-click copies its path, Ctrl+R reveals
+;;     its folder (`Lk::list_scroll_to`), right-click lists exactly
+;;     those through `Lk::context_menu`
+;;   - the portability boundary: directory walking (`Posix::readdir`)
+;;     is a POSIX-only Lcl package that lcl_lk_main does not register;
+;;     probed with catch, degrading to the files this tree knows about
+;;   - `--snap DIR` self-driving screenshot (the Tour's recipe)
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- the file model ----
+;;
+;; Two sources.  When the POSIX package is registered the tree is
+;; walked from the current directory (build trees and dotfiles
+;; skipped).  Otherwise the tracked files of this repository, sized by
+;; reading them through the portable Io:: package (itself probed --
+;; the Io::/Xoshiro:: convention of the other examples).
+
+var has_posix 0
+var has_io 0
+if [== 0 [catch { Posix::getcwd } _r _e]] { set! has_posix 1 }
+if [== 0 [catch { Io::getenv HOME } _r _e]] { set! has_io 1 }
+
+let KNOWN (
+    CLAUDE.md CMakeLists.txt LICENSE README.md
+    docs/TODO.md docs/canvas.md docs/context-menu.md docs/dsl-v2.md
+    docs/editor-keys-reflection.md docs/editor-multicursor.md docs/editor-wrap.md
+    docs/editor.md docs/forms-widgets.md docs/grow-layout.md docs/image-widget.md
+    docs/layers.md docs/lk.lcl docs/overlays.md docs/release.md docs/styled-text.md
+    docs/styles.md docs/table.md docs/text-contract.md docs/weft-gap-analysis.md
+    docs/weft-surface.md
+    examples/README.md examples/budget-dsl.lcl examples/editor-dsl.lcl
+    examples/files-dsl.lcl examples/forms-dsl.lcl examples/hello-dsl.lcl
+    examples/hello.lcl examples/listener-dsl.lcl examples/log-dsl.lcl
+    examples/minesweeper-dsl.lcl examples/modal-dsl.lcl examples/paint-dsl.lcl
+    examples/plotter-dsl.lcl examples/sheet-dsl.lcl examples/split-dsl.lcl
+    examples/stego-dsl.lcl examples/tour-dsl.lcl examples/weft-mini.lcl
+    include/lcl-lk.h include/lk-annot-store.h include/lk-document.h
+    include/lk-editor.h include/lk.h
+    lib/lk-dsl.lcl
+    src/core/lk-canvas.c src/core/lk-command.c src/core/lk-dropdown.c
+    src/core/lk-event.c src/core/lk-layout.c src/core/lk-list.c src/core/lk-menu.c
+    src/core/lk-overlay.c src/core/lk-render.c src/core/lk-scroll.c
+    src/core/lk-spans.c src/core/lk-style.c src/core/lk-styled-text.c
+    src/core/lk-text-input.c src/core/lk-tree.c src/core/lk-ui.c src/core/lk-widget.c
+    src/editor/lk-annot-store.c src/editor/lk-document.c src/editor/lk-edit-history.c
+    src/editor/lk-editor-widget.c src/editor/lk-editor.c
+    src/lcl/lcl-lk-main.c src/lcl/lcl-lk.c
+    src/sdl/demo.c src/sdl/lk-sdl.c src/sdl/lk-sdl.h
+    test/lcl-lk-test.c test/lk-list-test.c test/lk-menu-test.c
+    test/lk-styled-text-test.c test/lk-test.c
+    tools/autoquit.lcl tools/leakcheck.sh tools/plotter-harness.lcl
+    tools/sheet-harness.lcl tools/smoke.sh
+)
+
+;; A row is #{name path size kind}: name = the path shown, size in
+;; bytes (-1 = unknown, dirs 0), kind = "dir" or the extension.
+proc ext_of {path} {
+    var last -1
+    var i 0
+
+    ;; the extension is after the last '.' of the last segment
+    while [< $i [String::length $path]] {
+        if [== [String::index $path $i] "/"] { set! last -1 }
+        if [== [String::index $path $i] "."] { set! last $i }
+        set! i [+ $i 1]
+    }
+
+    if [< $last 0] { return file }
+    String::range $path [+ $last 1] [String::length $path]
+}
+
+proc file_row {path size} {
+    #{name $path size $size kind [ext_of $path]}
+}
+
+proc dir_row {path} {
+    #{name $path size 0 kind dir}
+}
+
+proc skip_name? {name} {
+    if [== [String::index $name 0] "."] { return 1 }
+    if [== $name "build"] { return 1 }
+    if [>= [String::length $name] 6] {
+        if [== [String::range $name 0 6] "build-"] { return 1 }
+    }
+    return 0
+}
+
+;; POSIX walk: directories first at each level, sorted names.
+proc walk {dir} {
+    var out ()
+
+    foreach name [List::sort [Posix::readdir $dir]] {
+        if [not [skip_name? $name]] {
+            var path $name
+            if [not [== $dir "."]] { set! path "$dir/$name" }
+
+            if [Posix::dir? $path] {
+                set! out [List::push $out [dir_row $path]]
+                set! out [List::concat $out [walk $path]]
+            } else {
+                set! out [List::push $out [file_row $path [Posix::file_size $path]]]
+            }
+        }
+    }
+
+    return $out
+}
+
+proc size_by_reading {path} {
+    if [not $has_io] { return -1 }
+    var text ""
+    if [== 0 [catch { set! text [Io::read_file $path] } r e]] {
+        return [String::length $text]
+    }
+    return -1
+}
+
+;; Known-files model: every directory prefix becomes a dir row the
+;; first time it is seen, so the listing reads like a tree.
+proc known_rows {} {
+    var out ()
+    var seen #{}
+
+    foreach path $KNOWN {
+        let parts [String::split $path "/"]
+        var prefix ""
+        var k 0
+
+        while [< $k [- [len $parts] 1]] {
+            if [empty? $prefix] {
+                set! prefix [get $parts $k]
+            } else {
+                set! prefix "$prefix/[get $parts $k]"
+            }
+            if [not [has? $seen $prefix]] {
+                set! seen [Dict::merge $seen #{$prefix 1}]
+                set! out [List::push $out [dir_row $prefix]]
+            }
+            set! k [+ $k 1]
+        }
+
+        set! out [List::push $out [file_row $path [size_by_reading $path]]]
+    }
+
+    return $out
+}
+
+var source "known files"
+var files ()
+
+if $has_posix {
+    set! source "Posix::readdir"
+    set! files [walk "."]
+} else {
+    set! files [known_rows]
+}
+
+;; ---- the synthetic model: 50 000 rows, computed per row ----
+;;
+;; Row i is a function of i; every 50th row is a directory.  Sizes go
+;; through a modular permutation so that "sort by size" is ALSO a
+;; function of the row index -- the sorted j-th row is the i whose
+;; size rank is j -- and nothing is ever materialised or sorted.
+
+let SYNTH_N 50000
+let SYNTH_A 7919       ;; coprime with SYNTH_N
+let SYNTH_INV 17679    ;; SYNTH_A * SYNTH_INV == 1 (mod SYNTH_N)
+let SYNTH_DIRS [int [/ $SYNTH_N 50]]
+let EXTS (c h lcl md txt)
+
+proc synth_rank {i} { % [* $i $SYNTH_A] $SYNTH_N }
+
+proc synth_row {i} {
+    let d [int [/ $i 50]]
+    if [== [% $i 50] 0] { return [dir_row "synthetic/dir_$d"] }
+    let ext [get $EXTS [% $i 5]]
+    #{name "synthetic/dir_$d/file_$i.$ext" size [* [synth_rank $i] 37] kind $ext}
+}
+
+;; ---- ordering ----
+
+var sort_col name
+var sort_desc 0
+var synth 0
+var sorted $files     ;; the real model in display order
+
+proc sort_key {r} {
+    if [== $sort_col size] { return [get $r size] }
+    if [== $sort_col kind] { return "[get $r kind] [get $r name]" }
+    get $r name
+}
+
+proc resort {} {
+    set! sorted [List::sort_by $files [lambda {r} { sort_key $r }]]
+    if $sort_desc { set! sorted [List::reverse $sorted] }
+}
+
+proc nrows {} {
+    if $synth { return $SYNTH_N }
+    len $sorted
+}
+
+;; Ascending position j -> synthetic row index i, per column.
+proc synth_index_asc {j} {
+    if [== $sort_col size] { return [% [* $j $SYNTH_INV] $SYNTH_N] }
+    if [== $sort_col kind] {
+        ;; directories first, then the files in index order
+        if [< $j $SYNTH_DIRS] { return [* $j 50] }
+        let k [- $j $SYNTH_DIRS]
+        return [+ $k [+ [int [/ $k 49]] 1]]
+    }
+    return $j
+}
+
+;; ...and its inverse: row index i -> ascending position.
+proc synth_pos_asc {i} {
+    if [== $sort_col size] { return [synth_rank $i] }
+    if [== $sort_col kind] {
+        if [== [% $i 50] 0] { return [int [/ $i 50]] }
+        return [+ $SYNTH_DIRS [- $i [+ [int [/ $i 50]] 1]]]
+    }
+    return $i
+}
+
+proc synth_index {j} {
+    if $sort_desc { return [synth_index_asc [- [- $SYNTH_N 1] $j]] }
+    synth_index_asc $j
+}
+
+proc synth_pos {i} {
+    if $sort_desc { return [- [- $SYNTH_N 1] [synth_pos_asc $i]] }
+    synth_pos_asc $i
+}
+
+;; The row source: display position -> row record.
+proc row_at {j} {
+    if $synth { return [synth_row [synth_index $j]] }
+    get $sorted $j
+}
+
+;; Display position of the directory holding row j (-1 = none).
+proc parent_pos {j} {
+    let name [get [row_at $j] name]
+    var cut -1
+    var i 0
+
+    while [< $i [String::length $name]] {
+        if [== [String::index $name $i] "/"] { set! cut $i }
+        set! i [+ $i 1]
+    }
+    if [< $cut 0] { return -1 }
+    let parent [String::range $name 0 $cut]
+
+    if $synth {
+        let i [synth_index $j]
+        if [== [% $i 50] 0] { return -1 }
+        return [synth_pos [* 50 [int [/ $i 50]]]]
+    }
+
+    var k 0
+    while [< $k [len $sorted]] {
+        if [== [get [get $sorted $k] name] $parent] { return $k }
+        set! k [+ $k 1]
+    }
+    return -1
+}
+
+;; ---- view state ----
+
+var cur -1            ;; the list's cursor row, owned here (controlled)
+var built 0           ;; rows built by the last frame
+var pane_msg "Enter or double-click a row to open it here"
+var doc ""
+var ed ""
+var UI ""
+var last_click_row -1
+var last_click_ms 0
+
+;; snapshot mode: --snap DIR
+var snap_dir ""
+var frame 0
+
+proc commas {n} {
+    let s [String::from $n]
+    let w [String::length $s]
+    var out ""
+    var i 0
+
+    while [< $i $w] {
+        if [and [> $i 0] [== [% [- $w $i] 3] 0]] { set! out "$out," }
+        set! out "$out[String::index $s $i]"
+        set! i [+ $i 1]
+    }
+
+    return $out
+}
+
+proc fmt_size {r} {
+    if [== [get $r kind] dir] { return "" }
+    if [< [get $r size] 0] { return "?" }
+    commas [get $r size]
+}
+
+proc row_tag {r} {
+    if [== [get $r kind] dir] { return dirname }
+    return cell
+}
+
+proc header_text {col title} {
+    if [not [== $col $sort_col]] { return $title }
+    if $sort_desc { return "$title v" }
+    return "$title ^"
+}
+
+;; "r_12" / "n_12" / "s_12" / "k_12" -> 12 ; anything else -> -1
+proc row_of_id {id} {
+    if [< [String::length $id] 3] { return -1 }
+    if [not [== [String::index $id 1] "_"]] { return -1 }
+    let tail [String::range $id 2 [String::length $id]]
+    if [not [number? $tail]] { return -1 }
+    int $tail
+}
+
+proc clamp_cursor {} {
+    if [>= $cur [nrows]] { set! cur [- [nrows] 1] }
+    if [< $cur 0] { set! cur -1 }
+}
+
+;; ---- the editor pane ----
+
+proc show_text {text msg} {
+    set! doc [Lk::doc_new $text]
+    set! ed [Lk::editor_new $UI $doc]
+    Lk::editor_wrap $ed none
+    set! pane_msg $msg
+}
+
+;; The entries directly under a directory row, as text.
+proc listing_of {name} {
+    var out ""
+    var n 0
+    let plen [+ [String::length $name] 1]
+    var k 0
+
+    while [< $k [len $sorted]] {
+        let child [get [get $sorted $k] name]
+        if [> [String::length $child] $plen] {
+            if [== [String::range $child 0 $plen] "$name/"] {
+                let rest [String::range $child $plen [String::length $child]]
+                if [< [String::find $rest "/"] 0] {
+                    set! out "$out$rest\n"
+                    set! n [+ $n 1]
+                }
+            }
+        }
+        set! k [+ $k 1]
+    }
+
+    "$name/  ($n entries)\n\n$out"
+}
+
+proc open_row {j} {
+    if [or [< $j 0] [>= $j [nrows]]] { return }
+    let r [row_at $j]
+    let name [get $r name]
+
+    if $synth {
+        if [== [get $r kind] dir] {
+            show_text "$name/  (1 directory, 49 files -- synthetic)\n" "$name/"
+        } else {
+            let i [synth_index $j]
+            show_text "synthetic row $i\nname  $name\nsize  [get $r size] bytes\nkind  [get $r kind]\n\nNothing was read: this row is a function of its index, computed when the list asked for it." $name
+        }
+        return
+    }
+
+    if [== [get $r kind] dir] {
+        show_text [listing_of $name] "$name/"
+        return
+    }
+
+    var text ""
+    var ok 0
+    if $has_io {
+        if [== 0 [catch { set! text [Io::read_file $name] } rr e]] { set! ok 1 }
+    }
+    if $ok {
+        show_text $text "$name  ([commas [String::length $text]] bytes)"
+    } else {
+        show_text "could not read $name\n(run from the repository root, with the Io:: package)" "$name: not readable"
+    }
+}
+
+proc reveal_row {j} {
+    let p [parent_pos $j]
+    if [< $p 0] {
+        set! pane_msg "[get [row_at $j] name]: top level"
+        return
+    }
+    set! cur $p
+    Lk::list_scroll_to $UI files $p
+    set! pane_msg "revealed [get [row_at $p] name]/"
+}
+
+;; ---- snapshot mode ----
+
+proc snap_tick {} {
+    if [empty? $snap_dir] { return }
+    set! frame [+ $frame 1]
+    if [== $frame 1] { set! synth 1 }
+    if [== $frame 2] {
+        ;; the list was laid out with 50 000 rows last frame, so the
+        ;; scroll request lands; one more frame and the window follows
+        set! cur 25003
+        Lk::list_scroll_to $UI files 25003
+    }
+    if [== $frame 4] { screenshot "$snap_dir/files.png" }
+    if [== $frame 5] { quit }
+}
+
+proc parse_args {} {
+    let a [Lk::args]
+    if [and [>= [len $a] 2] [== [get $a 0] "--snap"]] {
+        set! snap_dir [get $a 1]
+    }
+}
+
+proc status_text {} {
+    var dir asc
+    if $sort_desc { set! dir desc }
+    var model $source
+    if $synth { set! model "synthetic" }
+    "built $built of [commas [nrows]] rows this frame · cursor $cur · sort $sort_col $dir · model: $model"
+}
+
+app "File Explorer" #{font $font font_size 14 width 1100 height 640} {
+
+    theme {
+        rule window #{bg (22 24 30)}
+        rule * #{fg (205 210 220)}
+        rule label #{tag title} #{fg (240 240 245)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule label #{tag cell} #{padding 2}
+        rule label #{tag dirname} #{padding 2 fg (140 200 255)}
+        rule list #{bg (18 20 25) padding 2}
+        rule list #{state focused} #{border_width 1 border_color (255 170 60)}
+        rule row #{tag hdr} #{gap 8 padding 2}
+        rule row #{tag filerow} #{gap 8}
+        rule row #{tag sel} #{bg (52 70 100) gap 8}
+        rule button #{bg (48 52 64) padding 4 border_width 1 border_color (70 74 88)}
+        rule button #{state hovered} #{bg (62 66 82)}
+        rule button #{tag colhdr} #{bg (34 38 48)}
+        rule checkbox #{padding 4}
+        rule split_h #{border_color (60 64 78)}
+        rule editor #{bg (18 20 25) padding 6}
+        rule styled_text #{tag help} #{fg (150 158 175) padding 4}
+    }
+
+    ;; The list presents `files`; each built row presents `file (j)`.
+    translator value_changed files Cursor
+    translator value_changed synthbox Synth
+    translator pointer_down col Sort
+    translator pointer_down action Action
+    translator pointer_down #{button middle} file CopyPath
+    keybinding return "" files Open
+    keybinding r ctrl files Reveal
+    keybinding q ctrl Quit
+    keybinding f12 "" Snap
+
+    on Cursor [lambda {cmd} { set! cur [int [get $cmd source_value]] }]
+    on Synth [lambda {cmd} {
+        set! synth [int [get $cmd source_value]]
+        clamp_cursor
+    }]
+    on Sort [lambda {cmd} {
+        let c [get [get $cmd args] 0]
+        if [== $c $sort_col] {
+            set! sort_desc [- 1 $sort_desc]
+        } else {
+            set! sort_col $c
+            set! sort_desc 0
+        }
+        resort
+    }]
+    on CopyPath [lambda {cmd} {
+        let j [get [get $cmd args] 0]
+        Lk::clipboard_set $UI [get [row_at $j] name]
+        set! pane_msg "copied [get [row_at $j] name]"
+    }]
+    on Open [lambda {cmd} { open_row $cur }]
+    on Action [lambda {cmd} {
+        let a [get [get $cmd args] 0]
+        if [== $a open] { open_row $cur }
+        if [== $a reveal] { if [>= $cur 0] { reveal_row $cur } }
+    }]
+    on Reveal [lambda {cmd} { if [>= $cur 0] { reveal_row $cur } }]
+    on Quit [lambda {cmd} { quit }]
+    on Snap [lambda {cmd} { screenshot "files.png" }]
+
+    ;; Gestures the toolkit leaves to the app: a double click (two
+    ;; primary downs on one row within 400 ms -- the first one already
+    ;; moved the cursor there) opens the row; a secondary click asks
+    ;; the translator table what applies under the pointer.
+    event_handler [lambda {ev node} {
+        if [not [== [get $ev type] pointer_down]] { return 0 }
+        if [not [== [get $ev phase] target]] { return 0 }
+        let b [get $ev button]
+
+        if [== $b 3] {
+            Lk::context_menu $UI [get $ev x] [get $ev y]
+            return 1
+        }
+
+        if [== $b 1] {
+            let j [row_of_id [get $ev target_id]]
+            if [>= $j 0] {
+                let now [Lk::time_ms $UI]
+                if [and [== $j $last_click_row] [< [- $now $last_click_ms] 400]] {
+                    open_row $j
+                    set! last_click_row -1
+                } else {
+                    set! last_click_row $j
+                    set! last_click_ms $now
+                }
+            }
+        }
+
+        return 0
+    }]
+    keybinding f10 shift MenuAtFocus
+    on MenuAtFocus [lambda {cmd} { Lk::context_menu_focus $UI }]
+
+    set! UI ${LkDsl::_ui}
+    parse_args
+    resort
+
+    view {
+        snap_tick
+
+        split_h "main" #{split_ratio 600} {
+            column "list_pane" #{padding 8 gap 6 align stretch} {
+                row "top" #{gap 10 align center} {
+                    label "title" #{text "File Explorer" tag title}
+                    checkbox "synthbox" #{text "50 000 rows" checked $synth controlled 1
+                                          present (synthbox (s))}
+                    button "openbtn" #{text "Open" present (action open)}
+                    button "revealbtn" #{text "Reveal folder" present (action reveal)}
+                }
+
+                ;; the table's header: buttons presenting the column
+                row "hdr" #{tag hdr} {
+                    button "h_name" #{text [header_text name "Path"] w 420 tag colhdr present (col (name))}
+                    button "h_size" #{text [header_text size "Size"] w 110 tag colhdr present (col (size))}
+                    button "h_kind" #{text [header_text kind "Kind"] w 80 tag colhdr present (col (kind))}
+                }
+
+                ;; the table's body: only the visible rows exist
+                set! built 0
+                listview "files" #{rows [nrows] row_h 22 focusable 1 grow 1
+                                   value $cur controlled 1 present (files (x))} {
+                    foreach j [list_window files [nrows]] {
+                        let r [row_at $j]
+                        var rtag filerow
+                        if [== $j $cur] { set! rtag sel }
+                        row "r_$j" #{row $j tag $rtag present (file ($j))} {
+                            label "n_$j" #{text [get $r name] w 420 tag [row_tag $r]}
+                            label "s_$j" #{text [fmt_size $r] w 110 text_align end tag cell}
+                            label "k_$j" #{text [get $r kind] w 80 tag cell}
+                        }
+                        set! built [+ $built 1]
+                    }
+                }
+
+                label "status" #{text [status_text] tag dim}
+            }
+
+            column "src_pane" #{padding 8 gap 6 align stretch} {
+                label "pane_hdr" #{text $pane_msg tag dim}
+                if [not [empty? $ed]] {
+                    editor "src" #{editor $ed focusable 1 grow 1}
+                } else {
+                    styled_text "src_help" #{text "Up/Down, PageUp/PageDown, Home/End move the cursor; Enter or a double click opens the row here; middle-click copies its path; Ctrl+R reveals its folder; right-click lists what applies. Tick \"50 000 rows\" and watch the status line: the frame builds only the rows it can show." tag help grow 1}
+                }
+            }
+        }
+    }
+}

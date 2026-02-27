@@ -31,6 +31,7 @@ static void on_command(const lk_command *cmd, void *ud) {
   if (cmd->name == st->select_cmd_id) {
     if (cmd->arg_count >= 1 && cmd->args[0].tag == UIV_I32) {
       int idx = (int)cmd->args[0].as.i;
+
       if (idx >= 0 && idx < FRUIT_COUNT) {
         st->selected = idx;
       }
@@ -165,8 +166,8 @@ int main(int argc, char **argv) {
    *   POINTER_DOWN + ptype "item" -> "Select"
    *   KEY_DOWN     + ptype "item" -> "Select" (Return/Space activate)
    */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, 0, 0, 0, "Select");
 
   /* Handlers */
   lk_ui_set_command_handler(ui, on_command, &state);

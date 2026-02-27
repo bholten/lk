@@ -1,0 +1,2011 @@
+;;; This is the companion doc file for the C-defined `Lk` namespace
+;;; (`src/lcl/lcl-lk.c`, registered by `lcl_register_lk`).  Bodies here
+;;; are stubs and the file is never evaluated; the doctests run against
+;;; the real C commands (see `test/lcl-lk-test.c`).
+;;;
+;;; Conventions that hold across the whole namespace:
+;;;
+;;; - **Opaque handles.**  `Lk::ui_create`, `Lk::doc_new`,
+;;;   `Lk::history_new`, `Lk::editor_new`, `Lk::annot_store_new`,
+;;;   `Lk::image_new`, `Lk::image_load`, and
+;;;   `Lk::window_create` return opaque values.  Dependents retain
+;;;   their dependencies, so GC order is refcount order: dropping a doc
+;;;   handle while an editor still uses it is safe.  Tree handles are
+;;;   the exception — they are borrowed from the ui, so keep the ui
+;;;   value alive (in a variable) while holding a tree.
+;;; - **Nodes are addressed two ways.**  Tree-building procs
+;;;   (`Lk::prop`, `Lk::append_child`, ...) take the integer node
+;;;   *index* returned by `Lk::node`, valid only for the tree being
+;;;   built this frame.  Retained-state procs (`Lk::state_set`,
+;;;   `Lk::focus_set`, ...) take the stable node *id string*, which
+;;;   survives across frames.
+;;; - **Widget kinds**: window, row, column, spacer, label, button,
+;;;   text_input, scroll, dropdown, option, split_h, split_v, editor,
+;;;   styled_text, list,
+;;;   checkbox, radio, slider, tabs, tab, grid, image.
+;;; - **Event types**: pointer_move, pointer_down, pointer_up,
+;;;   key_down, key_up, text, wheel, window_resize, window_close,
+;;;   value_changed, focus_changed.
+;;; - **Errors are hard.**  Bad arity, unknown enum names, wrong
+;;;   opaque types, and rejected document mutations all raise script
+;;;   errors rather than returning sentinels.
+;;; - The SDL window procs (`Lk::window_*`, `Lk::register_font`) exist
+;;;   only in SDL-enabled builds; everything else is headless-safe.
+namespace Lk {
+
+    ;; ---- UI lifecycle ------------------------------------------------
+
+    ;;; Create a UI context: two trees sharing one intern table, plus
+    ;;; retained state, focus, overlays, and the resource table.
+    ;;;
+    ;;; The default dark theme is installed; layer more rules with
+    ;;; `Lk::theme_rule`.  Destroy explicitly with `Lk::ui_destroy` or
+    ;;; let GC finalize it.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::ui_create
+    ;;; <opaque:lk_ui>
+    proc ui_create {} {}
+
+    ;;; Destroy a UI context immediately.
+    ;;;
+    ;;; Editors registered in this ui's resource table are guarded: a
+    ;;; live-ui registry keeps their finalizers from touching the torn
+    ;;; down table.  Using the ui handle after this errors.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::ui_destroy $ui
+    proc ui_destroy {ui} {}
+
+    ;;; Start a frame: reset the next tree and return it for building.
+    ;;;
+    ;;; Build nodes into the returned tree with `Lk::node`,
+    ;;; `Lk::set_root`, `Lk::append_child`, `Lk::prop`; then call
+    ;;; `Lk::end_frame` to diff and swap.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::begin_frame [Lk::ui_create]
+    ;;; <opaque:lk_tree>
+    proc begin_frame {ui} {}
+
+    ;;; Diff the built tree against the previous frame, swap them, and
+    ;;; return the changeset.
+    ;;;
+    ;;; The changeset is a list of dicts with keys `kind` ("added",
+    ;;; "removed", or "updated"), `id` (interned id int), `id_str` (the
+    ;;; id string), and `node_ix`.  Children are matched by stable node
+    ;;; id; moving a node across parents shows up as removed + added,
+    ;;; which also GCs its retained state.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> Lk::set_root $t [Lk::node $t "root" "window"]
+    ;;; >> let cs [Lk::end_frame $ui]
+    ;;; >> len $cs
+    ;;; 1
+    ;;; >> get [get $cs 0] kind
+    ;;; "added"
+    ;;; >> get [get $cs 0] id_str
+    ;;; "root"
+    proc end_frame {ui} {}
+
+    ;;; Return the current (last committed) tree.
+    ;;;
+    ;;; This is the tree `Lk::end_frame` just swapped in — what will be
+    ;;; rendered and hit-tested.  Borrowed handle: no finalizer, valid
+    ;;; until the next `Lk::end_frame`.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::tree [Lk::ui_create]
+    ;;; <opaque:lk_tree>
+    proc tree {ui} {}
+
+    ;; ---- tree building -----------------------------------------------
+
+    ;;; Add a node to the tree being built; returns its index.
+    ;;;
+    ;;; `id` is the stable identity (interned string) used for diffing,
+    ;;; retained state, and focus; `kind` is a widget kind name.  The
+    ;;; returned index addresses this node in tree-building procs for
+    ;;; the current frame only (index 0 is the null sentinel; real
+    ;;; nodes start at 1).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> Lk::node $t "root" "window"
+    ;;; 1
+    ;;; >> Lk::node $t "greeting" "label"
+    ;;; 2
+    ;;; >> Lk::node $t "x" "flurb"
+    ;;; !! unknown kind
+    proc node {t id kind} {}
+
+    ;;; Set the tree's root node.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> Lk::set_root $t [Lk::node $t "root" "window"]
+    proc set_root {t ix} {}
+
+    ;;; Append `child_ix` as the last child of `parent_ix`.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let w [Lk::node $t "root" "window"]
+    ;;; >> let b [Lk::node $t "ok" "button"]
+    ;;; >> Lk::set_root $t $w
+    ;;; >> Lk::append_child $t $w $b
+    ;;; >> len [Lk::end_frame $ui]
+    ;;; 2
+    proc append_child {t parent_ix child_ix} {}
+
+    ;;; Set a property on a node.  The value is coerced by key:
+    ;;;
+    ;;; - `text`, `tooltip` — string (interned)
+    ;;; - `value` — string (interned) for a dropdown (option text) or
+    ;;;   tabs (tab id); an integer for a slider (numeric text is
+    ;;;   accepted, anything else is a hard error)
+    ;;; - `focusable`, `disabled`, `hidden`, `checked` — bool
+    ;;; - `w`, `h`, `padding`, `gap`, `split_ratio`, `min`, `max`,
+    ;;;   `controlled` (also its legacy name `split_controlled`) — int
+    ;;;   (`split_ratio` is per-mille, 0..1000)
+    ;;; - `step`, `columns` — int >= 1 (hard error otherwise)
+    ;;; - `grow` — int, hard error on negatives (weighted growth in
+    ;;;   row/column stacks; presence-checked, so an explicit 0 pins)
+    ;;; - `align`, `justify` — one of start, center, end, stretch
+    ;;; - `text_align`, `text_valign` — start, center or end: where a
+    ;;;   label / button / text_input places its text run inside its
+    ;;;   content box (a per-node override of the theme's style field
+    ;;;   of the same name; numbers in a table want `text_align end`)
+    ;;; - `editor` — an editor opaque from `Lk::editor_new`
+    ;;; - `image` — an image opaque from `Lk::image_new` / `image_load`
+    ;;; - `filter` — `linear` (default) or `nearest`: how an `image`
+    ;;;   node is resampled when its rect differs from the pixel size
+    ;;;   (`nearest` keeps pixel art crisp at integer zooms)
+    ;;; - `canvas` — a canvas opaque from `Lk::canvas_new` (the vector
+    ;;;   display list a `canvas` node replays)
+    ;;; - `spans` — a span set opaque from `Lk::spans_new` (colour /
+    ;;;   underline / presentations over a `styled_text`'s bytes)
+    ;;; - `wrap` — `none`, `character` or `word` (a `styled_text`'s row
+    ;;;   policy; default word)
+    ;;; - `rows`, `row` — int >= 0 (a `list`'s virtual row count; a list
+    ;;;   child's row index); `row_h` — int >= 1 (a `list`'s row height,
+    ;;;   default 24)
+    ;;;
+    ;;; Initial widget values are props, never state pokes: `value`
+    ;;; picks a dropdown's / tabs' / slider's initial selection and a
+    ;;; list's cursor row (an integer on a slider or a list, a string
+    ;;; elsewhere), `checked` a checkbox's, `split_ratio` a split's
+    ;;; initial ratio;
+    ;;; user interaction state then takes priority.  `controlled 1`
+    ;;; suppresses that state write entirely so the app owns the value
+    ;;; (it still receives value_changed and re-supplies the prop).  On
+    ;;; a text_input the value is `text` itself: controlled, the widget
+    ;;; renders the prop and every edit's value_changed carries the
+    ;;; candidate string, so the app can set, validate or revert the
+    ;;; text at any time.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let b [Lk::node $t "ok" "button"]
+    ;;; >> Lk::prop $t $b "text" "OK"
+    ;;; >> Lk::prop $t $b "focusable" 1
+    ;;; >> Lk::prop $t $b "tooltp" 1
+    ;;; !! unknown prop
+    ;;; >> let s [Lk::node $t "vol" "slider"]
+    ;;; >> Lk::prop $t $s "value" 40
+    ;;; >> Lk::prop $t $s "value" "abc"
+    ;;; !! slider value expects an integer
+    ;;; >> Lk::prop $t $s "step" 0
+    ;;; !! step expects an integer >= 1
+    ;;; >> let l [Lk::node $t "files" "list"]
+    ;;; >> Lk::prop $t $l "value" 3
+    ;;; >> Lk::prop $t $l "value" "abc"
+    ;;; !! list value expects an integer
+    ;;; >> let i [Lk::node $t "pic" "image"]
+    ;;; >> Lk::prop $t $i "filter" "nearest"
+    ;;; >> Lk::prop $t $i "filter" "blurry"
+    ;;; !! filter expects linear or nearest
+    proc prop {t ix key value} {}
+
+    ;;; Attach a presentation to a node: a semantic type plus a value,
+    ;;; the CLIM-style hook that translators match against.
+    ;;;
+    ;;; `value` may be a single value or a list of up to 4 values;
+    ;;; they are copied into the emitted command's args when a
+    ;;; translator fires on this node.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let b [Lk::node $t "del_3" "button"]
+    ;;; >> Lk::present $t $b "action" (remove_row 3)
+    proc present {t ix ptype value} {}
+
+    ;; ---- commands and translators ------------------------------------
+
+    ;;; Register a translator: when an event matching (`event`,
+    ;;; `ptype`, `kind`, `keycode`, `mods`, `button`) reaches a node
+    ;;; carrying a presentation of `ptype`, emit `command` with the
+    ;;; presentation's values as args.
+    ;;;
+    ;;; Empty-string arguments are wildcards.  `mods` is a plus-joined
+    ;;; combination of shift, ctrl, alt, gui ("ctrl+shift"); when
+    ;;; keycode or button is set, mods must match exactly.  `button`
+    ;;; (optional 8th arg) is primary, middle, or secondary; "" or 0
+    ;;; means any.  Translators only see events no widget or user
+    ;;; handler consumed.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::add_translator $ui pointer_down action "" "" "" Execute
+    ;;; >> Lk::add_translator $ui pointer_down action "" "" "" Plumb secondary
+    ;;; >> Lk::add_translator $ui key_down "" "" g ctrl GotoLine
+    ;;; >> Lk::add_translator $ui bloop action "" "" "" X
+    ;;; !! unknown event type
+    proc add_translator {ui event ptype kind keycode mods command (button "")} {}
+
+    ;;; Drop every translator registered on the ui.  Translators are
+    ;;; append-only (there is no remove-by-name), so a keymap that
+    ;;; changes at runtime — a REPL `bind!`, an init-file reload —
+    ;;; clears and re-registers the whole table; the next event sees
+    ;;; the new rows.  Safe wherever script runs: from the frame body,
+    ;;; an event handler, or even inside a command handler (a firing
+    ;;; translator is copied into its command before the handler
+    ;;; runs, and no matcher loop continues after emitting).  The
+    ;;; DSL's `clear_translators` wraps this for the app's ui.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::add_translator $ui key_down "" "" g ctrl GotoLine
+    ;;; >> Lk::clear_translators $ui
+    ;;; ""
+    ;;; >> Lk::add_translator $ui key_down "" "" g ctrl GotoLineV2
+    ;;; >> Lk::clear_translators
+    ;;; !! expected 1 argument
+    ;;; >> Lk::clear_translators 42
+    ;;; !! expected lk_ui opaque
+    proc clear_translators {ui} {}
+
+    ;;; Return the pending command queue as a list of dicts.
+    ;;;
+    ;;; Each dict has `name`, `args` (the presentation values),
+    ;;; `source_value` (the new value for value_changed-driven
+    ;;; commands), and — when the command came from an interior
+    ;;; presentation — a `hit` sub-dict with `ptype`, `value`,
+    ;;; `locus_kind`, and `locus`.  The queue fills as translators
+    ;;; fire; hosts drain it once per frame and then call
+    ;;; `Lk::clear_commands`.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::commands [Lk::ui_create]
+    ;;; ()
+    proc commands {ui} {}
+
+    ;;; Clear the pending command queue (and its text-arg arena).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::clear_commands [Lk::ui_create]
+    proc clear_commands {ui} {}
+
+    ;;; Return the command log — every command ever recorded, in
+    ;;; dispatch order, same dict shape as `Lk::commands`.
+    ;;;
+    ;;; The log copies text args at record time, so it stays valid
+    ;;; after `Lk::clear_commands` resets the queue.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::command_log [Lk::ui_create]
+    ;;; ()
+    proc command_log {ui} {}
+
+    ;;; Clear the command log.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::clear_command_log [Lk::ui_create]
+    proc clear_command_log {ui} {}
+
+    ;;; Install a handler proc called for each dispatched command.
+    ;;;
+    ;;; The handler receives one dict per command — the
+    ;;; `Lk::commands` shape plus `source_node_id` (stable id string
+    ;;; of the node the gesture hit).  Presentation values wrapped by
+    ;;; `Lk::annot_present` are unwrapped back to live Lcl values.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::set_command_handler $ui [lambda {cmd} { puts [get $cmd name] }]
+    proc set_command_handler {ui handler} {}
+
+    ;; ---- retained state ----------------------------------------------
+
+    ;;; Set retained per-node state.  `id` is the stable node id
+    ;;; string; `key` is an integer at or above 256.
+    ;;;
+    ;;; Keys below 256 are internal widget state (cursor positions,
+    ;;; scroll offsets, ...) and are rejected with a hard error —
+    ;;; initial widget values go through props instead.  App state
+    ;;; lives at key 256 and up.  State is GCd when its node is
+    ;;; removed from the tree and not re-added the same frame.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::state_set $ui "sidebar" 256 99
+    ;;; >> Lk::state_get $ui "sidebar" 256
+    ;;; 99
+    ;;; >> Lk::state_set $ui "sidebar" 10 1
+    ;;; !! internal widget state
+    proc state_set {ui id key value} {}
+
+    ;;; Read retained per-node state; the empty string when unset.
+    ;;;
+    ;;; Same key discipline as `Lk::state_set`: keys below 256 error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::state_get $ui "sidebar" 300
+    ;;; ""
+    proc state_get {ui id key} {}
+
+    ;; ---- focus -------------------------------------------------------
+
+    ;;; Focus the node with the given id string.
+    ;;;
+    ;;; A no-op unless the id resolves in the current tree to a
+    ;;; focusable, non-disabled node — so it only works after the
+    ;;; frame containing the node has ended.  An effective change
+    ;;; enqueues a focus_changed event.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let w [Lk::node $t "root" "window"]
+    ;;; >> let b [Lk::node $t "ok" "button"]
+    ;;; >> Lk::prop $t $b "focusable" 1
+    ;;; >> Lk::set_root $t $w
+    ;;; >> Lk::append_child $t $w $b
+    ;;; >> Lk::end_frame $ui
+    ;;; >> Lk::focus_set $ui "ok"
+    ;;; >> Lk::focus_get $ui
+    ;;; "ok"
+    ;;; >> Lk::focus_set $ui "root"
+    ;;; >> Lk::focus_get $ui
+    ;;; "ok"
+    proc focus_set {ui id} {}
+
+    ;;; Clear focus (enqueues a focus_changed event if focus was set).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::focus_clear $ui
+    ;;; >> Lk::focus_get $ui
+    ;;; ""
+    proc focus_clear {ui} {}
+
+    ;;; Return the focused node's id string, or the empty string when
+    ;;; nothing is focused.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::focus_get [Lk::ui_create]
+    ;;; ""
+    proc focus_get {ui} {}
+
+    ;;; Deferred focus: remember `id` and focus it at the first
+    ;;; `end_frame` whose committed tree contains it as a focusable,
+    ;;; enabled node (`focus_set`'s rules).  This is how an app
+    ;;; focuses a node it is about to build — "first-frame focus" —
+    ;;; instead of retrying `focus_set` every frame until the node
+    ;;; exists.  The request stays pending until satisfied, replaced,
+    ;;; or cancelled with `""`; a successful explicit `focus_set`
+    ;;; also cancels it.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::focus_request $ui "ok"
+    ;;; >> Lk::focus_get $ui
+    ;;; ""
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let w [Lk::node $t "root" "window"]
+    ;;; >> let b [Lk::node $t "ok" "button"]
+    ;;; >> Lk::prop $t $b "focusable" 1
+    ;;; >> Lk::set_root $t $w
+    ;;; >> Lk::append_child $t $w $b
+    ;;; >> Lk::end_frame $ui
+    ;;; >> Lk::focus_get $ui
+    ;;; "ok"
+    proc focus_request {ui id} {}
+
+    ;;; Capture the pointer for a node: while set, the run loop targets
+    ;;; pointer_move / pointer_up at that node whatever the cursor is
+    ;;; over (no hit-test) and suppresses hover updates -- what a drag
+    ;;; gesture wants once the button is down (split dividers and the
+    ;;; editor do this in C; Tiny Paint does it from script for its
+    ;;; strokes).  Cleared by `capture_clear`, or automatically when the
+    ;;; node leaves the tree.  Hosts that drive events themselves must
+    ;;; honour `capture_get`.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::capture_set $ui "canvas"
+    ;;; >> Lk::capture_get $ui
+    ;;; "canvas"
+    proc capture_set {ui id} {}
+
+    ;;; Release the pointer capture (no-op when none is set).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::capture_set $ui "canvas"
+    ;;; >> Lk::capture_clear $ui
+    ;;; >> Lk::capture_get $ui
+    ;;; ""
+    proc capture_clear {ui} {}
+
+    ;;; The id of the node holding the pointer capture, "" when none.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::capture_get $ui
+    ;;; ""
+    proc capture_get {ui} {}
+
+    ;;; The last laid-out rect of node `id` as an `(x y w h)` list in
+    ;;; window coordinates, or `()` when there is nothing to report:
+    ;;; the id is unknown, or no layout has run yet — headless scripts
+    ;;; never lay out, so they always get `()`.  Under `app`, the run
+    ;;; loop lays out every frame and the rects reflect what the frame
+    ;;; rendered (post-event re-layout).  A node the layout skipped —
+    ;;; hidden subtree, collapsed tab page — reports `(0 0 0 0)`.
+    ;;;
+    ;;; This is the pointer → content mapping for custom gestures:
+    ;;; subtract the rect origin from an event's `x`/`y` to get
+    ;;; node-local coordinates (Tiny Paint divides those by its zoom
+    ;;; to reach a pixel).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let w [Lk::node $t "root" "window"]
+    ;;; >> Lk::set_root $t $w
+    ;;; >> Lk::end_frame $ui
+    ;;; >> Lk::node_rect $ui "root"
+    ;;; ()
+    ;;; >> Lk::node_rect $ui "nope"
+    ;;; ()
+    proc node_rect {ui id} {}
+
+    ;;; The script's command-line arguments — everything after the
+    ;;; script path on the `lcl_lk_main` command line — as a list of
+    ;;; strings; `()` when the host set none (tests, embedders that
+    ;;; never call `lcl_lk_set_args`).  The Widget Tour reads
+    ;;; `--snap DIR` from it to photograph its pages headless.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::args
+    ;;; ()
+    proc args {} {}
+
+    ;;; The linked lk library's version string (`LK_VERSION_STRING`).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::version
+    ;;; "0.1.0"
+    proc version {} {}
+
+    ;; ---- time --------------------------------------------------------
+
+    ;;; Return the backend-stamped monotonic frame time in
+    ;;; milliseconds; 0 when headless (no window has stamped it).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::time_ms [Lk::ui_create]
+    ;;; 0
+    proc time_ms {ui} {}
+
+    ;;; Measure a text run: `(w h)` in pixels for `text` in the font
+    ;;; `font_id` (default 0 = the window face) at `font_size` (default
+    ;;; 0 = the window default size) -- what a label of that text would
+    ;;; measure.  Uses the ui's text backend, which a window installs
+    ;;; on its first frame; before that, and headless, the stub backend
+    ;;; answers: 8 px per codepoint, 16 px tall.  The Plotter centres
+    ;;; and right-aligns its tick labels with it.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::text_size $ui "hello"
+    ;;; (40 16)
+    ;;; >> Lk::text_size $ui ""
+    ;;; (0 16)
+    ;;; >> Lk::text_size $ui "héllo" 0 13
+    ;;; (40 16)
+    proc text_size {ui text ?font_id? ?font_size?} {}
+
+    ;; ---- overlays ----------------------------------------------------
+
+    ;;; Return the overlay stack depth (topmost overlay = last pushed).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::overlay_count [Lk::ui_create]
+    ;;; 0
+    proc overlay_count {ui} {}
+
+    ;;; Push an app-level overlay described by a spec dict.
+    ;;;
+    ;;; Keys: `kind` (required — dropdown_popup, tooltip, context_menu,
+    ;;; or modal), `anchor` (below, above, at_cursor, center; default
+    ;;; center for modal, else below), `owner_id` and `content_root_id`
+    ;;; (node id strings), `dismiss_on_outside` (default 0 for modal,
+    ;;; else 1), `traps_focus` (default 1 for modal, else 0).
+    ;;;
+    ;;; A modal with a hidden content subtree gets focus trapping,
+    ;;; outside-click blocking, a scrim, and ESC dismissal from core.
+    ;;; Overlays whose owner leaves the tree are popped automatically
+    ;;; at end_frame.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::overlay_push $ui #{kind modal}
+    ;;; >> Lk::overlay_count $ui
+    ;;; 1
+    ;;; >> Lk::overlay_push $ui #{kind vortex}
+    ;;; !! unknown
+    proc overlay_push {ui spec} {}
+
+    ;;; Pop the topmost overlay; a no-op on an empty stack.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::overlay_push $ui #{kind tooltip}
+    ;;; >> Lk::overlay_pop $ui
+    ;;; >> Lk::overlay_count $ui
+    ;;; 0
+    proc overlay_pop {ui} {}
+
+    ;; ---- tags and theme ----------------------------------------------
+
+    ;;; Tag a node for theme-rule matching (a node can carry several
+    ;;; tags; rules select on them via the `tag` selector).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let t [Lk::begin_frame $ui]
+    ;;; >> let b [Lk::node $t "save" "button"]
+    ;;; >> Lk::tag $t $b "primary"
+    proc tag {t ix tag} {}
+
+    ;;; Append a theme rule.  Later rules win; user rules layer on top
+    ;;; of the default dark theme.
+    ;;;
+    ;;; Selectors: `kind` (a widget kind name; "*" or "" = any), `tag`
+    ;;; ("" = any), `state` (focused, hovered, disabled; "" = any).
+    ;;; Style dict keys: `bg`, `fg`, `border_color`, `scrollbar_track`,
+    ;;; `scrollbar_thumb`, `accent` (each an (r g b) or (r g b a)
+    ;;; list; `accent` paints check marks, radio dots, the slider
+    ;;; fill + thumb, and the selected tab's bar),
+    ;;; `padding`, `gap`, `border_width`, `border_radius` (ints),
+    ;;; `align`, `justify` (start, center, end, stretch), `text_align`,
+    ;;; `text_valign` (start, center, end: where a label / button /
+    ;;; text_input places its text run inside its content box),
+    ;;; `font_id` (from `Lk::register_font`; bad values are hard errors)
+    ;;; and `font_size` (0 = face default).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::theme_rule $ui button "" "" #{bg (200 50 50)}
+    ;;; >> Lk::theme_rule $ui button primary hovered #{fg (255 255 0)}
+    ;;; >> Lk::theme_rule $ui "*" "" "" #{font_size 18}
+    proc theme_rule {ui kind tag state style} {}
+
+    ;; ---- interning ---------------------------------------------------
+
+    ;;; Intern a string in the ui's intern table; returns its stable
+    ;;; integer id (the same id every time for the same string).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let a [Lk::intern_id $ui "hello"]
+    ;;; >> == $a [Lk::intern_id $ui "hello"]
+    ;;; 1
+    proc intern_id {ui str} {}
+
+    ;;; Reverse lookup: the string for an interned id.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::intern_str $ui [Lk::intern_id $ui "hello"]
+    ;;; "hello"
+    proc intern_str {ui id} {}
+
+    ;; ---- clipboard ---------------------------------------------------
+
+    ;;; Return the ui's clipboard text.
+    ;;;
+    ;;; The clipboard is a host-installed backend: SDL windows wire up
+    ;;; the system clipboard; a headless ui has none, so `get` returns
+    ;;; the empty string and `set` is a no-op.  Editor cut/copy/paste
+    ;;; commands go through the same channel.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::clipboard_get [Lk::ui_create]
+    ;;; ""
+    proc clipboard_get {ui} {}
+
+    ;;; Set the ui's clipboard text (a no-op without a clipboard
+    ;;; backend — see `Lk::clipboard_get`).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::clipboard_set $ui "hi"
+    proc clipboard_set {ui text} {}
+
+    ;; ---- documents ---------------------------------------------------
+
+    ;;; Create a piece-table document, optionally with initial text.
+    ;;;
+    ;;; Pinned contracts: at least 1 line always; bytes stored verbatim
+    ;;; (no UTF-8 repair, no CRLF normalization); zero-length and
+    ;;; out-of-range mutations are rejected without advancing the
+    ;;; revision; no mutation from inside a change notification.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_new
+    ;;; <opaque:lk_document>
+    ;;; >> Lk::doc_text [Lk::doc_new "hi"]
+    ;;; "hi"
+    proc doc_new {(text "")} {}
+
+    ;;; Return the document's full text.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_text [Lk::doc_new "hello"]
+    ;;; "hello"
+    proc doc_text {d} {}
+
+    ;;; Return the document length in bytes (not codepoints).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_len [Lk::doc_new "hé"]
+    ;;; 3
+    proc doc_len {d} {}
+
+    ;;; Return the number of lines (always at least 1, even empty).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_line_count [Lk::doc_new]
+    ;;; 1
+    ;;; >> Lk::doc_line_count [Lk::doc_new "a\nb\nc"]
+    ;;; 3
+    proc doc_line_count {d} {}
+
+    ;;; Return the 0-based line containing byte position `pos`
+    ;;; (past-the-end positions resolve to the last line).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_pos_to_line [Lk::doc_new "alpha\nbeta"] 7
+    ;;; 1
+    ;;; >> Lk::doc_pos_to_line [Lk::doc_new "alpha\nbeta"] 999
+    ;;; 1
+    proc doc_pos_to_line {d pos} {}
+
+    ;;; Return the byte position where 0-based `line` starts.
+    ;;; Out-of-range lines are hard errors.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_line_start [Lk::doc_new "alpha\nbeta"] 1
+    ;;; 6
+    ;;; >> Lk::doc_line_start [Lk::doc_new "alpha\nbeta"] 5
+    ;;; !! line
+    proc doc_line_start {d line} {}
+
+    ;;; Return the byte position just past 0-based `line`, excluding
+    ;;; its newline.  Out-of-range lines are hard errors.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_line_end [Lk::doc_new "alpha\nbeta\ngamma"] 1
+    ;;; 10
+    proc doc_line_end {d line} {}
+
+    ;;; Return the 1-based CHARACTER column of byte position `pos`:
+    ;;; the codepoint count from the line start plus one.  A tab
+    ;;; counts as one character — never a byte or tab-expanded column.
+    ;;;
+    ;;; This exists because String::length is byte-based, so script
+    ;;; cannot count codepoints exactly (multi-byte UTF-8 would skew a
+    ;;; byte-diff column).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::doc_char_col [Lk::doc_new "ab\ncd"] 4
+    ;;; 2
+    ;;; >> Lk::doc_char_col [Lk::doc_new "é x"] 3
+    ;;; 3
+    proc doc_char_col {d pos} {}
+
+    ;;; Literal forward byte search: the first match position at or
+    ;;; after `from`, or -1 when not found.
+    ;;;
+    ;;; Piece-boundary aware; UTF-8 needles match their exact bytes.
+    ;;; Past-the-end `from` just returns -1, so search-next (search
+    ;;; again from hit + 1) never errors.  An empty needle is a hard
+    ;;; error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "banana"]
+    ;;; >> Lk::doc_find $d "na"
+    ;;; 2
+    ;;; >> Lk::doc_find $d "na" 3
+    ;;; 4
+    ;;; >> Lk::doc_find $d "zz"
+    ;;; -1
+    ;;; >> Lk::doc_find $d ""
+    ;;; !! empty
+    proc doc_find {d needle (from 0)} {}
+
+    ;;; Return the document revision as an opaque comparable string
+    ;;; token ("hi:lo").
+    ;;;
+    ;;; Compare for equality only — never do arithmetic on it.  Every
+    ;;; committed transaction advances it; rejected mutations do not.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> let r0 [Lk::doc_revision $d]
+    ;;; >> == $r0 [Lk::doc_revision $d]
+    ;;; 1
+    ;;; >> Lk::doc_insert $d 0 "x"
+    ;;; >> == $r0 [Lk::doc_revision $d]
+    ;;; 0
+    proc doc_revision {d} {}
+
+    ;;; Insert `text` at byte position `pos` (an implicit one-op
+    ;;; transaction).  Rejected mutations are hard errors.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ac"]
+    ;;; >> Lk::doc_insert $d 1 "b"
+    ;;; >> Lk::doc_text $d
+    ;;; "abc"
+    ;;; >> Lk::doc_insert $d 99 "x"
+    ;;; !!
+    proc doc_insert {d pos text} {}
+
+    ;;; Delete `len` bytes at byte position `pos` (an implicit one-op
+    ;;; transaction).  Zero-length and out-of-range deletes are hard
+    ;;; errors.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "abc"]
+    ;;; >> Lk::doc_delete $d 1 1
+    ;;; >> Lk::doc_text $d
+    ;;; "ac"
+    ;;; >> Lk::doc_delete $d 0 0
+    ;;; !!
+    proc doc_delete {d pos len} {}
+
+    ;;; Run `body` inside one begin/commit transaction bracket: all
+    ;;; edits in the body notify subscribers once and undo as one
+    ;;; step.
+    ;;;
+    ;;; The commit runs even if the body errors; the error then
+    ;;; propagates.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ad"]
+    ;;; >> let h [Lk::history_new $d]
+    ;;; >> Lk::doc_transact $d {
+    ;;; >>   Lk::doc_insert $d 1 "b"
+    ;;; >>   Lk::doc_insert $d 2 "c"
+    ;;; >> }
+    ;;; >> Lk::doc_text $d
+    ;;; "abcd"
+    ;;; >> Lk::history_undo $h $d
+    ;;; 1
+    ;;; >> Lk::doc_text $d
+    ;;; "ad"
+    proc doc_transact {d body} {}
+
+    ;;; Subscribe to committed transactions; returns a subscription id
+    ;;; for `Lk::doc_unsubscribe`.
+    ;;;
+    ;;; The proc receives a LIST of delta dicts — keys `start`,
+    ;;; `deleted_len`, `inserted_len`, `deleted`, `inserted` (bytes
+    ;;; copied into Lcl strings), and `origin`.  Delta coordinates are
+    ;;; sequential: each delta is expressed in the state produced by
+    ;;; the preceding deltas.  Mutating the document from inside a
+    ;;; notification is forbidden.
+    ;;;
+    ;;; Examples:
+    ;;; >> var seen ()
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> Lk::doc_subscribe $d [lambda {ds} { set! seen $ds }]
+    ;;; >> Lk::doc_insert $d 2 "c"
+    ;;; >> get [get $seen 0] inserted
+    ;;; "c"
+    proc doc_subscribe {d handler} {}
+
+    ;;; Remove a subscription by id.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new]
+    ;;; >> let sid [Lk::doc_subscribe $d [lambda {ds} {}]]
+    ;;; >> Lk::doc_unsubscribe $d $sid
+    proc doc_unsubscribe {d id} {}
+
+    ;; ---- edit history ------------------------------------------------
+
+    ;;; Create an undo history; attaches to `doc` when given.
+    ;;;
+    ;;; A detached history is auto-attached by `Lk::editor_new`.  The
+    ;;; history subscribes to the document and records committed
+    ;;; transactions; one transaction = one undo step.  The redo stack
+    ;;; clears on foreign edits.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::history_new
+    ;;; <opaque:lk_edit_history>
+    proc history_new {(doc {})} {}
+
+    ;;; Undo one step; returns 1 if anything was undone, else 0.
+    ;;;
+    ;;; Replays inverses as a transaction through the normal document
+    ;;; protocol, so subscribers (editors, annotation stores) see undo
+    ;;; like any other edit.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> let h [Lk::history_new $d]
+    ;;; >> Lk::history_undo $h $d
+    ;;; 0
+    ;;; >> Lk::doc_insert $d 2 "c"
+    ;;; >> Lk::history_undo $h $d
+    ;;; 1
+    ;;; >> Lk::doc_text $d
+    ;;; "ab"
+    proc history_undo {h d} {}
+
+    ;;; Redo one undone step; returns 1 if anything was redone.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> let h [Lk::history_new $d]
+    ;;; >> Lk::doc_insert $d 2 "c"
+    ;;; >> Lk::history_undo $h $d
+    ;;; 1
+    ;;; >> Lk::history_redo $h $d
+    ;;; 1
+    ;;; >> Lk::doc_text $d
+    ;;; "abc"
+    proc history_redo {h d} {}
+
+    ;;; Return 1 when there is a step to undo.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new]
+    ;;; >> let h [Lk::history_new $d]
+    ;;; >> Lk::history_can_undo $h
+    ;;; 0
+    proc history_can_undo {h} {}
+
+    ;;; Return 1 when there is an undone step to redo.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::history_can_redo [Lk::history_new]
+    ;;; 0
+    proc history_can_redo {h} {}
+
+    ;;; Remember the current undo position as the savepoint (call at
+    ;;; file-save time).
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> let h [Lk::history_new $d]
+    ;;; >> Lk::history_mark_saved $h
+    ;;; >> Lk::history_at_saved $h
+    ;;; 1
+    proc history_mark_saved {h} {}
+
+    ;;; Return 1 only while a savepoint is set and the undo position
+    ;;; equals it — the modified-since-save test.
+    ;;;
+    ;;; A fresh history has no savepoint.  Recording a new transaction
+    ;;; below the savepoint (the redo-clear case) invalidates it
+    ;;; forever.
+    ;;;
+    ;;; Examples:
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> let h [Lk::history_new $d]
+    ;;; >> Lk::history_at_saved $h
+    ;;; 0
+    ;;; >> Lk::history_mark_saved $h
+    ;;; >> Lk::doc_insert $d 0 "x"
+    ;;; >> Lk::history_at_saved $h
+    ;;; 0
+    ;;; >> Lk::history_undo $h $d
+    ;;; 1
+    ;;; >> Lk::history_at_saved $h
+    ;;; 1
+    proc history_at_saved {h} {}
+
+    ;; ---- editors -----------------------------------------------------
+
+    ;;; Create an editor view over a document and register it in the
+    ;;; ui's resource table.
+    ;;;
+    ;;; A detached `hist` is attached to the doc.  Wire the editor to
+    ;;; an editor-kind node via the `editor` prop.  Two editors may
+    ;;; share one doc + history: foreign transactions transform each
+    ;;; view's cursor and selection; only the invoking editor's
+    ;;; undo/redo jumps to the replay site.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::editor_new [Lk::ui_create] [Lk::doc_new "hi"]
+    ;;; <opaque:lk_editor>
+    proc editor_new {ui doc (hist {})} {}
+
+    ;;; Return the cursor as a byte offset (always codepoint-aligned).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "hi"]]
+    ;;; >> Lk::editor_cursor $e
+    ;;; 0
+    proc editor_cursor {e} {}
+
+    ;;; Move the cursor to a byte position, collapsing the selection
+    ;;; and scrolling the cursor row into view.
+    ;;;
+    ;;; To keep a selection while moving, use `Lk::editor_command $e
+    ;;; set_cursor $pos extend`; to scroll without moving anything,
+    ;;; use `Lk::editor_scroll_to_cursor`.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "hello"]]
+    ;;; >> Lk::editor_set_cursor $e 3
+    ;;; >> Lk::editor_cursor $e
+    ;;; 3
+    proc editor_set_cursor {e pos} {}
+
+    ;;; Request that the next render bring the cursor row into view,
+    ;;; moving nothing else.
+    ;;;
+    ;;; A foreign transaction carries the cursor along but deliberately
+    ;;; does not scroll — a script tailing its own output asks here
+    ;;; (set_cursor would scroll too, but collapses the selection).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "hi"]]
+    ;;; >> Lk::editor_scroll_to_cursor $e
+    proc editor_scroll_to_cursor {e} {}
+
+    ;;; Return the selection as a (start end) byte-offset list, or the
+    ;;; empty list when nothing is selected.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "hi"]]
+    ;;; >> Lk::editor_selection $e
+    ;;; ()
+    ;;; >> Lk::editor_command $e select_all
+    ;;; 1
+    ;;; >> Lk::editor_selection $e
+    ;;; (0 2)
+    proc editor_selection {e} {}
+
+    ;;; Return every caret's cursor position: a list of byte offsets
+    ;;; in document order, always with at least one entry.
+    ;;;
+    ;;; The editor's cursor is a caret set (multi-cursor, stage E) —
+    ;;; Lk::editor_cursor and Lk::editor_selection report the PRIMARY
+    ;;; caret.  Carets are added from script with Lk::editor_command
+    ;;; add_cursor_at / add_cursor_above / add_cursor_below /
+    ;;; select_next_match, and interactively by the widget gestures
+    ;;; (ctrl+click, ctrl+shift+up/down, ctrl+D, alt+drag box).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "ab\ncd"]]
+    ;;; >> Lk::editor_carets $e
+    ;;; (0)
+    ;;; >> Lk::editor_command $e add_cursor_at 3
+    ;;; 1
+    ;;; >> Lk::editor_carets $e
+    ;;; (0 3)
+
+    ;;; The editor widget's own key and pointer bindings as data — the
+    ;;; default keymap, rendered from the same tables the widget
+    ;;; dispatches through, so a listing built from this can never
+    ;;; disagree with what the widget does.  Takes no arguments (the
+    ;;; table is static; per-editor keymaps are a later topic).
+    ;;;
+    ;;; Returns a list of dicts in dispatch order.  Key rows:
+    ;;; `#{kind key chord "ctrl+d" key d mods "ctrl" mods_exact 1
+    ;;; extend_with_shift 0 command select_next_match doc "..."}`.
+    ;;; `chord` uses the DSL `keybinding` spelling (mods joined with
+    ;;; `+` in ctrl/alt/shift order, then the key name), `command` is
+    ;;; an `Lk::editor_command` name, `mods_exact 1` means extra
+    ;;; modifiers make the chord bubble to the app (ctrl+shift+d is
+    ;;; yours), and `extend_with_shift 1` marks a motion whose shift
+    ;;; variant extends the selection — one row, not two.  Pointer
+    ;;; rows: `#{kind pointer gesture "ctrl+click" button primary mods
+    ;;; "ctrl" mods_exact 0 action add_cursor command add_cursor_at
+    ;;; doc "..."}`; `action` is one of place_cursor, add_cursor,
+    ;;; box_select, scroll, scroll_x and `command` is "" when the
+    ;;; action is not a command (box selection, horizontal scroll).
+    ;;;
+    ;;; Examples:
+    ;;; >> let rows [Lk::editor_keys]
+    ;;; >> get [get $rows 0] kind
+    ;;; "key"
+    ;;; >> let ctrl_d [List::find $rows [lambda {r} { == [get $r chord] "ctrl+d" }]]
+    ;;; >> get $ctrl_d command
+    ;;; "select_next_match"
+    ;;; >> get $ctrl_d mods_exact
+    ;;; 1
+    ;;; >> let left [List::find $rows [lambda {r} { == [get $r chord] left }]]
+    ;;; >> get $left extend_with_shift
+    ;;; 1
+    ;;; >> let add [List::find $rows [lambda {r} { == [get $r kind] pointer }]]
+    ;;; >> get $add kind
+    ;;; "pointer"
+    ;;; >> Lk::editor_keys 1
+    ;;; !! expected no arguments
+    proc editor_keys {} {}
+
+    ;;; Return every caret's cursor position: a list of byte offsets
+    ;;; in document order, always with at least one entry.
+    ;;;
+    ;;; The editor's cursor is a caret set (multi-cursor, stage E) —
+    ;;; Lk::editor_cursor and Lk::editor_selection report the PRIMARY
+    ;;; caret.  Carets are added from script with Lk::editor_command
+    ;;; add_cursor_at / add_cursor_above / add_cursor_below /
+    ;;; select_next_match, and interactively by the widget gestures
+    ;;; (ctrl+click, ctrl+shift+up/down, ctrl+D, alt+drag box).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "ab\ncd"]]
+    ;;; >> Lk::editor_carets $e
+    ;;; (0)
+    ;;; >> Lk::editor_command $e add_cursor_at 3
+    ;;; 1
+    ;;; >> Lk::editor_carets $e
+    ;;; (0 3)
+    proc editor_carets {e} {}
+
+    ;;; Return one entry per caret, index-parallel to
+    ;;; Lk::editor_carets: a (start end) byte-offset list, or the
+    ;;; empty list for a caret with no selection.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new "ab\ncd"]]
+    ;;; >> Lk::editor_command $e add_cursor_at 3
+    ;;; 1
+    ;;; >> Lk::editor_command $e set_cursor 5 extend
+    ;;; 1
+    ;;; >> Lk::editor_selections $e
+    ;;; (() (3 5))
+    proc editor_selections {e} {}
+
+    ;;; Set the editor's read-only policy: 0 makes the view read-only
+    ;;; (editing commands and typed input no-op; motion, selection,
+    ;;; and copy still work).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> let e [Lk::editor_new $ui $d]
+    ;;; >> Lk::editor_set_editable $e 0
+    ;;; >> Lk::editor_command $e insert_text "x"
+    ;;; 0
+    ;;; >> Lk::doc_text $d
+    ;;; "ab"
+    proc editor_set_editable {e editable} {}
+
+    ;;; Return the editor's editable flag (1 by default).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::editor_editable [Lk::editor_new $ui [Lk::doc_new]]
+    ;;; 1
+    proc editor_editable {e} {}
+
+    ;;; Set the wrap mode: none, character, or word.
+    ;;;
+    ;;; The default is none — applications opt in explicitly.  In none
+    ;;; mode the editor follows the cursor horizontally; while
+    ;;; wrapping, horizontal scroll is forced to 0.  Unknown mode
+    ;;; names are hard errors listing the supported modes.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let e [Lk::editor_new $ui [Lk::doc_new]]
+    ;;; >> Lk::editor_wrap $e word
+    ;;; >> Lk::editor_wrap_get $e
+    ;;; "word"
+    ;;; >> Lk::editor_wrap $e diagonal
+    ;;; !! unknown mode
+    proc editor_wrap {e mode} {}
+
+    ;;; Return the current wrap mode name.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::editor_wrap_get [Lk::editor_new $ui [Lk::doc_new]]
+    ;;; "none"
+    proc editor_wrap_get {e} {}
+
+    ;;; Drive the editor's command layer; returns 1 if the command did
+    ;;; anything, else 0.
+    ;;;
+    ;;; Commands: insert_text, delete_backward, delete_forward,
+    ;;; delete_word_backward, delete_word_forward, move_left,
+    ;;; move_right, move_up, move_down, move_word_left,
+    ;;; move_word_right, move_line_start, move_line_end,
+    ;;; move_doc_start, move_doc_end, move_page_up, move_page_down,
+    ;;; select_all, cut, copy, paste, undo, redo, set_cursor,
+    ;;; scroll_lines, move_row_start, move_row_end, add_cursor_at,
+    ;;; add_cursor_above, add_cursor_below, select_next_match,
+    ;;; collapse_cursors.
+    ;;;
+    ;;; Per-command args: insert_text takes the text; set_cursor takes
+    ;;; a position and an optional literal extend (keeps the anchor);
+    ;;; scroll_lines takes a signed line count; add_cursor_at takes a
+    ;;; position (toggle: a caret already exactly there is removed,
+    ;;; never below one); motion commands take an optional literal
+    ;;; select (extends the selection).  The row variants are
+    ;;; visual-row HOME/END — identical to line start/end when
+    ;;; unwrapped.  Every command applies per caret (multi-cursor,
+    ;;; stage E): a multi-caret edit is ONE transaction whose undo
+    ;;; restores the caret set.  Each editing command brackets one
+    ;;; document transaction, so each is one undo step.  Unknown
+    ;;; commands are hard errors listing all known names.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let d [Lk::doc_new]
+    ;;; >> let e [Lk::editor_new $ui $d [Lk::history_new]]
+    ;;; >> Lk::editor_command $e insert_text "hi"
+    ;;; 1
+    ;;; >> Lk::doc_text $d
+    ;;; "hi"
+    ;;; >> Lk::editor_command $e move_left select
+    ;;; 1
+    ;;; >> Lk::editor_selection $e
+    ;;; (1 2)
+    ;;; >> Lk::editor_command $e undo
+    ;;; 1
+    ;;; >> Lk::doc_text $d
+    ;;; ""
+    ;;; >> Lk::editor_command $e frobnicate
+    ;;; !! unknown command
+    proc editor_command {e cmd (arg {}) (flag {})} {}
+
+    ;;; Install styled spans: a list of span dicts, each with `start`
+    ;;; and `end` byte offsets plus optional `fg` and `bg` color lists
+    ;;; and `underline` 1.  Spans must be sorted and non-overlapping;
+    ;;; the empty list clears.
+    ;;;
+    ;;; The snapshot is stamped with the doc's current revision.  A
+    ;;; snapshot whose revision no longer matches at geometry time is
+    ;;; ignored entirely (unstyled beats misplaced) — re-run the
+    ;;; producer off the change notification that made it stale.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let d [Lk::doc_new "hello world"]
+    ;;; >> let e [Lk::editor_new $ui $d]
+    ;;; >> Lk::editor_set_spans $e $d (#{start 0 end 5 fg (255 0 0)} #{start 6 end 11 underline 1})
+    ;;; >> Lk::editor_set_spans $e $d ()
+    ;;; >> Lk::editor_set_spans $e $d (#{start 9 end 2})
+    ;;; !!
+    proc editor_set_spans {e d spans} {}
+
+    ;; ---- annotation stores -------------------------------------------
+
+    ;;; Create an annotation store: anchored ranges with layers and
+    ;;; metadata, the canonical producer substrate for styled spans
+    ;;; and range presentations.
+    ;;;
+    ;;; Attach to a document with `Lk::annot_attach`; anchors then
+    ;;; transform through every committed transaction (undo/redo
+    ;;; included, for free).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::annot_store_new
+    ;;; <opaque:lk_annot_store>
+    proc annot_store_new {} {}
+
+    ;;; Attach the store to a document as an ordinary subscriber.
+    ;;; Re-attaching is a hard error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> let d [Lk::doc_new "ab"]
+    ;;; >> Lk::annot_attach $s $d
+    ;;; >> Lk::annot_attach $s $d
+    ;;; !!
+    proc annot_attach {s d} {}
+
+    ;;; Add an annotation record spanning bytes `start`..`end` on a
+    ;;; layer, with an optional metadata dict (string keys and values,
+    ;;; copied); returns the record id.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "hello"]
+    ;;; >> Lk::annot_add $s 0 5 "todo" #{note "fix me"}
+    ;;; 1
+    proc annot_add {s start end layer (meta {})} {}
+
+    ;;; Remove a record by id; returns 1 if it existed.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "ab"]
+    ;;; >> let a [Lk::annot_add $s 0 2 "todo"]
+    ;;; >> Lk::annot_remove $s $a
+    ;;; 1
+    ;;; >> Lk::annot_remove $s $a
+    ;;; 0
+    proc annot_remove {s id} {}
+
+    ;;; Return a record's current (start end) span — current because
+    ;;; anchors track edits.  A gone record is a hard error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> let d [Lk::doc_new "hello"]
+    ;;; >> Lk::annot_attach $s $d
+    ;;; >> let a [Lk::annot_add $s 1 3 "x"]
+    ;;; >> Lk::doc_insert $d 0 "zz"
+    ;;; >> Lk::annot_span $s $a
+    ;;; (3 5)
+    proc annot_span {s id} {}
+
+    ;;; Return a metadata value, or the empty string for an absent
+    ;;; key.  A gone record is a hard error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "ab"]
+    ;;; >> let a [Lk::annot_add $s 0 1 "x" #{kind "warning"}]
+    ;;; >> Lk::annot_meta $s $a "kind"
+    ;;; "warning"
+    ;;; >> Lk::annot_meta $s $a "nope"
+    ;;; ""
+    proc annot_meta {s id key} {}
+
+    ;;; Return all of a record's metadata as a dict.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "ab"]
+    ;;; >> let a [Lk::annot_add $s 0 1 "x" #{note "hi"}]
+    ;;; >> Lk::annot_meta_all $s $a
+    ;;; #{"note" "hi"}
+    proc annot_meta_all {s id} {}
+
+    ;;; Return a record's layer name.  A gone record is a hard error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "ab"]
+    ;;; >> Lk::annot_layer $s [Lk::annot_add $s 0 1 "todo"]
+    ;;; "todo"
+    proc annot_layer {s id} {}
+
+    ;;; Return the ids of records intersecting bytes `start`..`end`,
+    ;;; optionally filtered to one layer.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "hello"]
+    ;;; >> let a [Lk::annot_add $s 0 2 "todo"]
+    ;;; >> let b [Lk::annot_add $s 3 5 "link"]
+    ;;; >> Lk::annot_in_range $s 0 5
+    ;;; (1 2)
+    ;;; >> Lk::annot_in_range $s 0 5 "link"
+    ;;; (2)
+    proc annot_in_range {s start end (layer {})} {}
+
+    ;;; Return the ids of records covering byte position `pos`,
+    ;;; optionally filtered to one layer.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "hello"]
+    ;;; >> Lk::annot_add $s 0 2 "todo"
+    ;;; 1
+    ;;; >> Lk::annot_at $s 1
+    ;;; (1)
+    ;;; >> Lk::annot_at $s 4
+    ;;; ()
+    proc annot_at {s pos (layer {})} {}
+
+    ;;; Return all record ids on a layer.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "ab"]
+    ;;; >> Lk::annot_by_layer $s "todo"
+    ;;; ()
+    proc annot_by_layer {s layer} {}
+
+    ;;; Register a layer name explicitly (adding a record registers
+    ;;; its layer implicitly; this exists for empty layers you want
+    ;;; dirty-tracked or prioritized up front).
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::annot_layer_register [Lk::annot_store_new] "todo"
+    proc annot_layer_register {s layer} {}
+
+    ;;; Set a layer's priority for presentation queries
+    ;;; (auto-registers; default 0).  `Lk::annot_presentations`
+    ;;; precedence is layer priority descending, then smaller range,
+    ;;; then record id.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::annot_layer_priority [Lk::annot_store_new] "links" 10
+    proc annot_layer_priority {s layer priority} {}
+
+    ;;; The store's registered layer names, in registration order
+    ;;; (implicit registration by `Lk::annot_add` counts).  For a
+    ;;; projector that wants to style "every layer I don't already
+    ;;; know" without walking each record.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "hello"]
+    ;;; >> Lk::annot_add $s 0 2 "notes"
+    ;;; >> Lk::annot_layer_register $s "plumb"
+    ;;; >> Lk::annot_layers $s
+    ;;; ("notes" "plumb")
+    proc annot_layers {s} {}
+
+    ;;; A monotonic count of record-set mutations: add, remove, clear,
+    ;;; clear_layer, set_present, and records swallowed by a document
+    ;;; delete.  Anchor motion under ordinary edits does NOT count
+    ;;; (positions are queried live; the document's `Lk::doc_revision`
+    ;;; tracks that).  Compare a remembered value for change -- the cheap
+    ;;; "did anyone touch this store?" a per-frame projector needs.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s [Lk::doc_new "hello"]
+    ;;; >> Lk::annot_store_seq $s
+    ;;; 0
+    ;;; >> let a [Lk::annot_add $s 0 2 "notes"]
+    ;;; >> Lk::annot_store_seq $s
+    ;;; 1
+    ;;; >> Lk::annot_remove $s $a
+    ;;; >> Lk::annot_store_seq $s
+    ;;; 2
+    proc annot_store_seq {s} {}
+
+    ;; ---- range presentations (weft-surface) --------------------------
+
+    ;;; Attach a presentation (ptype + ANY Lcl value) to an annotation
+    ;;; record, making its range a gesture target inside an editor.
+    ;;;
+    ;;; The value is retained in a box registered under the ui's
+    ;;; resource table; command handlers get it back intact (dicts and
+    ;;; closures included).  Replacing, removing, or clearing the
+    ;;; record releases it exactly once.  The store becomes bound to
+    ;;; this ONE ui on first use.  Together with
+    ;;; `Lk::editor_presentations` and a translator on the ptype, a
+    ;;; middle- or secondary-click on the range emits a command whose
+    ;;; arg 0 is this value and whose `hit` dict carries the locus.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> let d [Lk::doc_new "see file.c:12"]
+    ;;; >> Lk::annot_attach $s $d
+    ;;; >> let a [Lk::annot_add $s 4 13 "links"]
+    ;;; >> Lk::annot_present $ui $s $a "file-ref" #{file "file.c" line 12}
+    proc annot_present {ui s id ptype value} {}
+
+    ;;; Map window coordinates to a byte position in the editor's
+    ;;; last completed layout; -1 before first layout, after
+    ;;; invalidating edits, or outside the laid-out rect (never
+    ;;; clamps).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::editor_pos_at [Lk::editor_new $ui [Lk::doc_new "hi"]] 5 5
+    ;;; -1
+    proc editor_pos_at {e x y} {}
+
+    ;;; Install the annotation store as the editor's presentation
+    ;;; source: pointer-down in the editor queries the store for
+    ;;; presentations at the hit position and offers them to the
+    ;;; translator matcher before any editing behavior.
+    ;;;
+    ;;; A translated gesture is pinned — no focus change, no cursor
+    ;;; move, no selection mutation.  Unmatched primary clicks place
+    ;;; the cursor as usual; unmatched middle/secondary clicks bubble.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let d [Lk::doc_new "hi"]
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> Lk::annot_attach $s $d
+    ;;; >> Lk::editor_presentations [Lk::editor_new $ui $d] $s
+    proc editor_presentations {e s} {}
+
+    ;; ---- Images ------------------------------------------------------
+
+    ;;; Create an application-owned image: a w x h RGBA pixel buffer
+    ;;; registered in the ui's resource table, shown by the `image`
+    ;;; widget kind through the `image` prop.  Pixels start
+    ;;; transparent black.  Dimensions must be 1..16384 per axis.
+    ;;;
+    ;;; The buffer is yours: poke it with `Lk::image_set_px` /
+    ;;; `Lk::image_set_bytes` (both mark it dirty so the window
+    ;;; re-uploads its texture) and the widget shows the result live.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::image_new $ui 4 3
+    ;;; <opaque:lk_image>
+    proc image_new {ui w h} {}
+
+    ;;; The image's dimensions as a (w h) list.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::image_size [Lk::image_new $ui 4 3]
+    ;;; (4 3)
+    proc image_size {img} {}
+
+    ;;; Read the pixel at (x, y) as an (r g b a) list.  0-based
+    ;;; coordinates from the top-left; out-of-range is a hard error.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let img [Lk::image_new $ui 4 3]
+    ;;; >> Lk::image_get_px $img 0 0
+    ;;; (0 0 0 0)
+    proc image_get_px {img x y} {}
+
+    ;;; Write the pixel at (x, y) from an (r g b ?a?) list — alpha
+    ;;; defaults to 255 — and mark the image dirty.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let img [Lk::image_new $ui 4 3]
+    ;;; >> Lk::image_set_px $img 1 2 (10 20 30)
+    ;;; >> Lk::image_get_px $img 1 2
+    ;;; (10 20 30 255)
+    proc image_set_px {img x y rgba} {}
+
+    ;;; Read len bytes at byte offset off from the raw pixel stream
+    ;;; (w * h * 4 RGBA bytes, rows top to bottom) as lowercase hex.
+    ;;; The byte-level view is the steganography substrate: least
+    ;;; significant bits live in every byte.  Out-of-range is a hard
+    ;;; error; len must be >= 1.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let img [Lk::image_new $ui 4 3]
+    ;;; >> Lk::image_set_px $img 0 0 (10 20 30)
+    ;;; >> Lk::image_bytes $img 0 4
+    ;;; "0a141eff"
+    proc image_bytes {img off len} {}
+
+    ;;; Write bytes into the raw pixel stream at byte offset off and
+    ;;; mark the image dirty.  The hex contract is
+    ;;; `Lk::window_icon_hex`'s: whitespace between digits is ignored;
+    ;;; any other character, an odd digit count, or an empty payload
+    ;;; is a hard error.  A range past the end of the buffer is a hard
+    ;;; error too.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let img [Lk::image_new $ui 4 3]
+    ;;; >> Lk::image_set_bytes $img 4 "ff00ff ff"
+    ;;; >> Lk::image_get_px $img 1 0
+    ;;; (255 0 255 255)
+    ;;; >> Lk::image_bytes $img 4 4
+    ;;; "ff00ffff"
+    proc image_set_bytes {img off hex} {}
+
+    ;; ---- Virtualized list -------------------------------------------
+
+    ;;; The visible row window of a `list` node as of its last layout:
+    ;;; `(first count)`, or `()` before any layout / for an unknown
+    ;;; node (headless).  The frame after reading it builds those rows
+    ;;; -- the DSL's `list_window` pads and clamps it.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::list_range $ui files
+    ;;; ()
+    proc list_range {ui id} {}
+
+    ;;; Scroll a `list` so that `row` is inside its viewport (no change
+    ;;; when it already is).  1 when done; 0 for an unknown / unlaid-out
+    ;;; list or a row out of range.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::list_scroll_to $ui files 100
+    ;;; 0
+    proc list_scroll_to {ui id row} {}
+
+    ;; ---- Context menus --------------------------------------------
+
+    ;;; Open a context menu at window point (x, y): hit-test the ui's
+    ;;; layout rects, list every command a gesture there would emit
+    ;;; (the translator table's applicable rows -- interior
+    ;;; presentations first, then the node's presentations, then the
+    ;;; global keybindings after a separator, each with its chord or
+    ;;; click as an accelerator hint), and pop the menu at the cursor.
+    ;;; Returns the item count; 0 = nothing applies (no menu).  Choosing
+    ;;; an item emits exactly the command the gesture would have.  The
+    ;;; gesture is yours: typically the event handler on a
+    ;;; secondary-button `pointer_down`.  Headless (no layout) → 0.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::context_menu $ui 10 10
+    ;;; 0
+    proc context_menu {ui x y} {}
+
+    ;;; The keyboard opener: the same menu at the focused node's centre
+    ;;; (bind Shift+F10 to it).  0 when nothing is focused or applies.
+    ;;;
+    ;;; Examples:
+    ;;; >> Lk::context_menu_focus [Lk::ui_create]
+    ;;; 0
+    proc context_menu_focus {ui} {}
+
+    ;;; Open a menu with explicit items: `#{items (...) ?owner id
+    ;;; ?anchor below|above|at_cursor|center ?x N ?y N}`.  An item is a
+    ;;; list `(label Command ?arg..)`, the separator `(---)`, or a dict
+    ;;; `#{label .. command .. args (..) enabled 0}`.  The anchor
+    ;;; defaults to `below` the owner, else `at_cursor` at (x, y).
+    ;;; Choosing an item emits its command with its args, the owner (or
+    ;;; the root) as the source node.  A menubar is a row of buttons
+    ;;; whose handlers call this.  Replaces any open menu; 1 on success.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::menu_open $ui #{items (("Open..." Open) (---) (Quit Quit))}
+    ;;; 1
+    ;;; >> len [Lk::menu_items $ui]
+    ;;; 3
+    ;;; >> catch { Lk::menu_open $ui #{items ()} } r e
+    ;;; 1
+    proc menu_open {ui spec} {}
+
+    ;;; The open menu's items as `#{label command accel enabled
+    ;;; separator}` records, `()` when none is open.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::menu_open $ui #{items ((Save Save) (---))}
+    ;;; >> get [get [Lk::menu_items $ui] 0] command
+    ;;; "Save"
+    ;;; >> get [get [Lk::menu_items $ui] 1] separator
+    ;;; 1
+    proc menu_items {ui} {}
+
+    ;;; The hovered item index (keys and pointer move it), -1 when none.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::menu_open $ui #{items ((A A) (B B))}
+    ;;; >> Lk::menu_hover $ui
+    ;;; 0
+    proc menu_hover {ui} {}
+
+    ;;; Choose item `index`: closes the menu and emits its command.  0
+    ;;; when no menu is open, the index is out of range, a separator or
+    ;;; disabled, or the item's node has left the tree.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::menu_open $ui #{items ((A A) (---))}
+    ;;; >> Lk::menu_activate $ui 1
+    ;;; 0
+    ;;; >> Lk::menu_activate $ui 0
+    ;;; 1
+    ;;; >> Lk::menu_items $ui
+    ;;; ()
+    proc menu_activate {ui index} {}
+
+    ;;; Close the open menu (no-op when none).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::menu_open $ui #{items ((A A))}
+    ;;; >> Lk::menu_close $ui
+    ;;; >> Lk::menu_items $ui
+    ;;; ()
+    proc menu_close {ui} {}
+
+    ;; ---- Span sets + styled text -----------------------------------
+
+    ;;; Create an application-owned span set: a sorted, non-overlapping
+    ;;; list of byte ranges over a `styled_text`'s `text`, each with
+    ;;; colour / underline (`Lk::spans_add`) and/or a presentation
+    ;;; (`Lk::spans_present`).  Registered in the ui's resource table
+    ;;; and wired to a node through the `spans` prop; a set may be
+    ;;; shared by several nodes.  Rebuild it (`spans_clear` + adds)
+    ;;; when the text changes -- a range past the text's end clamps.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::spans_new $ui
+    ;;; <opaque:lk_spans>
+    proc spans_new {ui} {}
+
+    ;;; Drop every span (presented values are released), keep capacity.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::spans_new $ui]
+    ;;; >> Lk::spans_add $s 0 3 #{fg (255 0 0)}
+    ;;; >> Lk::spans_clear $s
+    ;;; >> Lk::spans_count $s
+    ;;; 0
+    proc spans_clear {s} {}
+
+    ;;; Number of spans in the set.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::spans_new $ui]
+    ;;; >> Lk::spans_count $s
+    ;;; 0
+    proc spans_count {s} {}
+
+    ;;; Style the byte range [start, end): the dict takes any of `fg`
+    ;;; and `bg` (`(r g b ?a)` lists) and `underline` (0/1) -- at least
+    ;;; one.  Spans may touch but never overlap; the one exception is
+    ;;; an IDENTICAL range, which merges (so a range can be both
+    ;;; underlined and presented).  An unknown key, an empty dict, a
+    ;;; reversed or empty range, and an overlap are hard errors.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::spans_new $ui]
+    ;;; >> Lk::spans_add $s 0 5 #{fg (255 80 80) underline 1}
+    ;;; >> Lk::spans_add $s 5 9 #{bg (40 40 60 200)}
+    ;;; >> Lk::spans_count $s
+    ;;; 2
+    ;;; >> catch { Lk::spans_add $s 3 7 #{fg (1 2 3)} } r e
+    ;;; 1
+    ;;; >> catch { Lk::spans_add $s 20 30 #{colour (1 2 3)} } r e
+    ;;; 1
+    proc spans_add {s start end style} {}
+
+    ;;; Present the byte range [start, end) as `ptype` with `value`
+    ;;; (any Lcl value -- a dict, a closure -- delivered back live in
+    ;;; the command's `hit` dict, whose `locus` is `#{start end pos}`
+    ;;; with `locus_kind` "text-range").  A `pointer_down` translator
+    ;;; on the ptype fires when the range is clicked.  Give the same
+    ;;; range a look with `spans_add` (identical ranges merge).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::spans_new $ui]
+    ;;; >> Lk::spans_present $s 4 12 loc #{file "a.c" line 7}
+    ;;; >> Lk::spans_add $s 4 12 #{underline 1}
+    ;;; >> Lk::spans_count $s
+    ;;; 1
+    ;;; >> catch { Lk::spans_present $s 0 3 "" 1 } r e
+    ;;; 1
+    proc spans_present {s start end ptype value} {}
+
+    ;;; Byte position under a window point in a `styled_text` node
+    ;;; (from the ui-owned layout rects, so it answers only for a node
+    ;;; laid out by a window run loop), or -1 outside / unknown /
+    ;;; headless.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::styled_text_pos_at $ui para 10 10
+    ;;; -1
+    proc styled_text_pos_at {ui id x y} {}
+
+    ;; ---- Vector canvas ----------------------------------------------
+
+    ;;; Create an application-owned vector canvas: a retained display
+    ;;; list (lines, polylines, rects, text) registered in the ui's
+    ;;; resource table and shown by the `canvas` widget kind through
+    ;;; the `canvas` prop.  `w`/`h` are only a SIZE HINT — what the
+    ;;; widget measures at (default 0x0, so `grow` / `w` / `h` on the
+    ;;; node decide); they never clip or scale content.
+    ;;;
+    ;;; Ops are in canvas-local integer pixels (0,0 = the node's
+    ;;; top-left) and replay clipped to the node rect every frame;
+    ;;; rebuild the list (`Lk::canvas_clear` + ops) whenever your data
+    ;;; changes, and read the laid-out size with `Lk::node_rect` to
+    ;;; draw at the real size.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::canvas_new $ui 320 200
+    ;;; <opaque:lk_canvas>
+    ;;; >> Lk::canvas_size [Lk::canvas_new $ui]
+    ;;; (0 0)
+    proc canvas_new {ui (w 0) (h 0)} {}
+
+    ;;; The size hint as a (w h) list.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> Lk::canvas_size [Lk::canvas_new $ui 320 200]
+    ;;; (320 200)
+    proc canvas_size {c} {}
+
+    ;;; Change the size hint (0..16384 per axis; a hard error
+    ;;; otherwise).  Content is untouched.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui 10 10]
+    ;;; >> Lk::canvas_set_size $c 640 480
+    ;;; >> Lk::canvas_size $c
+    ;;; (640 480)
+    proc canvas_set_size {c w h} {}
+
+    ;;; Drop every op (capacity is kept, so a warm rebuild allocates
+    ;;; nothing).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_line $c 0 0 10 10 (255 0 0)
+    ;;; >> Lk::canvas_clear $c
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 0
+    proc canvas_clear {c} {}
+
+    ;;; Number of ops in the list.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_line $c 0 0 10 10 (255 0 0)
+    ;;; >> Lk::canvas_rect $c 1 1 5 5 (0 255 0)
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 2
+    proc canvas_op_count {c} {}
+
+    ;;; Open a sub-clip: ops appended until the matching `canvas_clip_end`
+    ;;; are clipped to the canvas-local rect x y w h (intersected with
+    ;;; the node's own clip).  Clips nest up to 8 deep; deeper is a
+    ;;; hard error.  A clip still open when the frame is drawn is
+    ;;; closed automatically at the end of the list (and `canvas_clear`
+    ;;; forgets it), so a forgotten end never leaks into the rest of
+    ;;; the window.  The Plotter draws its series inside a clip of the
+    ;;; plot area instead of repainting the margins.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui 100 100]
+    ;;; >> Lk::canvas_clip $c 10 10 50 50
+    ;;; >> Lk::canvas_line $c 0 0 100 100 (255 0 0)
+    ;;; >> Lk::canvas_clip_end $c
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 3
+    proc canvas_clip {c x y w h} {}
+
+    ;;; Close the innermost open sub-clip.  Ending with none open is a
+    ;;; hard error (a bug in the drawing code, not a state to render).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> catch { Lk::canvas_clip_end $c } r e
+    ;;; 1
+    proc canvas_clip_end {c} {}
+
+    ;;; Append a line from (x0, y0) to (x1, y1).  `color` is an
+    ;;; (r g b ?a?) list; `stroke` is a width in pixels (default 1;
+    ;;; 0 and 1 are hairlines).  Coordinates accept floats (rounded).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_line $c 0 0 100.7 50.2 (255 0 0) 2
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 1
+    proc canvas_line {c x0 y0 x1 y1 color (stroke 1)} {}
+
+    ;;; Append a polyline through `points`, a FLAT (x0 y0 x1 y1 ...)
+    ;;; list — even length, at least 2 points, at most 65536.  The
+    ;;; cheapest shape to build in script: push x then y as you go.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_polyline $c (0 0 10 5 20 0 30 5) (0 200 80)
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 1
+    proc canvas_polyline {c points color (stroke 1)} {}
+
+    ;;; Append a rectangle OUTLINE with top-left (x, y) and extent
+    ;;; w x h (the far edge is at x + w - 1).
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_rect $c 10 10 100 50 (200 200 200)
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 1
+    proc canvas_rect {c x y w h color (stroke 1)} {}
+
+    ;;; Append a FILLED rectangle.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_fill_rect $c 10 10 100 50 (40 40 48 128)
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 1
+    proc canvas_fill_rect {c x y w h color} {}
+
+    ;;; Append text with its top-left at (x, y), drawn in the canvas
+    ;;; node's resolved font.  Bytes are copied into the canvas.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let c [Lk::canvas_new $ui]
+    ;;; >> Lk::canvas_text $c 4 4 "y = sin x" (220 220 220)
+    ;;; >> Lk::canvas_op_count $c
+    ;;; 1
+    proc canvas_text {c x y text color} {}
+
+    ;; ---- SDL windows -------------------------------------------------
+    ;; These procs exist only in SDL-enabled builds and need a display;
+    ;; their examples are prose, not doctests.
+
+    ;;; Create an SDL window.  Defaults: 800x600, no font face (the
+    ;;; stub text backend), font size from the face default.
+    ;;;
+    ;;;     let win [Lk::window_create "My App" 900 600 "/path/to/font.ttf" 16]
+    ;;;
+    ;;; The window owns an lk ui (get it with `Lk::window_ui`); fonts
+    ;;; registered with `Lk::register_font` become theme `font_id`
+    ;;; values.  Creation failure is a hard error.
+    proc window_create {title (w 800) (h 600) (font_path {}) (font_size 0)} {}
+
+    ;;; Queue a screenshot: at the end of the current run-loop frame
+    ;;; the window reads its back buffer and saves it to `path` —
+    ;;; `.png` through SDL3_image (BMP bytes when it is compiled out),
+    ;;; any other extension as BMP.  One request at a time.  Works
+    ;;; under `SDL_VIDEODRIVER=offscreen`, which is the point: a script
+    ;;; can drive itself through its pages and leave PNGs behind
+    ;;; headless.  Returns 1 when queued.  An empty path is a hard
+    ;;; error; a failed save is only visible as a missing file.
+    proc window_screenshot {win path} {}
+
+    ;;; Leave `Lk::window_run` after the current frame (it is still
+    ;;; rendered, and a pending screenshot still saved).  Safe from a
+    ;;; command handler, the event handler, or the frame proc.
+    proc window_stop {win} {}
+
+    ;;; Destroy a window and its ui.  Editor handles registered in
+    ;;; that ui are guarded against the teardown.
+    proc window_destroy {win} {}
+
+    ;;; Run the frame loop until the window closes.  `frame_proc` is
+    ;;; called each frame with the tree to build into:
+    ;;;
+    ;;;     Lk::window_run $win [lambda {t} {
+    ;;;         let w [Lk::node $t "root" "window"]
+    ;;;         Lk::set_root $t $w
+    ;;;     }]
+    ;;;
+    ;;; The loop handles begin/end frame, style resolution, layout,
+    ;;; event polling and routing, and rendering; between-frame
+    ;;; synthetic events (focus GC, host API calls) are drained
+    ;;; around the poll.
+    proc window_run {win frame_proc} {}
+
+    ;;; Return the window's ui context (borrowed — do not destroy it;
+    ;;; `Lk::window_destroy` owns it).
+    proc window_ui {win} {}
+
+    ;;; Install an event handler proc called for events the widgets
+    ;;; did not consume.  The handler receives an event dict (`type`,
+    ;;; `target_id`, `node_id`, pointer/key/text payload fields;
+    ;;; focus_changed carries `prev_id` and `next_id`); a truthy
+    ;;; return consumes the event before translator dispatch.
+    proc window_set_event_handler {win handler} {}
+
+    ;;; Register a font face by path; returns its font_id for theme
+    ;;; rules (1 and up; face 0 is the window-creation font).
+    ;;;
+    ;;; Returns 0 on failure, mirroring C — an unreadable path is not
+    ;;; a script error.  Paths are verified by opening the face at
+    ;;; the default size at registration time.
+    proc register_font {win path} {}
+
+    ;;; Set the window icon (taskbar / title bar / dock, as the
+    ;;; platform allows) from an image file.  PNG — the recommended
+    ;;; source format everywhere; `.ico`/`.icns` are release-time
+    ;;; packaging, not something lk decodes — when lk was built with
+    ;;; SDL3_image; BMP always (SDL core).
+    ;;;
+    ;;;     Lk::window_icon $win "icon.png"
+    ;;;
+    ;;; Returns 1 on success, 0 when the file is unreadable or
+    ;;; undecodable (the window keeps its previous icon) — mirroring
+    ;;; C, that is not a script error.  The DSL `app` takes an `icon`
+    ;;; key that calls this.
+    proc window_icon {win path} {}
+
+    ;;; Set the window icon from an encoded image (PNG/BMP, same
+    ;;; decoders as `Lk::window_icon`) given as a hex string — the
+    ;;; script-side route for embedding the icon in a single-file
+    ;;; script or static binary (Lcl strings cannot carry raw bytes;
+    ;;; C hosts use `lk_window_set_icon_mem` on the bytes directly).
+    ;;; Whitespace between digits is ignored.
+    ;;;
+    ;;;     Lk::window_icon_hex $win "89504e470d0a1a0a ... 49454e44ae426082"
+    ;;;
+    ;;; Returns 1 on success, 0 when decoding fails.  A non-hex
+    ;;; character, an odd digit count, or an empty payload is a hard
+    ;;; error.
+    proc window_icon_hex {win hex} {}
+
+    ;;; Load an image file into a fresh app-owned image (registered
+    ;;; in the ui's resource table exactly like `Lk::image_new`'s).
+    ;;; BMP always; PNG and friends when lk was built with
+    ;;; SDL3_image.  For lossless round-trips (steganography!) stick
+    ;;; to BMP and PNG.
+    ;;;
+    ;;;     let img [Lk::image_load $ui "cover.png"]
+    ;;;
+    ;;; An unreadable or undecodable file is a HARD error (an
+    ;;; opaque-returning proc has no clean 0 return) — wrap in
+    ;;; `catch` when the path comes from the user.
+    proc image_load {ui path} {}
+
+    ;;; Save an image to a file; the format comes from the extension
+    ;;; (case-insensitive `.bmp` or `.png` — the extension IS the
+    ;;; format).  An unknown extension is a hard error; an IO failure
+    ;;; returns 0, and `.png` returns 0 when lk was built without
+    ;;; SDL3_image (the `Lk::window_icon` failure contract).
+    ;;;
+    ;;;     Lk::image_save $img "stego.bmp"
+    proc image_save {img path} {}
+
+    ;;; Open a native "choose a file" dialog.  Returns immediately;
+    ;;; later — from inside `Lk::window_run`'s loop, never
+    ;;; mid-eval — proc is called with ONE argument: a list of path
+    ;;; strings, empty when the user cancelled.  filters is an
+    ;;; optional list of (name pattern) 2-lists with SDL's
+    ;;; ';'-separated extension patterns; default is an optional
+    ;;; starting location.
+    ;;;
+    ;;;     Lk::open_file_dialog $win [lambda {paths} {
+    ;;;         if [len $paths] { open_cover [List::first $paths] }
+    ;;;     }] (("Images" "bmp;png"))
+    ;;;
+    ;;; A window destroyed while its dialog is open never delivers.
+    proc open_file_dialog {win proc ?filters ?default} {}
+
+    ;;; The "save as" twin of `Lk::open_file_dialog`: same arguments,
+    ;;; same delivery contract; the chosen path arrives as a 1-element
+    ;;; list (empty = cancelled).  The file is not created — pass the
+    ;;; path to `Lk::image_save` (or `Io::write_file`) yourself.
+    ;;;
+    ;;;     Lk::save_file_dialog $win [lambda {paths} {
+    ;;;         if [len $paths] { Lk::image_save $img [List::first $paths] }
+    ;;;     }] (("BMP image" "bmp"))
+    proc save_file_dialog {win proc ?filters ?default} {}
+}

@@ -133,12 +133,8 @@ lk_u8 lk_command_arg_count(const lk_command *cmd) {
 }
 
 lk_value lk_command_arg(const lk_command *cmd, lk_u8 idx) {
-  lk_value none;
-  none.tag = UIV_NONE;
-  none.as.i = 0;
-
   if (!cmd || idx >= cmd->arg_count || idx >= LK_CMD_MAX_ARGS) {
-    return none;
+    return lk_v_none();
   }
 
   return cmd->args[idx];
@@ -190,6 +186,14 @@ lk_u32 lk_command_source_ptype(const lk_command *cmd) {
   }
 
   return cmd->source_ptype;
+}
+
+lk_value lk_command_source_value(const lk_command *cmd) {
+  if (!cmd) {
+    return lk_v_none();
+  }
+
+  return cmd->source_value;
 }
 
 /* ---- UI accessors ---- */
@@ -260,7 +264,7 @@ int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,
                      lk_rect *rects) {
   lk_layout_cfg cfg;
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = viewport_w;
   cfg.viewport_h = viewport_h;
   cfg.styles = NULL;

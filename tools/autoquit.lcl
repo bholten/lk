@@ -1,0 +1,24 @@
+;; Headless leak-check driver (tools/leakcheck.sh):
+;;
+;;   SDL_VIDEODRIVER=offscreen build-asan/lcl_lk_main tools/autoquit.lcl examples/foo.lcl
+;;
+;; Wraps Lk::window_run so the app's frame lambda stops the window
+;; after 30 frames and the process exits normally -- LeakSanitizer
+;; only reports at a normal exit, so `timeout`'s SIGTERM would skip it.
+;; Needs the runner's Io:: package (LK_LCL_IO) to read the script.
+var _aq_orig ${Lk::window_run}
+var _aq_n 0
+
+namespace Lk {
+    proc window_run {win f} {
+        $_aq_orig $win [lambda {tree} {
+            $f $tree
+            set! _aq_n [+ $_aq_n 1]
+            if [> $_aq_n 30] { Lk::window_stop $win }
+        }]
+    }
+}
+
+let script [List::index [Lk::args] 0]
+
+eval_at [Io::read_file $script] $script

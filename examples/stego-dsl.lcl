@@ -1,0 +1,292 @@
+;; stego-dsl.lcl — Stego Lab: LSB steganography in pure Lcl.
+;;
+;; The image-track smoke test: hide a message in the least significant
+;; bits of an image's pixel bytes, watch the cover image not change,
+;; extract it back — all from script.
+;;
+;; Demonstrates:
+;;   - Lk::image_new: an application-owned RGBA pixel buffer registered
+;;     in the ui's resource table; the tree only references it via the
+;;     `image` prop (a typed resource ref, the editor-track model)
+;;   - The `image` widget: intrinsic pixel size, scaled up here with
+;;     w/h (the LSB flips are invisible at any zoom)
+;;   - Lk::image_set_px / image_bytes / image_set_bytes: script-side
+;;     pixel and raw-byte access (bytes travel as lowercase hex);
+;;     every write marks the image dirty, so the window re-uploads its
+;;     texture and the canvas repaints live
+;;   - Lk::image_load / Lk::image_save: BMP always, PNG with
+;;     SDL3_image — both lossless, which is the whole point for
+;;     steganography (JPEG would grind the hidden bits to dust)
+;;   - Lk::open_file_dialog / Lk::save_file_dialog: native async
+;;     dialogs; the handler lambda runs later, from the run loop, with
+;;     a list of paths (empty = cancelled)
+;;
+;; The scheme (classic and deliberately simple): a 16-bit big-endian
+;; message length in the LSBs of pixel-stream bytes 0..15, then 8 bits
+;; per character, one bit per byte.  Characters index into ALPHA below
+;; — a pure-Lcl stand-in for char codes, since script has no
+;; byte-of-string primitive.  A real app would embed UTF-8 bytes; this
+;; example is the toolkit smoke, not the product.
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- app model (top level, app-owned — the tree never owns any of
+;; this) ----
+
+var img {}      ;; the cover image (lk_image opaque)
+var total 0     ;; its w * h * 4 byte count
+var msg "attack at dawn"
+var status "type a message, press Embed"
+var extracted ""
+
+let HEX "0123456789abcdef"
+let ALPHA " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?:;'-+*/=@#%&_"
+
+;; ---- byte + bit access over the raw pixel stream ----
+
+;; Pixel-stream byte k as an int (image_bytes speaks hex).
+proc byte_at {k} {
+    let hx [Lk::image_bytes $img $k 1]
+    + [* 16 [String::find $HEX [String::index $hx 0]]] [String::find $HEX [String::index $hx 1]]
+}
+
+proc set_byte {k v} {
+    Lk::image_set_bytes $img $k "[String::index $HEX [int [/ $v 16]]][String::index $HEX [% $v 16]]"
+}
+
+proc get_bit {k} {
+    % [byte_at $k] 2
+}
+
+proc set_bit {k b} {
+    let v [byte_at $k]
+    set_byte $k [+ [- $v [% $v 2]] $b]
+}
+
+;; Write value's low nbits into LSBs at..at+nbits-1, msb first.
+proc put_bits {at value nbits} {
+    var dv 1
+    var i 1
+
+    while [< $i $nbits] {
+        set! dv [* $dv 2] ; set! i [+ $i 1]
+    }
+
+    var k $at
+
+    while [> $dv 0] {
+        set_bit $k [% [int [/ $value $dv]] 2]
+
+        set! k  [+ $k 1]
+        set! dv [int [/ $dv 2]]
+    }
+}
+
+proc read_bits {at nbits} {
+    var acc 0
+    var i 0
+
+    while [< $i $nbits] {
+        set! acc [+ [* $acc 2] [get_bit [+ $at $i]]]
+        set! i   [+ $i 1]
+    }
+
+    int $acc
+}
+
+;; ---- the character table ----
+
+proc code_of {ch} {
+    let i [String::find $ALPHA $ch]
+
+    if [>= $i 0] {
+        return $i
+    }
+
+    String::find $ALPHA "?"
+}
+
+proc char_of {c} {
+    if [>= $c [String::length $ALPHA]] {
+        return "?"
+    }
+
+    String::index $ALPHA $c
+}
+
+;; ---- embed / extract ----
+
+proc cap_chars {} {
+    int [/ [- $total 16] 8]
+}
+
+proc embed_msg {} {
+    let n [String::length $msg]
+
+    if [> $n [cap_chars]] {
+        set! status "too long: $n > [cap_chars] chars"
+        return ""
+    }
+
+    put_bits 0 $n 16
+
+    var i 0
+
+    while [< $i $n] {
+        put_bits [+ 16 [* $i 8]] [code_of [String::index $msg $i]] 8
+        set! i [+ $i 1]
+    }
+
+    set! status "embedded $n chars in the low bits"
+}
+
+proc extract_msg {} {
+    var n [read_bits 0 16]
+
+    if [> $n [cap_chars]] {
+        set! n 0
+        set! status "no message found"
+    } else {
+        set! status "extracted $n chars"
+    }
+
+    var s ""
+    var i 0
+
+    while [< $i $n] {
+        set! s "$s[char_of [read_bits [+ 16 [* $i 8]] 8]]"
+        set! i [+ $i 1]
+    }
+
+    set! extracted $s
+}
+
+;; ---- the cover image ----
+
+proc adopt_image {new} {
+    set! img $new
+
+    let sz [Lk::image_size $img]
+
+    set! total [* [* [get $sz 0] [get $sz 1]] 4]
+}
+
+;; A gradient canvas: something for the LSBs to hide in.
+proc paint_canvas {} {
+    let sz [Lk::image_size $img]
+    let w  [get $sz 0]
+    let h  [get $sz 1]
+
+    var y 0
+
+    while [< $y $h] {
+        var x 0
+        while [< $x $w] {
+            Lk::image_set_px $img $x $y ([+ 40 [* 4 $x]] [+ 30 [* 5 $y]] [+ 90 [* 2 [+ $x $y]]] 255)
+            set! x [+ $x 1]
+        }
+        set! y [+ $y 1]
+    }
+}
+
+;; ---- the app ----
+
+app "Stego Lab" #{font $font font_size 15 width 860 height 520} {
+
+    theme {
+        rule window #{bg (24 26 32)}
+        rule * #{fg (205 210 220)}
+        rule image #{border_width 1 border_color (70 75 90)}
+        rule column #{padding 16 gap 10}
+        rule button #{bg (50 55 70) padding 8 border_width 1 border_color (80 85 100)}
+        rule button #{state hovered} #{bg (70 75 90) border_color (120 125 150)}
+        rule button #{state focused} #{border_color (80 140 220)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule text_input #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
+        rule text_input #{state focused} #{border_color (80 140 220)}
+    }
+
+    translator pointer_down action Action
+    translator value_changed msg_edit MsgEdit
+
+    on MsgEdit [lambda {cmd} {
+        set! msg [get $cmd source_value]
+    }]
+
+    on Action [lambda {cmd} {
+        let verb [get [get $cmd args] 0]
+
+        if [== $verb embed] {
+            embed_msg
+        }
+
+        if [== $verb extract] {
+            extract_msg
+        }
+
+        if [== $verb repaint] {
+            paint_canvas
+            set! status "fresh canvas"
+        }
+
+        if [== $verb load] {
+            Lk::open_file_dialog ${LkDsl::_win} [lambda {paths} {
+                if [len $paths] {
+                    if [== 0 [catch { adopt_image [Lk::image_load ${LkDsl::_ui} [get $paths 0]] } _r lerr]] {
+                        set! status "loaded [get $paths 0]"
+                    } else {
+                        set! status $lerr
+                    }
+                }
+            }] (("Images" "bmp;png"))
+        }
+
+        if [== $verb save] {
+            Lk::save_file_dialog ${LkDsl::_win} [lambda {paths} {
+                if [len $paths] {
+                    if [== 0 [catch { Lk::image_save $img [get $paths 0] } ok serr]] {
+                        if $ok {
+                            set! status "saved [get $paths 0]"
+                        } else {
+                            set! status "save failed"
+                        }
+                    } else {
+                        set! status $serr
+                    }
+                }
+            }] (("BMP image" "bmp") ("PNG image" "png"))
+        }
+    }]
+
+    ;; The image registers in the window ui's resource table; the
+    ;; `image` prop below carries the typed ref every frame.
+    adopt_image [Lk::image_new ${LkDsl::_ui} 48 32]
+    paint_canvas
+
+    view {
+        row "main" #{padding 16 gap 16} {
+            image "pic" #{image $img w 384 h 256 tooltip "the cover — LSB flips are invisible"}
+
+            column "side" {
+                label "t" #{text "Stego Lab"}
+                label "cap" #{text "capacity: [cap_chars] chars" tag dim}
+
+                text_input "msg_in" #{text $msg focusable 1 present (msg_edit (m))}
+
+                row "btns" #{gap 8} {
+                    button "b_embed" #{text "Embed" focusable 1 present (action (embed)) tooltip "hide the message in the pixels"}
+                    button "b_extract" #{text "Extract" focusable 1 present (action (extract)) tooltip "read the low bits back"}
+                }
+
+                row "btns2" #{gap 8} {
+                    button "b_load" #{text "Load..." focusable 1 present (action (load))}
+                    button "b_save" #{text "Save..." focusable 1 present (action (save))}
+                    button "b_paint" #{text "Repaint" focusable 1 present (action (repaint)) tooltip "fresh gradient, message erased"}
+                }
+
+                label "status" #{text $status tag dim}
+                label "out" #{text "extracted: $extracted"}
+            }
+        }
+    }
+}

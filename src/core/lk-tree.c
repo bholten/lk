@@ -1,6 +1,7 @@
 #include <memory.h>
 
 #include "lk-memory.h"
+#include "lk-resources.h"
 #include <lk.h>
 
 static int lk_tree_reserve_nodes(lk_tree *t, lk_u32 need) {
@@ -171,7 +172,7 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
     t->intern = cfg->intern;
     t->owns_intern = 0;
   } else {
-    t->intern = lk_intern_new(t->alloc, t->alloc_ud);
+    t->intern = lk_intern_new(t->alloc, t->dealloc, t->alloc_ud);
     t->owns_intern = 1;
 
     if (!t->intern) {
@@ -351,12 +352,17 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
 
 /* ---- Presentation API ---- */
 
-void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
-                              lk_value pvalue) {
+void lk_tree_add_presentation_v(lk_tree *t, lk_ix node, lk_u32 ptype,
+                                const lk_value *pvalues, lk_u8 count) {
   lk_presentation *p;
+  lk_u8 i;
 
   if (!t || node == 0 || node >= t->node_count) {
     return;
+  }
+
+  if (count > LK_PRES_MAX_ARGS) {
+    count = LK_PRES_MAX_ARGS;
   }
 
   if (!lk_tree_reserve_pres(t, t->pres_count + 1)) {
@@ -364,19 +370,34 @@ void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
   }
 
   p = &t->pres[t->pres_count++];
+  memset(p, 0, sizeof(*p));
   p->node = node;
   p->ptype = ptype;
-  p->pvalue = pvalue;
+  p->pvalue_count = count;
+
+  for (i = 0; i < count && pvalues; i++) {
+    p->pvalues[i] = pvalues[i];
+  }
 }
 
-void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
-                                lk_value pvalue) {
+void lk_tree_add_presentation_sv(lk_tree *t, lk_ix node, const char *ptype,
+                                 const lk_value *pvalues, lk_u8 count) {
   if (!t || !t->intern || !ptype) {
     return;
   }
 
-  lk_tree_add_presentation(t, node, lk_intern_id(t->intern, lk_str_c(ptype)),
-                           pvalue);
+  lk_tree_add_presentation_v(t, node, lk_intern_id(t->intern, lk_str_c(ptype)),
+                             pvalues, count);
+}
+
+void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
+                              lk_value pvalue) {
+  lk_tree_add_presentation_v(t, node, ptype, &pvalue, 1);
+}
+
+void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
+                                lk_value pvalue) {
+  lk_tree_add_presentation_sv(t, node, ptype, &pvalue, 1);
 }
 
 const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node) {
@@ -697,6 +718,33 @@ static void wr_u32(lk_write_fn wr, void *ud, lk_u32 x) {
   wr_cstr(wr, ud, buf);
 }
 
+/* UIV_RESOURCE dump value: typename="debugname"#id resolved through
+ * the tree's borrowed resource table (e.g. editor="src-view"#17);
+ * resource#id when the tree has no table or the ref is stale.
+ * Deterministic, address-free. */
+static void wr_resource(const lk_tree *t, lk_write_fn wr, void *ud,
+                        const lk_value *v) {
+  lk_resource_ref ref;
+  const char *type_name;
+  const char *debug_name;
+
+  ref.id = v->as.res.id;
+  ref.generation = v->as.res.gen;
+
+  if (t->resources &&
+      lk_resources_lookup_names(t->resources, ref, &type_name, &debug_name)) {
+    wr_cstr(wr, ud, type_name);
+    wr_cstr(wr, ud, "=\"");
+    wr_cstr(wr, ud, debug_name);
+    wr_cstr(wr, ud, "\"#");
+    wr_u32(wr, ud, ref.id);
+    return;
+  }
+
+  wr_cstr(wr, ud, "resource#");
+  wr_u32(wr, ud, ref.id);
+}
+
 static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
                       lk_u32 indent) {
   lk_u32 i;
@@ -722,6 +770,23 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
   case UIK_SPACER: wr_cstr(wr, ud, "spacer"); break;
   case UIK_LABEL: wr_cstr(wr, ud, "label"); break;
   case UIK_BUTTON: wr_cstr(wr, ud, "button"); break;
+  case UIK_TEXT_INPUT: wr_cstr(wr, ud, "text_input"); break;
+  case UIK_SCROLL: wr_cstr(wr, ud, "scroll"); break;
+  case UIK_DROPDOWN: wr_cstr(wr, ud, "dropdown"); break;
+  case UIK_OPTION: wr_cstr(wr, ud, "option"); break;
+  case UIK_SPLIT_H: wr_cstr(wr, ud, "split_h"); break;
+  case UIK_SPLIT_V: wr_cstr(wr, ud, "split_v"); break;
+  case UIK_EDITOR: wr_cstr(wr, ud, "editor"); break;
+  case UIK_CHECKBOX: wr_cstr(wr, ud, "checkbox"); break;
+  case UIK_RADIO: wr_cstr(wr, ud, "radio"); break;
+  case UIK_SLIDER: wr_cstr(wr, ud, "slider"); break;
+  case UIK_TABS: wr_cstr(wr, ud, "tabs"); break;
+  case UIK_TAB: wr_cstr(wr, ud, "tab"); break;
+  case UIK_GRID: wr_cstr(wr, ud, "grid"); break;
+  case UIK_IMAGE: wr_cstr(wr, ud, "image"); break;
+  case UIK_CANVAS: wr_cstr(wr, ud, "canvas"); break;
+  case UIK_STYLED_TEXT: wr_cstr(wr, ud, "styled_text"); break;
+  case UIK_LIST: wr_cstr(wr, ud, "list"); break;
 
   default: wr_cstr(wr, ud, "unknown"); break;
   }
@@ -767,6 +832,8 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
 
         wr_cstr(wr, ud, "\"");
         break;
+      case UIV_RESOURCE: wr_resource(t, wr, ud, &p->value); break;
+      case UIV_TEXT: wr_cstr(wr, ud, "<text>"); break;
       default: wr_cstr(wr, ud, "null"); break;
       }
     }
@@ -797,25 +864,44 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
 
         wr_cstr(wr, ud, "=");
 
-        switch (t->pres[pi].pvalue.tag) {
-        case UIV_BOOL:
-          wr_cstr(wr, ud, t->pres[pi].pvalue.as.b ? "true" : "false");
-          break;
-        case UIV_I32: wr_u32(wr, ud, (lk_u32)t->pres[pi].pvalue.as.i); break;
-        case UIV_STR:
-          wr_cstr(wr, ud, "\"");
+        if (t->pres[pi].pvalue_count > 1) {
+          wr_cstr(wr, ud, "(");
+        }
 
-          if (t->intern && t->pres[pi].pvalue.as.str_id) {
-            lk_str sv = lk_intern_str(t->intern, t->pres[pi].pvalue.as.str_id);
+        {
+          lk_u8 ai;
+          for (ai = 0; ai < t->pres[pi].pvalue_count; ai++) {
+            const lk_value *pv = &t->pres[pi].pvalues[ai];
 
-            if (sv.ptr && sv.len) {
-              wr(ud, sv.ptr, sv.len);
+            if (ai > 0) {
+              wr_cstr(wr, ud, " ");
+            }
+
+            switch (pv->tag) {
+            case UIV_BOOL: wr_cstr(wr, ud, pv->as.b ? "true" : "false"); break;
+            case UIV_I32: wr_u32(wr, ud, (lk_u32)pv->as.i); break;
+            case UIV_STR:
+              wr_cstr(wr, ud, "\"");
+
+              if (t->intern && pv->as.str_id) {
+                lk_str sv = lk_intern_str(t->intern, pv->as.str_id);
+
+                if (sv.ptr && sv.len) {
+                  wr(ud, sv.ptr, sv.len);
+                }
+              }
+
+              wr_cstr(wr, ud, "\"");
+              break;
+            case UIV_RESOURCE: wr_resource(t, wr, ud, pv); break;
+            case UIV_TEXT: wr_cstr(wr, ud, "<text>"); break;
+            default: wr_cstr(wr, ud, "null"); break;
             }
           }
+        }
 
-          wr_cstr(wr, ud, "\"");
-          break;
-        default: wr_cstr(wr, ud, "null"); break;
+        if (t->pres[pi].pvalue_count > 1) {
+          wr_cstr(wr, ud, ")");
         }
       }
     }
@@ -845,6 +931,14 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
   } else {
     wr_cstr(wr, ud, ")\n");
   }
+}
+
+void lk_tree_set_resources(lk_tree *t, lk_resources *rs) {
+  if (!t) {
+    return;
+  }
+
+  t->resources = rs;
 }
 
 void lk_tree_dump(const lk_tree *t, lk_write_fn wr, void *wr_ud) {
@@ -957,12 +1051,6 @@ lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n) {
 }
 
 /* Schema (lots of TODOs) */
-/* TODO implement later for schema checks */
-lk_kind_schema *ui_default_schema(lk_u32 *out_count) {
-  (void)out_count;
-  return 0;
-}
-
 int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,
                             lk_u32 schema_count, lk_diag *diags,
                             lk_u32 diags_cap, lk_u32 *out_diags_len) {

@@ -1,0 +1,683 @@
+;; sheet-dsl.lcl — "Cells": a mini spreadsheet, and the proof that a
+;; text_input's text can be genuinely application-owned.
+;;
+;; Every cell is a *controlled* text_input: the app renders each cell's
+;; `text` prop from its own model — the computed value normally, the raw
+;; formula while the cell is being edited — and the widget never keeps
+;; a string of its own.  Each keystroke only *proposes* a candidate via
+;; value_changed; the app stores it in the model and recalculates, so
+;; the sheet updates live while you type.  Escape puts the pre-edit
+;; formula back; Enter accepts and moves down.  There is nowhere for a
+;; stale internal buffer to hide.
+;;
+;;   build/lcl_lk_main examples/sheet-dsl.lcl
+;;   SDL_VIDEODRIVER=offscreen build/lcl_lk_main examples/sheet-dsl.lcl --snap /tmp/sheet
+;;
+;; Formulas start with `=`: numbers, cell refs (A1..H12), + - * /,
+;; parentheses, unary minus, and SUM / AVG / MIN / MAX / COUNT over
+;; ranges (A1:B3) or argument lists.  Blank cells count as 0 in
+;; arithmetic and are skipped by the range functions, as is text;
+;; errors are #DIV/0!, #REF!, #CYCLE! and #ERR!, and an error in a
+;; referenced cell propagates *as itself* so the dependency graph is
+;; visible.  Deliberately nothing else — no strings, comparisons,
+;; absolute refs or fill handles.
+;;
+;; Demonstrates:
+;;   - `controlled 1` on text_input (the toolkit debt this example was
+;;     written to force): the app owns the text, the widget owns only
+;;     cursor/selection; events propose, rendering reflects the model
+;;   - focus as semantics: `focus_changed` in the event handler is the
+;;     ONLY thing that decides which cell is being edited; gestures
+;;     merely move focus.  Tab / Shift+Tab walk the grid row-major for
+;;     free because that is DFS order over the grid's children.
+;;   - one ptype (`cell`) presented on 96 keyed widgets, with a
+;;     value_changed translator and ptype-scoped keybindings
+;;     (Enter / Up / Down / Escape) that bubble out of the text_input
+;;   - tags driven by the model: formula / error / number / editing
+;;     cells and the selected headers; `text_align end` on numbers
+;;     (the style field this example tripped on)
+;;   - a recursive-descent parser + evaluator with memoised recalc and
+;;     cycle detection, entirely in Lcl
+;;   - `--snap DIR` self-driving screenshot (the Tour's recipe)
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+let COLS (A B C D E F G H)
+let NROWS 12
+
+;; ---- model ----
+;;
+;; formulas: ref -> raw cell text ("" and absent both mean blank).
+;; values:   ref -> computed value, rebuilt by `recalc` (a number, a
+;;           text string, "" for blank, or an "#..." error).
+
+var formulas #{}
+var values #{}
+var visiting #{}    ;; refs on the evaluation stack (cycle detection)
+var active ""       ;; the cell being edited (follows keyboard focus)
+var edit_orig ""    ;; its raw text when editing began (Escape restores)
+var recalc_ms 0
+var UI ""
+
+;; snapshot mode: --snap DIR
+var snap_dir ""
+var frame 0
+
+proc all_refs {} {
+    var out ()
+
+    foreach r [List::range 1 [+ $NROWS 1]] {
+        foreach c $COLS { set! out [List::push $out "$c$r"] }
+    }
+
+    return $out
+}
+
+let REFS [all_refs]
+
+;; Always a string (the demo dict holds typed numbers; string procs
+;; reject ints).
+proc cell_raw {ref} {
+    if [has? $formulas $ref] { String::from [get $formulas $ref] } else { return "" }
+}
+
+proc is_formula {raw} {
+    if [not [string? $raw]] { return 0 }
+    if [empty? $raw] { return 0 }
+    == [String::index $raw 0] "="
+}
+
+proc is_error {v} {
+    if [not [string? $v]] { return 0 }
+    if [empty? $v] { return 0 }
+    == [String::index $v 0] "#"
+}
+
+;; Column index of a letter (0-based) or -1.
+proc col_ix {c} {
+    if [not [== [String::length $c] 1]] { return -1 }
+    String::find [String::join $COLS ""] $c
+}
+
+proc min {a b} { if [< $a $b] { return $a } else { return $b } }
+proc max {a b} { if [> $a $b] { return $a } else { return $b } }
+
+;; The i-th character of s, "" past the end (`and`/`or` evaluate both
+;; operands, so loops cannot guard String::index with a bound check).
+proc char_at {s i} {
+    if [< $i [String::length $s]] { String::index $s $i } else { return "" }
+}
+
+let DIGITS "0123456789"
+let LETTERS "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+proc is_digit {c} {
+    if [not [== [String::length $c] 1]] { return 0 }
+    >= [String::find $DIGITS $c] 0
+}
+
+proc is_alpha {c} {
+    if [not [== [String::length $c] 1]] { return 0 }
+    >= [String::find $LETTERS [String::upper $c]] 0
+}
+
+;; Is `s` a cell reference inside the sheet?  (A1..H12)
+proc ref_ok {s} {
+    if [not [string? $s]] { return 0 }
+    let n [String::length $s]
+    if [< $n 2] { return 0 }
+    if [< [col_ix [String::index $s 0]] 0] { return 0 }
+    var i 1
+    while [< $i $n] {
+        if [not [is_digit [String::index $s $i]]] { return 0 }
+        set! i [+ $i 1]
+    }
+    let r [int [String::range $s 1 $n]]
+    and [>= $r 1] [<= $r $NROWS]
+}
+
+;; The ref `dc` columns / `dr` rows away from `ref`, clamped to the sheet.
+proc ref_offset {ref dc dr} {
+    let ci [col_ix [String::index $ref 0]]
+    let r [int [String::range $ref 1 [String::length $ref]]]
+    var nc [+ $ci $dc]
+    var nr [+ $r $dr]
+    if [< $nc 0] { set! nc 0 }
+    if [>= $nc [len $COLS]] { set! nc [- [len $COLS] 1] }
+    if [< $nr 1] { set! nr 1 }
+    if [> $nr $NROWS] { set! nr $NROWS }
+    "[get $COLS $nc]$nr"
+}
+
+;; ---- formula language ----
+;;
+;; Tokens are dicts #{t kind v value}; kinds: num ref fn op end.
+;; The parser reads a module-level token list through `tp`; a
+;; referenced cell may evaluate its own formula re-entrantly, so
+;; eval_formula saves and restores both.  Lcl binds names at
+;; definition time, so the mutually recursive procs reach forward
+;; with `::name` (parse_expr, cell_value).
+
+var toks ()
+var tp 0
+
+proc tokenize {s} {
+    var out ()
+    var i 0
+    let n [String::length $s]
+
+    while [< $i $n] {
+        let c [String::index $s $i]
+
+        if [== $c " "] {
+            set! i [+ $i 1]
+        } else { if [or [is_digit $c] [== $c "."]] {
+            var j $i
+            while [or [is_digit [char_at $s $j]] [== [char_at $s $j] "."]] {
+                set! j [+ $j 1]
+            }
+            let lit [String::range $s $i $j]
+            if [not [number? $lit]] { error "#ERR!" }
+            set! out [List::push $out #{t num v [float $lit]}]
+            set! i $j
+        } else { if [is_alpha $c] {
+            var j $i
+            while [or [is_alpha [char_at $s $j]] [is_digit [char_at $s $j]]] {
+                set! j [+ $j 1]
+            }
+            let word [String::upper [String::range $s $i $j]]
+            ;; a name followed by an open paren is a call, else a cell ref
+            var k $j
+            while [== [char_at $s $k] " "] { set! k [+ $k 1] }
+            if [== [char_at $s $k] "("] {
+                set! out [List::push $out #{t fn v $word}]
+            } else {
+                if [not [ref_ok $word]] { error "#REF!" }
+                set! out [List::push $out #{t ref v $word}]
+            }
+            set! i $j
+        } else { if [>= [String::find "+-*/(),:" $c] 0] {
+            set! out [List::push $out #{t op v $c}]
+            set! i [+ $i 1]
+        } else {
+            error "#ERR!"
+        } } } }
+    }
+
+    return $out
+}
+
+proc peek {} {
+    if [< $tp [len $toks]] { get $toks $tp } else { return #{t end v ""} }
+}
+
+proc advance {} {
+    let t [peek]
+    set! tp [+ $tp 1]
+    return $t
+}
+
+proc peek_op {ch} {
+    let t [peek]
+    and [== [get $t t] op] [== [get $t v] $ch]
+}
+
+proc expect_op {ch} {
+    if [not [peek_op $ch]] { error "#ERR!" }
+    advance
+}
+
+;; A cell's value in scalar context: blank is 0, text is #ERR!, an
+;; error propagates as itself.
+proc scalar_of {ref} {
+    let v [::cell_value $ref]
+    if [is_error $v] { error $v }
+    if [string? $v] {
+        if [empty? $v] { return 0 }
+        if [number? $v] { return [float $v] }
+        error "#ERR!"
+    }
+    return $v
+}
+
+;; Numeric cells of the rectangle a:b (blank and text skipped, errors
+;; propagate), appended to `acc`.
+proc range_values {a b acc} {
+    let c0 [col_ix [String::index $a 0]]
+    let c1 [col_ix [String::index $b 0]]
+    let r0 [int [String::range $a 1 [String::length $a]]]
+    let r1 [int [String::range $b 1 [String::length $b]]]
+    var out $acc
+
+    foreach ci [List::range [min $c0 $c1] [+ [max $c0 $c1] 1]] {
+        foreach r [List::range [min $r0 $r1] [+ [max $r0 $r1] 1]] {
+            let v [::cell_value "[get $COLS $ci]$r"]
+            if [is_error $v] { error $v }
+            if [string? $v] {
+                if [and [not [empty? $v]] [number? $v]] { set! out [List::push $out [float $v]] }
+            } else {
+                set! out [List::push $out $v]
+            }
+        }
+    }
+
+    return $out
+}
+
+proc apply_fn {name args} {
+    let n [len $args]
+
+    if [== $name SUM] { return [List::reduce $args 0 [lambda {acc x} { + $acc $x }]] }
+    if [== $name COUNT] { return $n }
+    if [== $name AVG] {
+        if [== $n 0] { error "#DIV/0!" }
+        return [/ [List::reduce $args 0 [lambda {acc x} { + $acc $x }]] $n]
+    }
+    if [== $name MIN] {
+        if [== $n 0] { return 0 }
+        return [List::reduce $args [get $args 0] [lambda {acc x} { min $acc $x }]]
+    }
+    if [== $name MAX] {
+        if [== $n 0] { return 0 }
+        return [List::reduce $args [get $args 0] [lambda {acc x} { max $acc $x }]]
+    }
+
+    error "#ERR!"
+}
+
+proc parse_call {name} {
+    expect_op "("
+    var args ()
+
+    if [not [peek_op ")"]] {
+        var more 1
+
+        while [== $more 1] {
+            let t [peek]
+            ;; ref ':' ref is a range; anything else an expression
+            if [and [== [get $t t] ref] [< [+ $tp 1] [len $toks]]] {
+                let t2 [get $toks [+ $tp 1]]
+                if [and [== [get $t2 t] op] [== [get $t2 v] ":"]] {
+                    advance
+                    advance
+                    let t3 [advance]
+                    if [not [== [get $t3 t] ref]] { error "#ERR!" }
+                    set! args [range_values [get $t v] [get $t3 v] $args]
+                } else {
+                    set! args [List::push $args [::parse_expr]]
+                }
+            } else {
+                set! args [List::push $args [::parse_expr]]
+            }
+
+            if [peek_op ","] { advance } else { set! more 0 }
+        }
+    }
+
+    expect_op ")"
+    apply_fn $name $args
+}
+
+proc parse_primary {} {
+    let t [advance]
+    let k [get $t t]
+
+    if [== $k num] { return [get $t v] }
+    if [== $k ref] { return [scalar_of [get $t v]] }
+    if [== $k fn] { return [parse_call [get $t v]] }
+
+    if [and [== $k op] [== [get $t v] "("]] {
+        let v [::parse_expr]
+        expect_op ")"
+        return $v
+    }
+
+    error "#ERR!"
+}
+
+proc parse_unary {} {
+    if [peek_op "-"] {
+        advance
+        return [- 0 [parse_unary]]
+    }
+    parse_primary
+}
+
+proc parse_term {} {
+    var v [parse_unary]
+    var go 1
+
+    while [== $go 1] {
+        if [peek_op "*"] {
+            advance
+            set! v [* $v [parse_unary]]
+        } else { if [peek_op "/"] {
+            advance
+            let d [parse_unary]
+            if [== $d 0] { error "#DIV/0!" }
+            set! v [/ $v $d]
+        } else {
+            set! go 0
+        } }
+    }
+
+    return $v
+}
+
+proc parse_expr {} {
+    var v [parse_term]
+    var go 1
+
+    while [== $go 1] {
+        if [peek_op "+"] {
+            advance
+            set! v [+ $v [parse_term]]
+        } else { if [peek_op "-"] {
+            advance
+            set! v [- $v [parse_term]]
+        } else {
+            set! go 0
+        } }
+    }
+
+    return $v
+}
+
+;; Evaluate formula source (without the leading "=") to a number or an
+;; error string.  Lcl errors are the error channel: our own codes are
+;; raised verbatim, anything else maps to #ERR! (division by zero to
+;; #DIV/0!).
+proc eval_formula {src} {
+    let saved_toks $toks
+    let saved_tp $tp
+    var out ""
+
+    let failed [catch {
+        set! toks [tokenize $src]
+        set! tp 0
+        let v [parse_expr]
+        if [not [== [get [peek] t] end]] { error "#ERR!" }
+        set! out $v
+    } res err]
+
+    set! toks $saved_toks
+    set! tp $saved_tp
+
+    if [== $failed 1] {
+        if [is_error $err] { return $err }
+        if [== $err "division by zero"] { return "#DIV/0!" }
+        return "#ERR!"
+    }
+
+    return $out
+}
+
+;; The value of a cell: memoised in `values`; a cell met again while it
+;; is still being evaluated is a cycle.
+proc cell_value {ref} {
+    if [has? $values $ref] { return [get $values $ref] }
+    if [and [has? $visiting $ref] [== [get $visiting $ref] 1]] { return "#CYCLE!" }
+
+    let raw [cell_raw $ref]
+    var v $raw
+
+    if [is_formula $raw] {
+        set! visiting [put $visiting $ref 1]
+        set! v [eval_formula [String::range $raw 1 [String::length $raw]]]
+        set! visiting [put $visiting $ref 0]
+    }
+
+    set! values [put $values $ref $v]
+    return $v
+}
+
+proc recalc {} {
+    let t0 [Lk::time_ms $UI]
+    set! values #{}
+    set! visiting #{}
+    foreach ref $REFS { cell_value $ref }
+    set! recalc_ms [- [Lk::time_ms $UI] $t0]
+}
+
+proc set_cell {ref text} {
+    set! formulas [put $formulas $ref $text]
+    recalc
+}
+
+proc formula_count {} {
+    List::reduce $REFS 0 [lambda {acc ref} {
+        if [is_formula [cell_raw $ref]] { + $acc 1 } else { return $acc }
+    }]
+}
+
+;; ---- number formatting ----
+
+;; v to at most 6 decimals, trailing zeros trimmed; integral floats
+;; print as integers.
+proc fmt_num {v} {
+    if [int? $v] { return [String::from $v] }
+    if [== $v [int $v]] { return [String::from [int $v]] }
+
+    var neg 0
+    var a $v
+    if [< $a 0] { set! neg 1; set! a [- 0 $a] }
+
+    let n [int [+ [* $a 1000000] 0.5]]
+    let whole [int [/ $n 1000000]]
+    var frac [- $n [* $whole 1000000]]
+    var fs [String::from $frac]
+    while [< [String::length $fs] 6] { set! fs "0$fs" }
+    var end 6
+    while [and [> $end 0] [== [String::index $fs [- $end 1]] "0"]] { set! end [- $end 1] }
+
+    var s [String::from $whole]
+    if [> $end 0] { set! s "$s.[String::range $fs 0 $end]" }
+    if [== $neg 1] { set! s "-$s" }
+    return $s
+}
+
+;; What a cell shows: its raw text while being edited, else its value.
+proc cell_text {ref} {
+    if [== $ref $active] { return [cell_raw $ref] }
+    let v [get $values $ref]
+    if [string? $v] { return $v }
+    fmt_num $v
+}
+
+;; ---- demo sheet ----
+
+proc load_demo {} {
+    set! formulas #{
+        A1 Item      B1 Qty  C1 Price  D1 Total
+        A2 Coffee    B2 12   C2 3.5    D2 "=B2*C2"
+        A3 Bagels    B3 8    C3 1.25   D3 "=B3*C3"
+        A4 Milk      B4 3    C4 2.1    D4 "=B4*C4"
+        A6 Subtotal                    D6 "=SUM(D2:D4)"
+        A7 "Tax %"   B7 8              D7 "=D6*B7/100"
+        A8 Total                       D8 "=D6+D7"
+        A10 "Avg price"                C10 "=AVG(C2:C4)"
+        A11 Lines    B11 "=COUNT(B2:B4)"
+        F1 Errors
+        F2 "=1/0"
+        F3 "=Q9"
+        F4 "=A1+1"
+        F6 "=F7"     F7 "=F6"
+        F8 "=F6+1"
+        G6 "=MAX(D2:D4)-MIN(D2:D4)"
+        H1 "=-(B2+B3)*2"
+    }
+    recalc
+}
+
+proc clear_all {} {
+    set! formulas #{}
+    recalc
+}
+
+;; ---- editing (focus is edit mode) ----
+
+proc begin_edit {ref} {
+    set! active $ref
+    set! edit_orig [cell_raw $ref]
+}
+
+proc end_edit {} {
+    set! active ""
+    set! edit_orig ""
+}
+
+proc move_focus {dc dr} {
+    if [empty? $active] { return }
+    Lk::focus_set $UI [ref_offset $active $dc $dr]
+}
+
+;; ---- snapshot mode ----
+;;
+;; Frame 1: focus a formula cell so the raw text is photographed
+;; alongside computed neighbours; frame 2: screenshot; frame 3: quit.
+
+proc snap_tick {} {
+    if [empty? $snap_dir] { return }
+    set! frame [+ $frame 1]
+    if [== $frame 1] { Lk::focus_request $UI D6 }
+    if [== $frame 2] { screenshot "$snap_dir/sheet.png" }
+    if [== $frame 3] { quit }
+}
+
+proc parse_args {} {
+    let a [Lk::args]
+    if [and [>= [len $a] 2] [== [get $a 0] "--snap"]] {
+        set! snap_dir [get $a 1]
+    }
+}
+
+;; ---- view helpers ----
+
+proc cell_tag {ref} {
+    if [== $ref $active] { return edit }
+    let v [get $values $ref]
+    if [is_error $v] { return err }
+    if [is_formula [cell_raw $ref]] { return formula }
+    if [and [string? $v] [not [empty? $v]] [number? $v]] { return num }
+    if [not [string? $v]] { return num }
+    return cell
+}
+
+proc col_selected {c} {
+    if [empty? $active] { return 0 }
+    == [String::index $active 0] $c
+}
+
+proc row_selected {r} {
+    if [empty? $active] { return 0 }
+    == [String::range $active 1 [String::length $active]] [String::from $r]
+}
+
+proc formula_bar {} {
+    if [empty? $active] { return "select a cell" }
+    let raw [cell_raw $active]
+    if [empty? $raw] { return "$active is blank" }
+    "$active = $raw"
+}
+
+proc status_text {} {
+    "[len $REFS] cells · [formula_count] formulas · recalc ${recalc_ms} ms · Enter accepts ↓ · Esc reverts · Tab →"
+}
+
+app "Cells" #{font $font font_size 15 width 900 height 560} {
+
+    theme {
+        rule window #{bg (24 26 32)}
+        rule * #{fg (215 218 228) accent (255 170 60)}
+        rule label #{tag title} #{fg (240 240 245)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule label #{tag bar} #{fg (255 200 110)}
+        rule label #{tag hdr} #{bg (36 39 48) fg (150 156 172) padding 4 text_align center}
+        rule label #{tag sel} #{bg (52 56 70) fg (255 200 110)}
+        rule grid #{gap 1 bg (44 47 58) padding 1}
+        rule text_input #{bg (28 30 38) fg (215 218 228) padding 4 border_width 1 border_color (28 30 38)}
+        rule text_input #{tag num} #{text_align end}
+        rule text_input #{tag formula} #{fg (140 200 255) text_align end}
+        rule text_input #{tag err} #{fg (255 110 110) text_align center}
+        rule text_input #{tag edit} #{fg (255 230 180)}
+        rule text_input #{state hovered} #{border_color (70 74 88)}
+        rule text_input #{state focused} #{bg (34 37 48) border_color (255 170 60)}
+        rule button #{bg (48 52 64) padding 6 border_width 1 border_color (70 74 88)}
+        rule button #{state hovered} #{bg (62 66 82)}
+    }
+
+    ;; Every edit proposes the candidate text; the model takes it as
+    ;; the cell's formula and recalculates -- live while typing.
+    translator value_changed cell Edit
+    translator pointer_down action Action
+    keybinding return "" cell Accept
+    keybinding down "" cell MoveDown
+    keybinding up "" cell MoveUp
+    keybinding escape "" cell Revert
+    keybinding q ctrl Quit
+    keybinding f12 "" Snap
+
+    on Edit [lambda {cmd} { set_cell [get [get $cmd args] 0] [get $cmd source_value] }]
+    on Accept [lambda {cmd} { move_focus 0 1 }]
+    on MoveDown [lambda {cmd} { move_focus 0 1 }]
+    on MoveUp [lambda {cmd} { move_focus 0 -1 }]
+    on Revert [lambda {cmd} {
+        if [not [empty? $active]] { set_cell $active $edit_orig }
+    }]
+    on Action [lambda {cmd} {
+        let a [get [get $cmd args] 0]
+        if [== $a demo] { load_demo }
+        if [== $a clear] { clear_all }
+    }]
+    on Quit [lambda {cmd} { quit }]
+    on Snap [lambda {cmd} { screenshot "sheet.png" }]
+
+    ;; Focus IS edit mode: the handler sees every focus transition and
+    ;; the model follows it.  Gestures never decide anything here.
+    event_handler [lambda {ev node} {
+        if [== [get $ev type] focus_changed] {
+            let next [get $ev next_id]
+            if [ref_ok $next] { begin_edit $next } else { end_edit }
+        }
+        return 0
+    }]
+
+    set! UI ${LkDsl::_ui}
+    parse_args
+    load_demo
+
+    view {
+        snap_tick
+
+        column "root" #{padding 10 gap 8 align stretch} {
+            row "hdr" #{gap 12 align center} {
+                label "title" #{text "Cells" tag title}
+                label "fbar" #{text [formula_bar] tag bar grow 1}
+                button "demo" #{text "Demo sheet" present (action demo)}
+                button "clear" #{text "Clear" present (action clear)}
+            }
+
+            grid "sheet" #{columns [+ [len $COLS] 1]} {
+                label "corner" #{text "" tag hdr}
+
+                foreach c $COLS {
+                    let h [label "h_$c" #{text $c tag hdr}]
+                    if [col_selected $c] { Lk::tag ${LkDsl::_tree} $h sel }
+                }
+
+                foreach r [List::range 1 [+ $NROWS 1]] {
+                    let rh [label "r_$r" #{text $r tag hdr}]
+                    if [row_selected $r] { Lk::tag ${LkDsl::_tree} $rh sel }
+
+                    foreach c $COLS {
+                        let ref "$c$r"
+                        text_input $ref #{text [cell_text $ref] controlled 1 focusable 1 w 92
+                                          tag [cell_tag $ref] present (cell ($ref))}
+                    }
+                }
+            }
+
+            label "status" #{text [status_text] tag dim}
+        }
+    }
+}

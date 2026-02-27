@@ -1,0 +1,127 @@
+;; tools/sheet-harness.lcl -- headless logic harness for Cells (the
+;; spreadsheet example).
+;;
+;; Run from the repository root:  build/lcl_lk_main tools/sheet-harness.lcl
+;;
+;; The prefix-eval recipe (tools/plotter-harness.lcl): read the example,
+;; eval everything before its `app` call against a bare ui, then drive
+;; the model -- the formula language, recalc, error propagation and the
+;; edit/revert flow, none of which an offscreen smoke run exercises.
+;; Prints "ok"/"FAIL" per check.
+let src [Io::read_file "examples/sheet-dsl.lcl"]
+let cut [String::find $src "\napp \""]
+eval [String::range $src 0 $cut]
+
+set! UI [Lk::ui_create]
+
+var fails 0
+
+proc check {name got want} {
+    if [== $got $want] { puts "ok   $name" } else {
+        puts "FAIL $name: got [repr $got] want [repr $want]"
+        set! fails [+ $fails 1]
+    }
+}
+
+proc fabs {x} { if [< $x 0] { - 0 $x } else { return $x } }
+
+proc near {name got want} {
+    if [and [number? $got] [< [fabs [- $got $want]] 1e-6]] { puts "ok   $name" } else {
+        puts "FAIL $name: got [repr $got] want [repr $want]"
+        set! fails [+ $fails 1]
+    }
+}
+
+;; A1 as a scratch cell: set a formula, read its value.
+proc ev {f} {
+    set_cell A1 $f
+    get $values A1
+}
+
+;; ---- the demo sheet ----
+load_demo
+near  "D2 = B2*C2"           [get $values D2] 42
+near  "D6 = SUM(D2:D4)"      [get $values D6] 58.3
+near  "D8 = D6+D7"           [get $values D8] 62.964
+near  "C10 = AVG(C2:C4)"     [get $values C10] 2.2833333333
+near  "B11 = COUNT(B2:B4)"   [get $values B11] 3
+near  "G6 = MAX-MIN"         [get $values G6] 35.7
+near  "H1 = -(B2+B3)*2"      [get $values H1] -40
+check "F2 = 1/0"             [get $values F2] "#DIV/0!"
+check "F3 = Q9"              [get $values F3] "#REF!"
+check "F4 = A1+1 (text)"     [get $values F4] "#ERR!"
+check "F6 cycle"             [get $values F6] "#CYCLE!"
+check "F7 cycle"             [get $values F7] "#CYCLE!"
+check "F8 propagates CYCLE"  [get $values F8] "#CYCLE!"
+check "E5 blank"             [get $values E5] ""
+check "A2 text"              [get $values A2] "Coffee"
+check "formula_count"        [formula_count] 16
+
+;; ---- the language ----
+near  "precedence"           [ev "=1+2*3"] 7
+near  "parens"               [ev "=(1+2)*3"] 9
+near  "unary minus"          [ev "=-2*-3"] 6
+near  "spaces + lowercase"   [ev "= sum(d2 : d4)"] 58.3
+near  "fn args mix"          [ev "=SUM(1, B2, C2:C3)"] 17.75
+near  "blank is 0"           [ev "=E5+1"] 1
+near  "numeric text cell"    [ev "=B2/4"] 3
+near  "MAX range"            [ev "=MAX(B2:B4)"] 12
+near  "MIN range"            [ev "=MIN(B2:B4)"] 3
+near  "COUNT skips text"     [ev "=COUNT(A2:B4)"] 3
+near  "AVG list"             [ev "=AVG(2,4)"] 3
+near  "MIN empty"            [ev "=MIN(E2:E4)"] 0
+check "AVG empty"            [ev "=AVG(E2:E4)"] "#DIV/0!"
+check "text in arithmetic"   [ev "=A2+1"] "#ERR!"
+check "unknown fn"           [ev "=FOO(1)"] "#ERR!"
+check "bad column"           [ev "=Z1"] "#REF!"
+check "bad row"              [ev "=A99"] "#REF!"
+check "dangling op"          [ev "=1+"] "#ERR!"
+check "stray paren"          [ev "=)"] "#ERR!"
+check "trailing junk"        [ev "=1 2"] "#ERR!"
+check "bad char"             [ev "=1$2"] "#ERR!"
+check "bad number"           [ev "=1.2.3"] "#ERR!"
+check "div by zero"          [ev "=1/(2-2)"] "#DIV/0!"
+check "error propagates"     [ev "=F2*2"] "#DIV/0!"
+check "self cycle"           [ev "=A1"] "#CYCLE!"
+check "literal number"       [ev "12"] "12"
+check "literal text"         [ev "hello"] "hello"
+check "lone equals"          [ev "="] "#ERR!"
+
+;; ---- formatting ----
+check "fmt integral float"   [fmt_num 42.0] "42"
+check "fmt six decimals"     [fmt_num 2.2833333333] "2.283333"
+check "fmt trims zeros"      [fmt_num 1.25] "1.25"
+check "fmt negative"         [fmt_num -0.5] "-0.5"
+check "fmt rounds up"        [fmt_num 0.9999999] "1"
+check "fmt int"              [fmt_num 7] "7"
+
+;; ---- refs ----
+check "ref_ok A1"            [ref_ok A1] 1
+check "ref_ok H12"           [ref_ok H12] 1
+check "ref_ok H13"           [ref_ok H13] 0
+check "ref_ok I1"            [ref_ok I1] 0
+check "ref_ok A0"            [ref_ok A0] 0
+check "ref_ok demo"          [ref_ok demo] 0
+check "ref_ok empty"         [ref_ok ""] 0
+check "offset down"          [ref_offset C3 0 1] C4
+check "offset clamps top"    [ref_offset A1 0 -1] A1
+check "offset clamps corner" [ref_offset H12 1 1] H12
+
+;; ---- the edit flow (focus = edit mode) ----
+load_demo
+begin_edit D6
+check "editing shows raw"    [cell_text D6] "=SUM(D2:D4)"
+check "editing tag"          [cell_tag D6] edit
+set_cell D6 "=SUM(D2:D3)"
+near  "live recalc"          [get $values D8] 56.16
+set_cell D6 $edit_orig
+near  "revert"               [get $values D8] 62.964
+end_edit
+check "value shown after"    [cell_text D6] "58.3"
+check "tag num"              [cell_tag B2] num
+check "tag formula"          [cell_tag D2] formula
+check "tag err"              [cell_tag F2] err
+check "tag text"             [cell_tag A2] cell
+check "formula bar"          [formula_bar] "select a cell"
+
+if [== $fails 0] { puts "ALL PASS" } else { puts "$fails FAILED" }

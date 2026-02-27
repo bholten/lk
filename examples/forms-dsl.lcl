@@ -1,0 +1,213 @@
+;; forms-dsl.lcl — "Deed Lab": a tabbed calculator using the forms widgets.
+;;
+;; A small homage to a Tk planner: one tab per deed, a grid of stat
+;; entries per slot, sliders for quality weights, radio buttons for the
+;; DNA source, checkboxes for special flags, a dropdown for the assembly
+;; grade, and a live computed "CL" readout.  Everything is app-owned
+;; model + value_changed commands; the toolkit holds no app state.
+;;
+;; Demonstrates:
+;;   - tabs / tab (controlled: `value $active controlled 1`, so "+ New
+;;     Deed" can switch to the new page by just updating the model)
+;;   - grid (column-aligned entry matrix, `columns 4 gap 4`)
+;;   - slider (min/max/step/value, value_changed carries the integer)
+;;   - checkbox / radio (uncontrolled; the model mirrors their events)
+;;   - the `accent` theme field shared by all of them
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+let STATS (hard fort dex end)
+let SLOTS (A B C)
+
+proc blank_deed {id} {
+    ;; cells: dict keyed "slot.stat" -> text; specials: dict slot -> 0/1
+    var cells #{}
+    
+    foreach s $SLOTS {
+        foreach st $STATS {
+            set! cells [put $cells "$s.$st" "0"]
+        }
+    }
+    
+    return #{id $id name "Deed $id" cells $cells specials #{}
+             source manual quality 60 armor 3 assembly great}
+}
+
+var deeds ([blank_deed 1])
+var next_id 2
+var active "deed_1"
+
+proc deed_by_id {did} {
+    List::find $deeds [lambda {d} { == "deed_[get $d id]" $did }]
+}
+
+proc update_deed {did f} {
+    ;; f: deed-dict -> deed-dict; rebuild the list (foreach bindings
+    ;; are immutable, so map + set! the owning var)
+    set! deeds [List::map $deeds [lambda {d} {
+        if [== "deed_[get $d id]" $did] { apply $f $d } else { return $d }
+    }]]
+}
+
+proc cell_sum {d} {
+    List::reduce [Dict::values [get $d cells]] 0 [lambda {acc v} {
+        if [number? $v] { + $acc [int $v] } else { return $acc }
+    }]
+}
+
+proc special_count {d} {
+    List::reduce [Dict::values [get $d specials]] 0 [lambda {acc v} { + $acc [int $v] }]
+}
+
+let GRADE_MULT #{amazing 130 great 115 good 100 moderate 90 marginal 75}
+
+proc compute_cl {d} {
+    ;; a made-up formula: stats * quality% * grade%, + armor + specials
+    let base [* [cell_sum $d] [get $d quality]]
+    let graded [/ [* $base [get $GRADE_MULT [get $d assembly]]] 10000]
+    int [+ $graded [* [get $d armor] 4] [* [special_count $d] 7]]
+}
+
+app "Deed Lab" #{font $font font_size 15 width 900 height 560} {
+
+    theme {
+        rule window #{bg (24 26 32)}
+        rule * #{fg (215 218 228) accent (255 170 60)}
+        rule column #{gap 8}
+        rule row #{gap 8 align center}
+        rule tabs #{bg (32 34 42) border_color (70 74 90) gap 2}
+        rule tab #{bg (40 43 52) padding 14 gap 10}
+        rule tab #{state hovered} #{fg (255 255 255)}
+        rule grid #{gap 4}
+        rule text_input #{bg (30 32 40) padding 5 border_width 1 border_color (60 65 80)}
+        rule text_input #{state focused} #{border_color (255 170 60)}
+        rule button #{bg (50 55 70) padding 8 border_width 1 border_color (80 85 100)}
+        rule button #{state hovered} #{bg (70 75 90)}
+        rule button #{tag primary} #{bg (170 100 30) border_color (255 170 60)}
+        rule dropdown #{bg (30 32 40) padding 6 border_width 1 border_color (60 65 80)}
+        rule option #{bg (30 32 40) padding 4}
+        rule label #{tag big} #{fg (255 170 60) font_size 28}
+        rule label #{tag dim} #{fg (140 145 160)}
+        rule slider #{padding 4}
+    }
+
+    translator value_changed page Page
+    translator value_changed field Field
+    translator pointer_down action Action
+
+    on Page [lambda {cmd} { set! active [get $cmd source_value] }]
+
+    on Field [lambda {cmd} {
+        let args [get $cmd args]
+        let did [get $args 0]
+        let what [get $args 1]
+        let val [get $cmd source_value]
+
+        if [== $what cell] {
+            let key [get $args 2]
+            update_deed $did [lambda {d} { put $d cells [put [get $d cells] $key $val] }]
+        }
+
+        if [== $what special] {
+            let slot [get $args 2]
+            update_deed $did [lambda {d} { put $d specials [put [get $d specials] $slot $val] }]
+        }
+
+        if [== $what source]   { update_deed $did [lambda {d} { put $d source [get $args 2] }] }
+        if [== $what quality]  { update_deed $did [lambda {d} { put $d quality [int $val] }] }
+        if [== $what armor]    { update_deed $did [lambda {d} { put $d armor [int $val] }] }
+        if [== $what assembly] { update_deed $did [lambda {d} { put $d assembly $val }] }
+        if [== $what name]     { update_deed $did [lambda {d} { put $d name $val }] }
+    }]
+
+    on Action [lambda {cmd} {
+        let verb [get [get $cmd args] 0]
+
+        if [== $verb new_deed] {
+            set! deeds [List::push $deeds [blank_deed $next_id]]
+            set! active "deed_$next_id"
+            set! next_id [+ $next_id 1]
+        }
+    }]
+
+    view {
+        column "main" #{padding 16 gap 10} {
+            row "top" {
+                label "title" #{text "Deed Lab" tag big}
+                spacer "sp0"
+                button "new" #{text "+ New Deed" tag primary focusable 1 present (action (new_deed))}
+            }
+
+            tabs "nb" #{value $active controlled 1 focusable 1 present (page 0) grow 1} {
+                foreach d $deeds {
+                    let did "deed_[get $d id]"
+
+                    tab $did #{text [get $d name]} {
+                        row "hdr_$did" {
+                            label "lname_$did" #{text "Name:"}
+                            text_input "name_$did" #{text [get $d name] w 220 focusable 1
+                                                     present (field ($did name))}
+                            spacer "sp_$did"
+                            label "cl_$did" #{text "CL [compute_cl $d]" tag big}
+                        }
+
+                        label "gh_$did" #{text "Donors — stats per slot" tag dim}
+
+                        grid "g_$did" #{columns 5 gap 4} {
+                            label "gc_$did" #{text ""}
+                            foreach st $STATS {
+                                label "gh_${did}_$st" #{text $st tag dim}
+                            }
+                            foreach s $SLOTS {
+                                label "gs_${did}_$s" #{text "Slot $s"}
+                                foreach st $STATS {
+                                    let key "$s.$st"
+                                    text_input "c_${did}_$key" #{text [get [get $d cells] $key] w 70 focusable 1
+                                                                 present (field ($did cell $key))}
+                                }
+                            }
+                        }
+
+                        row "flags_$did" #{gap 16} {
+                            foreach s $SLOTS {
+                                checkbox "sp_${did}_$s" #{text "$s special" focusable 1
+                                                         checked [int [get [get $d specials] $s 0]]
+                                                         present (field ($did special $s))}
+                            }
+                        }
+
+                        row "src_$did" #{gap 16} {
+                            label "srcl_$did" #{text "Source:" tag dim}
+                            radio "src_m_$did" #{text "Manual" checked [== [get $d source] manual]
+                                                present (field ($did source manual))}
+                            radio "src_c_$did" #{text "From creature" checked [== [get $d source] creature]
+                                                present (field ($did source creature))}
+                            radio "src_d_$did" #{text "From deed" checked [== [get $d source] deed]
+                                                present (field ($did source deed))}
+                        }
+
+                        row "q_$did" #{gap 12} {
+                            label "ql_$did" #{text "Quality [get $d quality]%" w 130}
+                            slider "qs_$did" #{min 0 max 100 step 5 value [get $d quality] w 300 focusable 1
+                                              present (field ($did quality))}
+                            label "al_$did" #{text "Armor [get $d armor]" w 110}
+                            slider "as_$did" #{min 0 max 10 value [get $d armor] w 200 focusable 1
+                                              present (field ($did armor))}
+                        }
+
+                        row "asm_$did" #{gap 12} {
+                            label "asml_$did" #{text "Assembly:" tag dim}
+                            dropdown "asm_dd_$did" #{w 160 focusable 1 value [get $d assembly]
+                                                     present (field ($did assembly))} {
+                                foreach g (amazing great good moderate marginal) {
+                                    option "asm_${did}_$g" #{text $g}
+                                }
+                            }
+                            label "src_show_$did" #{text "source: [get $d source]" tag dim}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

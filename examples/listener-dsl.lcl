@@ -1,0 +1,460 @@
+;; listener-dsl.lcl — The Listener: a CLIM-style REPL in pure Lcl.
+;;
+;; A Lisp listener evaluates forms and prints results, but the thing
+;; that made CLIM's listener special is that every printed result is a
+;; PRESENTATION: the text on screen stays tied to the live object, typed
+;; by what it is, and gestures on it are resolved by type.  This example
+;; builds exactly that over lk's interior-presentation machinery (the
+;; weft-surface track): the transcript is an editor document, each
+;; result range is an annotation carrying the live value under a ptype
+;; named by `type`, and three translators per type turn clicks into
+;; commands with the object — not its text — as the argument.
+;;
+;; Demonstrates:
+;;   - `Lk::annot_present` with ANY Lcl value: a list result is a list
+;;     when the handler gets it, a lambda is still callable
+;;   - translators over interior presentations, discriminated by ptype
+;;     AND button (`#{button middle} dict Describe`) — the same matcher
+;;     that routes node presentations
+;;   - a read-only transcript editor (`Lk::editor_set_editable 0`) that
+;;     still hit-tests, selects and copies; spans projected from the
+;;     annotation store colour results by type and underline clickables
+;;   - an editor as the command line: multi-line forms, Ctrl+Enter to
+;;     evaluate (the editor consumes plain RETURN but lets modified
+;;     chords bubble to keybindings), Ctrl+P / Ctrl+N history
+;;   - a persistent top level: forms evaluate inside `namespace Top`,
+;;     so `var`/`proc` definitions survive between forms and results
+;;     are bound as `$_1`, `$_2`, ... (and `$_` for the latest)
+;;
+;; Gestures on a result:   left  = ACCEPT it into the command line
+;;                         middle = DESCRIBE it (one line)
+;;                         right  = INSPECT it (one line per element,
+;;                                  each element presented in turn)
+;; Gestures on an echoed form:  left = recall it, right = re-run it.
+;; Keys: Ctrl+Enter evaluate · Ctrl+P/N history · Ctrl+L clear.
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- the top level ----
+
+;; Forms run INSIDE this namespace so their definitions persist.  Plain
+;; `eval` from a handler lambda would define into the lambda's frame
+;; and lose everything on return.
+let TOP [namespace Top { var __form "" ; var __last "" }]
+
+;; Value ptypes: `type` names them, translators match on them.
+let TYPES (int float string list dict proc opaque namespace cell)
+
+;; ---- app model ----
+
+var ui {}           ;; the window's lk_ui (set inside `app`)
+var tdoc {}         ;; transcript document
+var ted {}          ;; transcript editor (read-only)
+var store {}        ;; annotation store over the transcript
+var idoc {}         ;; command-line document
+var ied {}          ;; command-line editor
+
+var nres 0          ;; results bound so far (_1 .. _nres)
+var hist ()         ;; submitted forms, oldest first
+var hist_ix 0       ;; history cursor (== len hist when not browsing)
+var status "Ctrl+Enter evaluates"
+var spans_rev ""    ;; transcript revision the spans were projected for
+
+;; ---- transcript writing ----
+
+;; Append a line; returns the byte offset where `text` starts.
+proc emit {text} {
+    let at [Lk::doc_len $tdoc]
+    Lk::doc_insert $tdoc $at "$text\n"
+    return $at
+}
+
+proc scroll_to_end {} {
+    Lk::editor_set_cursor $ted [Lk::doc_len $tdoc]
+    Lk::editor_scroll_to_cursor $ted
+}
+
+;; Mark [start, end) as presenting `v` under its own type; `n` is the
+;; `_n` binding (0 = unbound).  Layer = ptype, so span colours follow
+;; the type for free.
+proc present_value {start end v n} {
+    let id [Lk::annot_add $store $start $end [type $v] #{n $n}]
+    Lk::annot_present $ui $store $id [type $v] $v
+}
+
+proc present_form {start end form} {
+    let id [Lk::annot_add $store $start $end form]
+    Lk::annot_present $ui $store $id form $form
+}
+
+proc note {text} {
+    let at [emit $text]
+    Lk::annot_add $store $at [+ $at [String::length $text]] note
+}
+
+proc fail {msg} {
+    let line "!! $msg"
+    let at [emit $line]
+    Lk::annot_add $store $at [+ $at [String::length $line]] error
+}
+
+;; One line: "list of 3", "proc, arity 1..2", ...  (Defined before its
+;; callers: procs resolve bare names at definition, so a forward
+;; reference here would be an unresolved-name error at call time.)
+proc describe_text {v} {
+    let t [type $v]
+
+    if [== $t string] { return "string, [String::length $v] bytes" }
+    if [== $t list] { return "list of [len $v]" }
+    if [== $t dict] { return "dict with [len [Dict::keys $v]] keys" }
+    if [== $t proc] {
+        let a [arity $v]
+        return "proc, arity [get $a 0]..[get $a 1]"
+    }
+    if [== $t namespace] { return "namespace [Ns::name $v], [len [Ns::keys $v]] names" }
+
+    return $t
+}
+
+;; A result line: "=> repr", the repr presented.  Binds `_n`.
+proc emit_result {v} {
+    set! nres [+ $nres 1]
+    Ns::set $TOP "_$nres" $v
+    Ns::set $TOP "_" $v
+
+    let r [repr $v]
+    let at [emit "=> $r"]
+    present_value [+ $at 3] [+ [+ $at 3] [String::length $r]] $v $nres
+    set! status "_$nres bound: [describe_text $v]"
+}
+
+;; ---- evaluation ----
+
+proc submit {form} {
+    if [empty? [String::trim $form]] { return "" }
+
+    set! hist [List::push $hist $form]
+    set! hist_ix [len $hist]
+
+    let at [emit "[len $hist]> $form"]
+    let pfx [+ 2 [String::length [String::from [len $hist]]]]
+    present_form [+ $at $pfx] [+ [+ $at $pfx] [String::length $form]] $form
+
+    set! Top::__form $form
+
+    if [== 0 [catch { namespace Top { set! __last [eval $__form] } } _r err]] {
+        emit_result ${Top::__last}
+    } else {
+        fail $err
+        set! status "error"
+    }
+
+    scroll_to_end
+}
+
+;; ---- the command line ----
+
+proc input_text {} {
+    Lk::doc_text $idoc
+}
+
+proc input_set {text} {
+    Lk::doc_transact $idoc {
+        let n [Lk::doc_len $idoc]
+        if [> $n 0] { Lk::doc_delete $idoc 0 $n }
+        if [not [empty? $text]] { Lk::doc_insert $idoc 0 $text }
+    }
+    Lk::editor_set_cursor $ied [Lk::doc_len $idoc]
+}
+
+proc input_insert {text} {
+    let sel [Lk::editor_selection $ied]
+
+    if [== [len $sel] 2] {
+        Lk::doc_delete $idoc [get $sel 0] [- [get $sel 1] [get $sel 0]]
+        Lk::editor_set_cursor $ied [get $sel 0]
+    }
+
+    let at [Lk::editor_cursor $ied]
+    Lk::doc_insert $idoc $at $text
+    Lk::editor_set_cursor $ied [+ $at [String::length $text]]
+}
+
+proc history_step {d} {
+    if [== [len $hist] 0] { return "" }
+
+    var ix [+ $hist_ix $d]
+
+    if [< $ix 0] { set! ix 0 }
+    if [> $ix [len $hist]] { set! ix [len $hist] }
+
+    set! hist_ix $ix
+
+    if [== $ix [len $hist]] { input_set "" } else { input_set [get $hist $ix] }
+}
+
+;; ---- the gestures ----
+
+;; What accepting a value inserts: literals for atoms and short
+;; composites, otherwise a `$_n` reference — binding the value first if
+;; it has none (elements surfaced by Inspect start unbound).
+proc accept_text {v n} {
+    let t [type $v]
+    let r [repr $v]
+
+    if [or [== $t int] [== $t float]] { return $r }
+    if [and [or [== $t string] [== $t list] [== $t dict]] [< [String::length $r] 48]] { return $r }
+
+    var k $n
+
+    if [== $k 0] {
+        set! nres [+ $nres 1]
+        set! k $nres
+        Ns::set $TOP "_$k" $v
+        note ";; _$k bound"
+        scroll_to_end
+    }
+
+    return "\$_$k"
+}
+
+;; One line per element, each presented (and so clickable) in turn.
+proc inspect {v n} {
+    let t [type $v]
+    var who "value"
+
+    if [> $n 0] { set! who "_$n" }
+
+    note ";; $who: [describe_text $v]"
+
+    if [== $t list] {
+        var i 0
+        foreach e $v {
+            let r [repr $e]
+            let lead "   [$i] "
+            let at [emit "$lead$r"]
+            present_value [+ $at [String::length $lead]] [+ [+ $at [String::length $lead]] [String::length $r]] $e 0
+            set! i [+ $i 1]
+        }
+    }
+
+    if [== $t dict] {
+        foreach k [Dict::keys $v] {
+            let e [get $v $k]
+            let kr [repr $k]
+            let r [repr $e]
+            let at [emit "   $kr => $r"]
+            let vstart [+ [+ $at 3] [+ [String::length $kr] 4]]
+            present_value [+ $at 3] [+ [+ $at 3] [String::length $kr]] $k 0
+            present_value $vstart [+ $vstart [String::length $r]] $e 0
+        }
+    }
+
+    if [== $t namespace] {
+        foreach k [Ns::keys $v] {
+            let at [emit "   $k"]
+            present_value [+ $at 3] [+ [+ $at 3] [String::length $k]] $k 0
+        }
+    }
+
+    ;; A proc's source, as written (Proc::body; "" for a C proc).
+    if [== $t proc] {
+        let body [Proc::body $v]
+
+        if [empty? $body] {
+            note ";;    (a C proc: no script body)"
+        } else {
+            foreach line [String::split $body "\n"] {
+                if [not [empty? [String::trim $line]]] { emit "   $line" }
+            }
+        }
+    }
+
+    scroll_to_end
+}
+
+;; Meta `n` of the annotation a hit came from (0 when unbound).
+proc hit_n {cmd} {
+    let h [get $cmd hit]
+    let m [Lk::annot_meta $store [get [get $h locus] annot_id] n]
+
+    if [number? $m] { return [int $m] }
+
+    return 0
+}
+
+;; ---- span projection: annotation layers -> editor styled ranges ----
+
+let LAYER_STYLE #{
+    form      #{fg (140 200 255)}
+    note      #{fg (120 128 145)}
+    error     #{fg (255 110 100)}
+    int       #{fg (255 200 110) underline 1}
+    float     #{fg (255 200 110) underline 1}
+    string    #{fg (150 225 150) underline 1}
+    list      #{fg (130 190 255) underline 1}
+    dict      #{fg (130 190 255) underline 1}
+    proc      #{fg (220 150 255) underline 1}
+    opaque    #{fg (200 200 200) underline 1}
+    namespace #{fg (200 200 200) underline 1}
+    cell      #{fg (200 200 200) underline 1}
+}
+
+proc project_spans {} {
+    var spans ()
+
+    foreach layer [Dict::keys $LAYER_STYLE] {
+        foreach id [Lk::annot_by_layer $store $layer] {
+            let sp [Lk::annot_span $store $id]
+
+            if [< [get $sp 0] [get $sp 1]] {
+                set! spans [List::push $spans [Dict::merge #{start [get $sp 0] end [get $sp 1]} [get $LAYER_STYLE $layer]]]
+            }
+        }
+    }
+
+    set! spans [List::sort_by $spans [lambda {sp} { get $sp start }]]
+
+    var flat ()
+    var prev 0
+
+    foreach sp $spans {
+        if [>= [get $sp start] $prev] {
+            set! flat [List::push $flat $sp]
+            set! prev [get $sp end]
+        }
+    }
+
+    Lk::editor_set_spans $ted $tdoc $flat
+}
+
+;; ---- the app ----
+
+app "The Listener" #{font $font font_size 15 width 960 height 640} {
+
+    theme {
+        rule window #{bg (24 26 32)}
+        rule * #{fg (205 210 220)}
+        rule editor #{bg (28 31 40) padding 8}
+        rule editor #{tag input} #{bg (34 38 50) border_width 1 border_color (60 65 80)}
+        rule editor #{tag input state focused} #{border_color (80 140 220)}
+        rule split_v #{border_color (50 54 66)}
+        rule label #{tag prompt} #{fg (140 200 255) padding 8}
+        rule label #{tag dim} #{fg (120 128 145)}
+        rule row #{tag status} #{padding 6 gap 12}
+    }
+
+    set! ui ${LkDsl::_ui}
+
+    set! tdoc [Lk::doc_new ""]
+    set! ted [Lk::editor_new $ui $tdoc]
+    Lk::editor_set_editable $ted 0
+    Lk::editor_wrap $ted word
+
+    set! store [Lk::annot_store_new]
+    Lk::annot_attach $store $tdoc
+    Lk::editor_presentations $ted $store
+
+    set! idoc [Lk::doc_new ""]
+    set! ied [Lk::editor_new $ui $idoc [Lk::history_new]]
+
+    ;; Gestures by ptype: the same three verbs for every value type,
+    ;; two for echoed forms.  Clicks that hit no presentation fall
+    ;; through to ordinary editor behaviour (cursor, selection, copy).
+    foreach t $TYPES {
+        translator pointer_down #{button primary}   $t Accept
+        translator pointer_down #{button middle}    $t Describe
+        translator pointer_down #{button secondary} $t Inspect
+    }
+
+    translator pointer_down #{button primary}   form Recall
+    translator pointer_down #{button secondary} form Rerun
+
+    keybinding return ctrl cmdline Submit
+    keybinding p ctrl cmdline HistPrev
+    keybinding n ctrl cmdline HistNext
+    keybinding l ctrl cmdline Clear
+    keybinding l ctrl transcript Clear
+
+    on Submit [lambda {cmd} {
+        let form [input_text]
+        input_set ""
+        submit $form
+    }]
+
+    on HistPrev [lambda {cmd} { history_step -1 }]
+    on HistNext [lambda {cmd} { history_step 1 }]
+
+    on Clear [lambda {cmd} {
+        if [> [Lk::doc_len $tdoc] 0] { Lk::doc_delete $tdoc 0 [Lk::doc_len $tdoc] }
+        set! status "cleared — bindings _1.._$nres survive"
+    }]
+
+    on Accept [lambda {cmd} {
+        let v [get [get $cmd hit] value]
+        input_insert [accept_text $v [hit_n $cmd]]
+        Lk::focus_set $ui cmdline
+    }]
+
+    on Describe [lambda {cmd} {
+        let v [get [get $cmd hit] value]
+        let n [hit_n $cmd]
+        var who "value"
+
+        if [> $n 0] { set! who "_$n" }
+
+        set! status "$who: [describe_text $v]"
+    }]
+
+    on Inspect [lambda {cmd} {
+        inspect [get [get $cmd hit] value] [hit_n $cmd]
+    }]
+
+    on Recall [lambda {cmd} {
+        input_set [get [get $cmd hit] value]
+        Lk::focus_set $ui cmdline
+    }]
+
+    on Rerun [lambda {cmd} {
+        submit [get [get $cmd hit] value]
+    }]
+
+    note ";; The Listener — an Lcl REPL whose results stay alive."
+    note ";; Ctrl+Enter evaluates.  Click a result to accept it into the"
+    note ";; command line, middle-click to describe, right-click to inspect."
+    note ";; Results bind as \$_1, \$_2, ... and \$_ is the latest."
+    note ";; Try:  List::range 1 10        #{name Ada born 1815}"
+    note ";;       proc sq {x} { * \$x \$x }      List::map \$_1 \$_"
+    emit ""
+
+    ;; First-frame focus: the command line does not exist until a
+    ;; frame commits, so ask for deferred focus once; end_frame applies
+    ;; it as soon as the node is there.
+    Lk::focus_request $ui cmdline
+
+    view {
+        ;; Re-project spans only when the transcript changed.
+        let rev [Lk::doc_revision $tdoc]
+        if [!= $rev $spans_rev] {
+            project_spans
+            set! spans_rev $rev
+        }
+
+        split_v "main" #{split_ratio 760} {
+            editor "transcript" #{editor $ted focusable 1 present (transcript (t))}
+
+            column "bottom" #{align stretch} {
+                row "prompt" #{align stretch} {
+                    label "p" #{text "[+ [len $hist] 1]>" tag prompt}
+                    editor "cmdline" #{editor $ied focusable 1 grow 1 h 84 present (cmdline (c))}
+                }
+
+                row "status" #{tag status} {
+                    label "st" #{text $status tag dim}
+                    spacer "sp"
+                    label "keys" #{text "ctrl+enter eval · ctrl+p/n history · ctrl+l clear" tag dim}
+                }
+            }
+        }
+    }
+}

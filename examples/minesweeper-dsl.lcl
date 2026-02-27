@@ -1,0 +1,440 @@
+;; minesweeper-dsl.lcl — Minesweeper: the command model and nothing else.
+;;
+;; Every cell is a button carrying a `cell (x y)` presentation.  There
+;; are no per-cell callbacks: three translators map primary-click to
+;; Reveal, secondary-click to Flag and middle-click to Chord over the
+;; `cell` ptype, and the handlers mutate an app-owned model.  Cell
+;; appearance is pure theme — each cell gets a tag (hidden, flagged,
+;; open, n1..n8, mine, wrong, boom) and rules style the tag.  The view
+;; is regenerated from the model every frame; the toolkit holds no
+;; game state at all.
+;;
+;; Demonstrates:
+;;   - presentations with list-shaped values: `present (cell ($x $y))`
+;;     delivers both coordinates as typed command args
+;;   - the translator matcher dict: `#{button primary|secondary|middle}`
+;;     discriminates the three gestures on the SAME ptype
+;;   - a "global" keybinding: translators only fire on nodes that carry
+;;     a presentation, so the window root presents `game` and F2 is
+;;     scoped to it (key events fall back to the root when nothing is
+;;     focused, and bubble up to it otherwise)
+;;   - grid (`columns $W`), tags-as-state styling, dropdown +
+;;     value_changed, a live timer read from Lk::time_ms each frame
+;;   - randomness from the `Xoshiro::` runner package (lcl-random),
+;;     probed with catch and falling back to a 31-bit LCG seeded from
+;;     the clock on the first click — which is also what makes the
+;;     first click safe
+;;
+;; Controls: left-click reveals, right-click flags, middle-click on a
+;; number whose flags are all placed reveals its other neighbours
+;; (chording).  The face restarts; so does F2.
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- levels ----
+
+let LEVELS #{Beginner (9 9 10) Intermediate (16 16 40) Expert (30 16 99)}
+let LEVEL_NAMES (Beginner Intermediate Expert)
+
+;; ---- app model (top level, app-owned) ----
+
+var level Beginner
+var W 9
+var H 9
+var NMINES 10
+
+var mines ()      ;; 0/1 per cell, row-major
+var open ()       ;; 0/1 per cell
+var flags ()      ;; 0/1 per cell
+var counts ()     ;; neighbouring-mine count per cell
+
+var phase ready   ;; ready | playing | won | lost
+var opened 0
+var nflags 0
+var boom -1       ;; index of the mine that ended the game
+var start_ms 0
+var end_ms 0
+
+;; ---- randomness ----
+;;
+;; Xoshiro:: is a runner package (lcl-random; may be compiled out like
+;; Io::), so probe with catch and fall back to a 31-bit LCG seeded from
+;; the clock on the first click (Lcl ints are 64-bit: no overflow).
+
+var rng ""
+var has_rng 0
+var seed 20260823
+
+if [== 0 [catch { set! rng [Xoshiro::new] } _r _e]] { set! has_rng 1 }
+
+proc rand_below {n} {
+    if $has_rng { return [Xoshiro::int $rng 0 [- $n 1]] }
+
+    set! seed [% [+ [* $seed 1103515245] 12345] 2147483648]
+    % [int [/ $seed 65536]] $n
+}
+
+;; ---- board helpers ----
+
+;; The window ui, copied into a plain cell inside `app`.  A top-level
+;; proc must not spell `${LkDsl::_ui}` directly: the qualified
+;; reference captures the LkDsl NAMESPACE, and handler lambdas that
+;; reach this proc get stored into LkDsl::_cmd_handlers — a reference
+;; cycle the interpreter refuses.  (`${::LkDsl::_ui}` — a live root
+;; reference — is the other fix once `::` is everywhere.)
+var UI {}
+
+proc now {} {
+    Lk::time_ms $UI
+}
+
+proc zeros {n} {
+    List::map [List::range 0 $n] [lambda {i} { return 0 }]
+}
+
+proc idx {x y} {
+    + [* $y $W] $x
+}
+
+proc neighbors {i} {
+    let x [% $i $W]
+    let y [int [/ $i $W]]
+    var out ()
+
+    foreach dy (-1 0 1) {
+        foreach dx (-1 0 1) {
+            let nx [+ $x $dx]
+            let ny [+ $y $dy]
+
+            if [and [or $dx $dy] [>= $nx 0] [< $nx $W] [>= $ny 0] [< $ny $H]] {
+                set! out [List::push $out [idx $nx $ny]]
+            }
+        }
+    }
+
+    return $out
+}
+
+proc flags_around {i} {
+    List::reduce [neighbors $i] 0 [lambda {acc j} { + $acc [get $flags $j] }]
+}
+
+;; Mines go down on the first click, never on or next to it: a partial
+;; Fisher-Yates over the candidate indices picks NMINES of them.
+proc place_mines {safe} {
+    let excl [List::push [neighbors $safe] $safe]
+    let n [* $W $H]
+
+    var cands [List::filter [List::range 0 $n] [lambda {i} {
+        not [List::any? $excl [lambda {e} { == $e $i }]]
+    }]]
+
+    if [not $has_rng] { set! seed [+ $seed [now]] }
+    set! mines [zeros $n]
+
+    var k 0
+
+    while [< $k $NMINES] {
+        let r [+ $k [rand_below [- [len $cands] $k]]]
+        let pick [get $cands $r]
+
+        set! cands [put $cands $r [get $cands $k]]
+        set! cands [put $cands $k $pick]
+        set! mines [put $mines $pick 1]
+        set! k [+ $k 1]
+    }
+
+    set! counts [List::map [List::range 0 $n] [lambda {i} {
+        List::reduce [neighbors $i] 0 [lambda {acc j} { + $acc [get $mines $j] }]
+    }]]
+}
+
+proc new_game {} {
+    let spec [get $LEVELS $level]
+    let n [* [get $spec 0] [get $spec 1]]
+
+    set! W      [get $spec 0]
+    set! H      [get $spec 1]
+    set! NMINES [get $spec 2]
+
+    set! mines  [zeros $n]
+    set! open   [zeros $n]
+    set! flags  [zeros $n]
+    set! counts [zeros $n]
+
+    set! phase ready
+    set! opened 0
+    set! nflags 0
+    set! boom -1
+    set! start_ms 0
+    set! end_ms 0
+}
+
+proc finish {outcome} {
+    set! phase $outcome
+    set! end_ms [now]
+}
+
+;; ---- the three verbs ----
+
+proc reveal {i} {
+    if [== $phase ready] {
+        place_mines $i
+        set! phase playing
+        set! start_ms [now]
+    }
+
+    if [!= $phase playing] { return "" }
+    if [or [get $open $i] [get $flags $i]] { return "" }
+
+    if [get $mines $i] {
+        set! boom $i
+        finish lost
+        return ""
+    }
+
+    ;; Flood-open from i: zero-count cells pull their neighbours in.
+    var stack ($i)
+
+    while [len $stack] {
+        let j [get $stack [- [len $stack] 1]]
+        set! stack [List::pop $stack]
+
+        if [not [or [get $open $j] [get $flags $j]]] {
+            set! open [put $open $j 1]
+            set! opened [+ $opened 1]
+
+            if [== [get $counts $j] 0] {
+                foreach k [neighbors $j] {
+                    if [not [get $open $k]] {
+                        set! stack [List::push $stack $k]
+                    }
+                }
+            }
+        }
+    }
+
+    if [== $opened [- [* $W $H] $NMINES]] {
+        finish won
+    }
+}
+
+proc flag {i} {
+    if [not [or [== $phase ready] [== $phase playing]]] { return "" }
+    if [get $open $i] { return "" }
+
+    if [get $flags $i] {
+        set! flags [put $flags $i 0]
+        set! nflags [- $nflags 1]
+    } else {
+        set! flags [put $flags $i 1]
+        set! nflags [+ $nflags 1]
+    }
+}
+
+proc chord {i} {
+    if [!= $phase playing] { return "" }
+    if [not [get $open $i]] { return "" }
+    if [!= [get $counts $i] [flags_around $i]] { return "" }
+
+    foreach j [neighbors $i] {
+        if [== $phase playing] { reveal $j }
+    }
+}
+
+;; ---- view helpers ----
+
+;; Three-digit LCD-style counter; negatives show as -NN.
+proc lcd {n} {
+    var s [String::from [if [< $n 0] { - 0 $n } else { + $n 0 }]]
+
+    while [< [String::length $s] 3] {
+        set! s "0$s"
+    }
+
+    if [< $n 0] {
+        set! s "-[String::range $s 1 3]"
+    }
+
+    return $s
+}
+
+proc elapsed {} {
+    var ms 0
+
+    if [== $phase playing] { set! ms [- [now] $start_ms] }
+    if [or [== $phase won] [== $phase lost]] { set! ms [- $end_ms $start_ms] }
+
+    let s [int [/ $ms 1000]]
+
+    if [> $s 999] { return 999 }
+
+    return $s
+}
+
+proc face {} {
+    if [== $phase won] { return "☻" }
+    if [== $phase lost] { return "×" }
+
+    return "☺"
+}
+
+;; (text tag) for cell i under the current phase.
+proc cell_look {i} {
+    let m [get $mines $i]
+    let f [get $flags $i]
+
+    if [get $open $i] {
+        let c [get $counts $i]
+
+        if [== $c 0] { return ("" open) } else { return ("$c" "n$c") }
+    }
+
+    if [== $phase lost] {
+        if [== $i $boom] { return ("●" boom) }
+        if [and $m [not $f]] { return ("●" mine) }
+        if [and $f [not $m]] { return ("×" wrong) }
+    }
+
+    if [and [== $phase won] $m] { return ("▲" flagged) }
+    if $f { return ("▲" flagged) }
+
+    return ("" hidden)
+}
+
+;; ---- the app ----
+
+app "Minesweeper" #{font $font font_size 15 width 900 height 600} {
+
+    set! UI ${LkDsl::_ui}
+
+    theme {
+        rule window #{bg (28 30 36)}
+        rule * #{fg (205 210 220)}
+        rule column #{gap 10}
+        rule label #{tag lcd} #{fg (255 70 60) bg (20 10 10) padding 4 border_width 1 border_color (60 40 40)}
+        rule label #{tag dim} #{fg (120 126 140)}
+
+        rule grid #{gap 2 bg (18 19 24) padding 4}
+
+        ;; Cells: one rule per tag.  The `hidden` face is raised and
+        ;; darkens on hover; open cells are flat; numbers take the
+        ;; classic colours.
+        rule button #{padding 5 border_width 1 border_color (70 74 88) bg (64 68 82)}
+        rule button #{tag hidden state hovered} #{bg (84 90 108) border_color (120 126 150)}
+        rule button #{tag flagged} #{fg (255 120 80)}
+        rule button #{tag flagged state hovered} #{bg (84 90 108) border_color (120 126 150)}
+        rule button #{tag open} #{bg (38 40 48) border_color (48 50 60)}
+        rule button #{tag n1} #{bg (38 40 48) border_color (48 50 60) fg (100 160 255)}
+        rule button #{tag n2} #{bg (38 40 48) border_color (48 50 60) fg (90 200 110)}
+        rule button #{tag n3} #{bg (38 40 48) border_color (48 50 60) fg (245 95 95)}
+        rule button #{tag n4} #{bg (38 40 48) border_color (48 50 60) fg (170 130 255)}
+        rule button #{tag n5} #{bg (38 40 48) border_color (48 50 60) fg (210 130 60)}
+        rule button #{tag n6} #{bg (38 40 48) border_color (48 50 60) fg (80 205 205)}
+        rule button #{tag n7} #{bg (38 40 48) border_color (48 50 60) fg (235 235 235)}
+        rule button #{tag n8} #{bg (38 40 48) border_color (48 50 60) fg (150 150 160)}
+        rule button #{tag mine} #{bg (38 40 48) border_color (48 50 60) fg (230 230 230)}
+        rule button #{tag wrong} #{bg (38 40 48) border_color (48 50 60) fg (245 95 95)}
+        rule button #{tag boom} #{bg (200 50 40) border_color (255 120 100) fg (255 240 220)}
+
+        rule button #{tag face} #{padding 4 bg (210 180 60) fg (40 30 10) border_color (250 220 110)}
+        rule button #{tag face state hovered} #{bg (235 205 90)}
+        rule button #{tag face state focused} #{border_color (255 255 255)}
+
+        rule dropdown #{bg (50 54 66) padding 6 border_width 1 border_color (80 85 100)}
+        rule option #{bg (38 40 48) padding 6}
+        rule option #{state hovered} #{bg (64 68 82)}
+    }
+
+    ;; The whole game, in four translators.
+    translator pointer_down #{button primary}   cell Reveal
+    translator pointer_down #{button secondary} cell Flag
+    translator pointer_down #{button middle}    cell Chord
+    translator pointer_down action Action
+    translator value_changed level Level
+    keybinding f2 "" NewGame
+
+    on Reveal [lambda {cmd} {
+        let a [get $cmd args]
+        reveal [idx [get $a 0] [get $a 1]]
+    }]
+
+    on Flag [lambda {cmd} {
+        let a [get $cmd args]
+        flag [idx [get $a 0] [get $a 1]]
+    }]
+
+    on Chord [lambda {cmd} {
+        let a [get $cmd args]
+        chord [idx [get $a 0] [get $a 1]]
+    }]
+
+    on Action  [lambda {cmd} { new_game }]
+
+    ;; Ctrl+right-click on a cell: the three button-discriminated
+    ;; translators shown as a menu (Reveal / Flag / Chord) plus the
+    ;; global F2 -- translators, not callbacks, are the action model.
+    event_handler [lambda {ev node} {
+        if [and [== [get $ev type] pointer_down] [== [get $ev button] 3]] {
+            if [and [== [get $ev phase] target] [== [get $ev mods] ctrl]] {
+                Lk::context_menu ${LkDsl::_ui} [get $ev x] [get $ev y]
+                return 1
+            }
+        }
+        return 0
+    }]
+    on NewGame [lambda {cmd} { new_game }]
+
+    on Level [lambda {cmd} {
+        set! level [get $cmd source_value]
+        new_game
+    }]
+
+    new_game
+
+    view {
+        ;; Cells are 24x26 with a 2 px gap, so the board is W*26-2 wide;
+        ;; the HUD and footer rows match it.  (Text draws at the inset,
+        ;; not centred: padding 5 + 1 px border puts a 9 px glyph about
+        ;; where the middle of the cell is.)
+        let board_w [- [* $W 26] 2]
+
+        column "main" #{padding 16 gap 10} {
+
+            row "hud" #{w $board_w align center} {
+                label "mines" #{text [lcd [- $NMINES $nflags]] tag lcd}
+                spacer "s1"
+                button "face" #{text [face] tag face focusable 1 present (action (new)) tooltip "new game (F2)"}
+                spacer "s2"
+                label "clock" #{text [lcd [elapsed]] tag lcd}
+            }
+
+            grid "board" #{columns $W} {
+                var i 0
+                let n [* $W $H]
+
+                while [< $i $n] {
+                    let look [cell_look $i]
+                    let x [% $i $W]
+                    let y [int [/ $i $W]]
+
+                    button "c_$i" #{text [get $look 0] tag [get $look 1] w 24 h 26 present (cell ($x $y))}
+
+                    set! i [+ $i 1]
+                }
+            }
+
+            row "foot" #{w $board_w gap 10 align center} {
+                dropdown "level" #{value $level focusable 1 present (level (l))} {
+                    foreach nm $LEVEL_NAMES {
+                        option "lv_$nm" #{text $nm}
+                    }
+                }
+
+                spacer "s3"
+
+                label "hint" #{text "left reveal · right flag · middle chord" tag dim}
+            }
+        }
+    }
+}

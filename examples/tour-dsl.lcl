@@ -1,0 +1,437 @@
+;; tour-dsl.lcl — Widget Tour: every kind on one page each, and a
+;; headless snapshot mode that makes it a visual regression net.
+;;
+;; Six tabs, one per widget family — text, inputs, layout, editor,
+;; media, overlays — each showing the kinds in their interesting
+;; states (tags, disabled, focused, controlled, wrapped, filtered,
+;; modal).  Nothing here is clever; the point is coverage, and that
+;; every page can be photographed without a display:
+;;
+;;   SDL_VIDEODRIVER=offscreen build/lcl_lk_main examples/tour-dsl.lcl --snap /tmp/tour
+;;
+;; drives itself through the pages (controlled `tabs`), saves
+;; `tour-<page>.png` for each via `screenshot`, and `quit`s — six PNGs
+;; to eyeball or diff against a previous run after a layout, style,
+;; or widget change.  Interactively, F12 photographs the current page
+;; into the working directory, N / P switch pages, Ctrl+Q quits.
+;;
+;; Demonstrates:
+;;   - `Lk::args`, `screenshot`, `quit`: a script that runs itself
+;;   - controlled `tabs` (app-owned page selection + `value_changed`)
+;;   - `Lk::focus_request` for a node the frame is about to build
+;;   - every widget kind, incl. `image` (both filters) and `canvas`
+;;   - a modal overlay from a hidden subtree, photographed open
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+let PAGES (text inputs layout editor media overlays)
+
+;; ---- model ----
+
+var UI ""             ;; the window ui (copied from the DSL at app time)
+var page text         ;; selected tab id
+var clicks 0          ;; the text page's click counter
+var checks #{a 1 b 0 c 0}
+var radio_val "two"
+var slide 40
+var pick "Green"
+var typed ""
+var modal_open 0
+var para_spans ""
+var last_menu "(none)"
+
+proc open_menu {which} {
+    if [== $which file] {
+        Lk::menu_open $UI #{owner mb_file items (("New" MenuPick new) ("Open..." MenuPick open) (---) #{label "Save" command MenuPick args (save) enabled 0} ("Quit" Quit))}
+    } else {
+        Lk::menu_open $UI #{owner mb_view items (("Next page" Next) ("Previous page" Prev) (---) ("Snapshot" Snap))}
+    }
+}
+let PARA "This paragraph is a styled_text: it takes the width it is given and grows to fit its rows. The first words are emphasised, this clause carries a background, and this range is underlined and presented as a link you can click."
+
+;; snapshot mode: --snap DIR
+var snap_dir ""
+var frame 0
+var snap_ix 0
+
+;; ---- resources (created once the ui exists) ----
+
+var doc ""
+var ed ""
+var img ""
+var cv ""
+
+proc make_resources {} {
+    set! para_spans [Lk::spans_new $UI]
+    Lk::spans_add $para_spans 0 14 #{fg (240 190 80)}
+    Lk::spans_add $para_spans [String::find $PARA "this clause"] [+ [String::find $PARA "this clause"] 34] #{bg (40 52 76)}
+    let l0 [String::find $PARA "this range"]
+    Lk::spans_add $para_spans $l0 [+ $l0 48] #{fg (140 200 255) underline 1}
+    Lk::spans_present $para_spans $l0 [+ $l0 48] link #{to "docs/styled-text.md"}
+
+    set! doc [Lk::doc_new "The editor widget wraps this paragraph at word boundaries when the page is narrower than the text, keeps a caret set, and projects styled spans from the app: the first word is emphasised, and this clause is underlined.\n\nA second paragraph, after a blank line.\n\tA tab-indented line."]
+    set! ed [Lk::editor_new $UI $doc]
+    Lk::editor_wrap $ed word
+    ;; Span ranges found at runtime rather than counted by hand.
+    let s1 [Lk::doc_find $doc "keeps a caret set"]
+    let s2 [Lk::doc_find $doc "this clause is underlined"]
+    Lk::editor_set_spans $ed $doc (#{start 0 end 3 fg (240 190 80)}
+                                   #{start $s1 end [+ $s1 17] bg (60 70 100)}
+                                   #{start $s2 end [+ $s2 25] underline 1})
+
+    ;; 64x64: a gradient with a checker in the corner — the two
+    ;; `filter` modes look different only when scaled, so it is shown
+    ;; at 2x with both.
+    set! img [Lk::image_new $UI 64 64]
+    var y 0
+    while [< $y 64] {
+        var x 0
+        while [< $x 64] {
+            if [and [< $x 24] [< $y 24]] {
+                if [== [% [+ [int [/ $x 6]] [int [/ $y 6]]] 2] 0] {
+                    Lk::image_set_px $img $x $y (240 240 240)
+                } else {
+                    Lk::image_set_px $img $x $y (40 40 48)
+                }
+            } else {
+                Lk::image_set_px $img $x $y ([* $x 4] [* $y 4] 160)
+            }
+            set! x [+ $x 1]
+        }
+        set! y [+ $y 1]
+    }
+
+    set! cv [Lk::canvas_new $UI 300 150]
+    Lk::canvas_fill_rect $cv 0 0 300 150 (26 29 35)
+    Lk::canvas_rect $cv 0 0 300 150 (110 118 135)
+    var i 0
+    while [< $i 10] {
+        Lk::canvas_line $cv [* $i 30] 0 300 [* $i 15] (60 70 100)
+        set! i [+ $i 1]
+    }
+    Lk::canvas_polyline $cv (10 120 60 40 110 100 160 20 210 90 260 50 290 110) (90 200 130) 2
+    Lk::canvas_fill_rect $cv 200 110 40 24 (230 110 110 200)
+    Lk::canvas_text $cv 12 12 "canvas: lines, rects, text" (220 220 230)
+}
+
+;; ---- pages ----
+
+proc select_page {id} {
+    set! page $id
+
+    ;; First-frame focus for the node the page is about to build.
+    if [== $id text] { Lk::focus_request $UI b_focus }
+    if [== $id inputs] { Lk::focus_request $UI ti }
+    if [== $id editor] { Lk::focus_request $UI ed }
+}
+
+proc page_index {id} {
+    var i 0
+    var found 0
+    foreach p $PAGES {
+        if [== $p $id] { set! found $i }
+        set! i [+ $i 1]
+    }
+    return $found
+}
+
+proc step_page {d} {
+    let n [len $PAGES]
+    select_page [get $PAGES [% [+ [+ [page_index $page] $d] $n] $n]]
+}
+
+proc open_modal {} {
+    if $modal_open { return }
+    set! modal_open 1
+    Lk::overlay_push $UI #{kind modal anchor center owner_id open_modal content_root_id dlg}
+    Lk::focus_request $UI dlg_ok
+}
+
+proc close_modal {} {
+    if [not $modal_open] { return }
+    set! modal_open 0
+    Lk::overlay_pop $UI
+}
+
+;; ---- snapshot mode ----
+;;
+;; Three frames per page: select it, photograph it, advance.  The
+;; overlays page is photographed with its modal open.
+
+proc snap_tick {} {
+    if [empty? $snap_dir] { return }
+
+    set! frame [+ $frame 1]
+    let k [% $frame 3]
+
+    if [== $k 1] {
+        if [>= $snap_ix [len $PAGES]] { quit; return }
+        select_page [get $PAGES $snap_ix]
+        if [== $page overlays] { open_modal; open_menu file }
+    }
+
+    if [== $k 2] {
+        screenshot "$snap_dir/tour-$page.png"
+    }
+
+    if [== $k 0] {
+        if [== $page overlays] { close_modal }
+        set! snap_ix [+ $snap_ix 1]
+    }
+}
+
+proc parse_args {} {
+    let a [Lk::args]
+    if [and [>= [len $a] 2] [== [get $a 0] "--snap"]] {
+        set! snap_dir [get $a 1]
+    }
+}
+
+;; ---- command handlers (procs, so they can set! the model) ----
+
+proc on_click {} { set! clicks [+ $clicks 1] }
+proc on_check {id v} { set! checks [Dict::merge $checks [dict $id [int $v]]] }
+proc on_radio {v} { set! radio_val $v }
+proc on_slide {v} { set! slide [int $v] }
+proc on_pick {v} { set! pick $v }
+proc on_typed {v} { set! typed $v }
+
+parse_args
+
+app "Widget Tour" #{font $font font_size 14 width 900 height 620} {
+
+    theme {
+        rule window #{bg (30 32 38)}
+        rule * #{fg (205 210 220)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule label #{tag title} #{fg (240 240 245) font_size 18}
+        rule label #{tag warn} #{fg (240 190 80)}
+        rule column #{tag frame} #{padding 1 bg (70 75 90)}
+        rule column #{tag box1} #{bg (60 90 140) padding 8}
+        rule column #{tag box2} #{bg (80 140 100) padding 8}
+        rule column #{tag box3} #{bg (150 90 80) padding 8}
+        rule column #{tag dlg} #{bg (44 48 58) padding 14 gap 10 border_width 1 border_color (120 126 150)}
+        rule button #{padding 6 border_width 1 border_color (70 74 88) bg (52 56 68)}
+        rule button #{state hovered} #{bg (72 78 94) border_color (120 126 150)}
+        rule button #{state focused} #{border_color (80 140 220)}
+        rule button #{state disabled} #{fg (110 114 126) bg (40 42 50)}
+        rule button #{tag primary} #{bg (65 120 210) fg (255 255 255) border_color (90 150 240)}
+        rule button #{tag danger} #{bg (170 60 60) fg (255 255 255) border_color (210 90 90)}
+        rule checkbox #{padding 2}
+        rule radio #{padding 2}
+        rule slider #{accent (80 140 220)}
+        rule dropdown #{bg (52 56 68) padding 4 border_width 1 border_color (70 74 88)}
+        rule text_input #{bg (24 26 30) padding 5 border_width 1 border_color (70 74 88)}
+        rule styled_text #{tag para} #{bg (30 32 40) padding 6}
+        rule editor #{padding 6 border_width 1 border_color (70 74 88)}
+        rule scroll #{bg (24 26 30)}
+        rule canvas #{padding 0}
+        rule image #{padding 0}
+    }
+
+    translator value_changed page PageSel
+    translator pointer_down clicker Click
+    translator value_changed check Check
+    translator value_changed radio Radio
+    translator value_changed slide Slide
+    translator value_changed pick Pick
+    translator value_changed typed Typed
+    translator pointer_down modal Modal
+    keybinding f12 "" Snap
+    keybinding n "" Next
+    keybinding p "" Prev
+    keybinding q ctrl Quit
+
+    translator pointer_down menu Menu
+    on PageSel [lambda {cmd} { select_page [get $cmd source_value] }]
+    on Click [lambda {cmd} { on_click }]
+    on Check [lambda {cmd} { on_check [get [get $cmd args] 0] [get $cmd source_value] }]
+    on Radio [lambda {cmd} { on_radio [get [get $cmd args] 0] }]
+    on Slide [lambda {cmd} { on_slide [get $cmd source_value] }]
+    on Pick [lambda {cmd} { on_pick [get $cmd source_value] }]
+    on Typed [lambda {cmd} { on_typed [get $cmd source_value] }]
+    on Modal [lambda {cmd} {
+        if [== [get [get $cmd args] 0] open] { open_modal } else { close_modal }
+    }]
+    on Snap [lambda {cmd} { screenshot "tour-$page.png" }]
+    on Next [lambda {cmd} { step_page 1 }]
+    on Prev [lambda {cmd} { step_page -1 }]
+    on Quit [lambda {cmd} { quit }]
+    on Menu [lambda {cmd} { open_menu [get [get $cmd args] 0] }]
+    on MenuPick [lambda {cmd} { set! last_menu [get [get $cmd args] 0] }]
+
+    set! UI ${LkDsl::_ui}
+    make_resources
+    select_page text
+
+    view {
+        snap_tick
+
+        column "root" #{padding 10 gap 8 align stretch} {
+            row "hdr" #{gap 12 align center} {
+                label "title" #{text "Widget Tour" tag title}
+                label "hint" #{text "N / P pages · F12 snapshot · Ctrl+Q quit" tag dim}
+            }
+
+            tabs "pages" #{value $page controlled 1 focusable 1 grow 1 present (page (p))} {
+
+                tab "text" #{text "Text"} {
+                    label "t1" #{text "Labels and buttons" tag title}
+                    label "t2" #{text "A plain label, a dim one below, and a warning-tagged one." }
+                    label "t3" #{text "dim: secondary information" tag dim}
+                    label "t4" #{text "warn: something needs attention" tag warn}
+                    spacer "sp1" #{h 8}
+                    row "btns" #{gap 8} {
+                        button "b_plain" #{text "Plain" focusable 1 present (clicker (b)) tooltip "Counts clicks"}
+                        button "b_primary" #{text "Primary" tag primary focusable 1 present (clicker (b))}
+                        button "b_danger" #{text "Danger" tag danger focusable 1 present (clicker (b))}
+                        button "b_disabled" #{text "Disabled" disabled 1 present (clicker (b))}
+                        button "b_focus" #{text "Focused" focusable 1 present (clicker (b))}
+                    }
+                    label "t5" #{text "clicks: $clicks" tag dim}
+                    spacer "sp2" #{h 8}
+                    label "t7" #{text "text_align start / center / end, and text_valign center on a tall one" tag dim}
+                    row "aligns" #{gap 8} {
+                        button "al_start" #{text "start" w 110 text_align start}
+                        button "al_center" #{text "center" w 110 text_align center}
+                        button "al_end" #{text "end" w 110 text_align end}
+                        button "al_both" #{text "both" w 110 h 44 text_align center text_valign center}
+                    }
+                    spacer "sp4" #{h 8}
+                    label "t8" #{text "styled_text: a paragraph that wraps at its width, with spans (fg, bg, underline) and a presented range" tag dim}
+                    styled_text "para" #{text $PARA spans $para_spans w 520 tag para}
+                    label "t6" #{text "Hover Plain for a tooltip; the disabled one never emits." tag dim}
+                }
+
+                tab "inputs" #{text "Inputs"} {
+                    label "i1" #{text "Inputs" tag title}
+                    row "r_ti" #{gap 8 align center} {
+                        label "l_ti" #{text "text_input" tag dim}
+                        text_input "ti" #{text $typed focusable 1 w 260 present (typed (t))}
+                        label "l_ti2" #{text "typed: $typed" tag dim}
+                    }
+                    row "r_cb" #{gap 12 align center} {
+                        label "l_cb" #{text "checkbox" tag dim}
+                        checkbox "cb_a" #{text "alpha" checked [get $checks a] focusable 1 present (check (a))}
+                        checkbox "cb_b" #{text "beta" checked [get $checks b] focusable 1 present (check (b))}
+                        checkbox "cb_c" #{text "gamma (disabled)" checked [get $checks c] disabled 1 present (check (c))}
+                    }
+                    row "r_rd" #{gap 12 align center} {
+                        label "l_rd" #{text "radio" tag dim}
+                        radio "rd_1" #{text "one" checked [== $radio_val one] focusable 1 present (radio (one))}
+                        radio "rd_2" #{text "two" checked [== $radio_val two] focusable 1 present (radio (two))}
+                        radio "rd_3" #{text "three" checked [== $radio_val three] focusable 1 present (radio (three))}
+                        label "l_rd2" #{text "= $radio_val" tag dim}
+                    }
+                    row "r_sl" #{gap 12 align center} {
+                        label "l_sl" #{text "slider" tag dim}
+                        slider "sl" #{value $slide min 0 max 100 step 5 focusable 1 w 220 present (slide (s))}
+                        label "l_sl2" #{text "= $slide" tag dim}
+                        slider "sl_off" #{value 70 min 0 max 100 disabled 1 w 120}
+                    }
+                    row "r_dd" #{gap 12 align center} {
+                        label "l_dd" #{text "dropdown" tag dim}
+                        dropdown "dd" #{value $pick focusable 1 w 160 present (pick (p))} {
+                            foreach c (Red Orange Yellow Green Cyan Blue Indigo Violet Black Gray White Brown) {
+                                option "opt_$c" #{text $c}
+                            }
+                        }
+                        label "l_dd2" #{text "= $pick" tag dim}
+                    }
+                }
+
+                tab "layout" #{text "Layout" align stretch} {
+                    label "y1" #{text "Layout" tag title}
+                    label "y2" #{text "row align center, mixed heights:" tag dim}
+                    row "al" #{gap 8 align center} {
+                        column "a1" #{tag box1 h 24} { label "a1l" #{text "24"} }
+                        column "a2" #{tag box2 h 48} { label "a2l" #{text "48"} }
+                        column "a3" #{tag box3 h 36} { label "a3l" #{text "36"} }
+                    }
+                    label "y3" #{text "grow 1 : 2 : 1, then justify end:" tag dim}
+                    row "gr" #{gap 8 align stretch} {
+                        column "g1" #{tag box1 grow 1} { label "g1l" #{text "grow 1"} }
+                        column "g2" #{tag box2 grow 2} { label "g2l" #{text "grow 2"} }
+                        column "g3" #{tag box3 grow 1} { label "g3l" #{text "grow 1"} }
+                    }
+                    row "ju" #{gap 8 justify end} {
+                        column "j1" #{tag box1} { label "j1l" #{text "end"} }
+                        column "j2" #{tag box2} { label "j2l" #{text "justified"} }
+                    }
+                    label "y4" #{text "grid, 3 columns; split_h with a split_v inside; scroll:" tag dim}
+                    row "bottom" #{gap 12 align stretch grow 1} {
+                        grid "gd" #{columns 3 gap 4} {
+                            foreach i (1 2 3 4 5 6 7) {
+                                button "cell_$i" #{text "cell $i" w 70}
+                            }
+                        }
+                        column "spf" #{tag frame w 300 h 150 align stretch} {
+                            split_h "sh" #{split_ratio 400 grow 1} {
+                                column "shl" #{tag box1} { label "shll" #{text "left"} }
+                                split_v "sv" #{split_ratio 500} {
+                                    column "svt" #{tag box2} { label "svtl" #{text "top"} }
+                                    column "svb" #{tag box3} { label "svbl" #{text "bottom"} }
+                                }
+                            }
+                        }
+                        scroll "sc" #{w 160 h 150} {
+                            foreach i (1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20) {
+                                label "row_$i" #{text "scrolled row $i"}
+                            }
+                        }
+                    }
+                }
+
+                tab "editor" #{text "Editor"} {
+                    label "e1" #{text "Editor" tag title}
+                    label "e2" #{text "word wrap, styled spans from the app, multi-caret (Ctrl+click, Ctrl+D)" tag dim}
+                    editor "ed" #{editor $ed focusable 1 w 560 h 200}
+                    label "e3" #{text "line [+ 1 [Lk::doc_pos_to_line $doc [Lk::editor_cursor $ed]]], col [Lk::doc_char_col $doc [Lk::editor_cursor $ed]] · [Lk::doc_line_count $doc] lines · [len [Lk::editor_carets $ed]] caret(s)" tag dim}
+                }
+
+                tab "media" #{text "Media"} {
+                    label "m1" #{text "Media" tag title}
+                    label "m2" #{text "one 64x64 image at 2x: filter nearest (left) vs linear (right)" tag dim}
+                    row "imgs" #{gap 16} {
+                        column "if1" #{tag frame} { image "im_near" #{image $img w 128 h 128 filter nearest} }
+                        column "if2" #{tag frame} { image "im_lin" #{image $img w 128 h 128 filter linear} }
+                        column "if3" #{tag frame} { image "im_1x" #{image $img} }
+                    }
+                    label "m3" #{text "a canvas display list at its size hint:" tag dim}
+                    column "cvf" #{tag frame} { canvas "cv" #{canvas $cv} }
+                }
+
+                tab "overlays" #{text "Overlays"} {
+                    label "o1" #{text "Overlays" tag title}
+                    row "menubar" #{gap 2} {
+                        button "mb_file" #{text "File" focusable 1 present (menu (file))}
+                        button "mb_view" #{text "View" focusable 1 present (menu (view))}
+                        label "mb_last" #{text "  menu: $last_menu" tag dim}
+                    }
+                    label "o2" #{text "tooltips on hover; a modal from a hidden subtree; a menubar of explicit menus" tag dim}
+                    row "ob" #{gap 8} {
+                        button "open_modal" #{text "Open modal" focusable 1 present (modal (open)) tooltip "Pushes a modal overlay"}
+                        button "tt2" #{text "Hover me" focusable 1 tooltip "A tooltip: fg/bg swapped plate"}
+                        dropdown "dd2" #{value "popup" focusable 1 w 140} {
+                            option "o_a" #{text "popup"}
+                            option "o_b" #{text "is an"}
+                            option "o_c" #{text "overlay too"}
+                        }
+                    }
+                    label "o3" #{text [if $modal_open { "modal: open" } else { "modal: closed" }] tag dim}
+
+                    ;; Modal content: hidden in the main tree, laid out by
+                    ;; the overlay pass at the resolved anchor.
+                    column "dlg" #{hidden 1 tag dlg w 460 align stretch} {
+                        label "dlg_t" #{text "A modal dialog" tag title}
+                        label "dlg_b" #{text "Focus is trapped here; outside clicks are blocked." tag dim}
+                        row "dlg_r" #{gap 8 justify end} {
+                            button "dlg_ok" #{text "OK" tag primary focusable 1 present (modal (close))}
+                            button "dlg_cancel" #{text "Close" focusable 1 present (modal (close))}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

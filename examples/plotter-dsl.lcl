@@ -1,0 +1,800 @@
+;; plotter-dsl.lcl — Plotter: the vector canvas as a function explorer.
+;;
+;; A 2-D plotter in pure Lcl over the `canvas` widget (docs/canvas.md).
+;; The plot is an application-owned DISPLAY LIST (`Lk::canvas_new`):
+;; the app rebuilds it — clear, grid, axes, tick labels, one polyline
+;; per series, a crosshair — only when something changed (a series
+;; toggled, the view panned or zoomed, the pointer moved, the node
+;; resized), and the widget replays it every frame.  The toolkit never
+;; sees a "plot"; it sees lines, rects, and text in canvas pixels.
+;;
+;; Demonstrates:
+;;   - `canvas` + `Lk::canvas_line/polyline/rect/fill_rect/text`: a
+;;     retained vector scene rebuilt on change, sized by `grow 1` and
+;;     read back with `Lk::node_rect` so ticks and text land on real
+;;     pixels (the Tiny Paint pointer -> content mapping, reused for
+;;     the crosshair, drag-to-pan, and wheel-to-zoom about the pointer)
+;;   - the dirty-flag idiom: gestures and commands only mark `dirty`;
+;;     the `view` body rebuilds once per frame at most
+;;   - a live readout of the display list itself (`Lk::canvas_op_count`
+;;     and the rebuild time via `Lk::time_ms`)
+;;   - script-side numerics: Lcl has no trig/exp, so `fsin`/`fexp` are
+;;     range-reduced Taylor series; "nice" tick steps (1-2-5) and a
+;;     fixed-decimal formatter from integer arithmetic
+;;   - forms widgets driving a model: checkboxes per series, a slider
+;;     for the sample stride, a preset dropdown, buttons, and global
+;;     3-arg `keybinding`s for the chords
+;;
+;; Controls: drag to pan, wheel to zoom about the pointer, right-click
+;; or R to reset the view, I / O zoom, arrows pan, W new random walk.
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- numerics (Lcl has no abs/min/max/floor/trig/exp) ----
+
+let PI 3.141592653589793
+let TWO_PI 6.283185307179586
+
+proc fabs {v} {
+    if [< $v 0] { return [- 0 $v] }
+    return $v
+}
+
+proc fmin {a b} {
+    if [< $a $b] { return $a }
+    return $b
+}
+
+proc fmax {a b} {
+    if [> $a $b] { return $a }
+    return $b
+}
+
+proc ffloor {v} {
+    let i [int $v]
+    if [< $v $i] { return [- $i 1] }
+    return $i
+}
+
+proc fceil {v} {
+    let i [int $v]
+    if [> $v $i] { return [+ $i 1] }
+    return $i
+}
+
+proc clampf {v lo hi} {
+    return [fmax $lo [fmin $hi $v]]
+}
+
+;; sin by a Horner-form Taylor polynomial after reducing x into
+;; [-pi, pi): terms through t^13 keep the error under 1e-4 at the
+;; edges — well under a pixel.  Horner form matters here: every
+;; arithmetic op is a proc call (~3 us), so the eval is ~20 calls
+;; instead of ~55 for the naive term loop.
+proc fsin {x} {
+    let t [- $x [* $TWO_PI [ffloor [/ [+ $x $PI] $TWO_PI]]]]
+    let t2 [* $t $t]
+
+    return [* $t [+ 1 [* $t2 [+ -0.16666666666666666 [* $t2 [+ 0.008333333333333333 [* $t2 [+ -0.0001984126984126984 [* $t2 [+ 0.0000027557319223985893 [* $t2 [+ -0.000000025052108385441718 [* $t2 0.00000000016059043836821613]]]]]]]]]]]]]
+}
+
+proc fcos {x} {
+    return [fsin [+ $x [/ $PI 2]]]
+}
+
+;; exp by halving x until |x| < 0.5, ten Taylor terms, then squaring
+;; back up; negatives go through 1 / exp(-x).
+proc fexp {x} {
+    if [< $x 0] { return [/ 1 [fexp [- 0 $x]]] }
+
+    var t $x
+    var halvings 0
+
+    while [> $t 0.5] {
+        set! t [/ $t 2]
+        set! halvings [+ $halvings 1]
+    }
+
+    var term 1.0
+    var sum 1.0
+    var k 1
+
+    while [< $k 11] {
+        set! term [/ [* $term $t] $k]
+        set! sum [+ $sum $term]
+        set! k [+ $k 1]
+    }
+
+    while [> $halvings 0] {
+        set! sum [* $sum $sum]
+        set! halvings [- $halvings 1]
+    }
+
+    return $sum
+}
+
+;; Fixed-decimal formatting from integer arithmetic (repr of a float
+;; prints every digit it has).
+proc fmt {v d} {
+    var neg 0
+    var a $v
+
+    if [< $a 0] {
+        set! neg 1
+        set! a [- 0 $a]
+    }
+
+    var scale 1
+    var k 0
+
+    while [< $k $d] {
+        set! scale [* $scale 10]
+        set! k [+ $k 1]
+    }
+
+    let n [int [+ [* $a $scale] 0.5]]
+    let whole [int [/ $n $scale]]
+    let frac [- $n [* $whole $scale]]
+    var s [String::from $whole]
+
+    if [> $d 0] {
+        var fs [String::from $frac]
+
+        while [< [String::length $fs] $d] {
+            set! fs "0$fs"
+        }
+
+        set! s [String::join ($s $fs) "."]
+    }
+
+    if [and $neg [not [== $n 0]]] {
+        set! s "-$s"
+    }
+
+    return $s
+}
+
+;; A "nice" tick step (1, 2, or 5 times a power of ten) giving about
+;; `target` ticks across `range`.
+proc nice_step {range target} {
+    let raw [/ $range $target]
+    var mag 1.0
+
+    while [< [* $mag 10] $raw] { set! mag [* $mag 10] }
+    while [> $mag $raw] { set! mag [/ $mag 10] }
+
+    let norm [/ $raw $mag]
+
+    if [< $norm 1.5] { return $mag }
+    if [< $norm 3.5] { return [* 2 $mag] }
+    if [< $norm 7.5] { return [* 5 $mag] }
+
+    return [* 10 $mag]
+}
+
+;; Decimals worth showing for a tick step.
+proc step_decimals {step} {
+    if [>= $step 1] { return 0 }
+    if [>= $step 0.1] { return 1 }
+    if [>= $step 0.01] { return 2 }
+    return 3
+}
+
+;; ---- model (top level, app-owned) ----
+
+var cv ""            ;; the display list (lk_canvas)
+var cw 640           ;; laid-out canvas size (from Lk::node_rect)
+var ch 420
+var dirty 1          ;; rebuild the display list next frame
+
+var xmin -10.0       ;; the view window, data units
+var xmax 10.0
+var ymin -4.0
+var ymax 4.0
+
+var px_step 3        ;; sample stride in pixels (slider)
+var hover_px -1      ;; pointer in canvas pixels, -1 = off-canvas
+var hover_py -1
+var dragging 0
+var last_px 0
+var last_py 0
+
+var ops 0            ;; readout: op count of the last rebuild
+var build_ms 0       ;; readout: rebuild time
+
+;; Series: id, label, colour, a lambda over x.  `series_on` holds the
+;; enabled flags; the checkboxes and presets write it.
+let SERIES (#{id sin    name "sin x"            color (90 200 130)  fn [lambda {x} { fsin $x }]}
+            #{id cos    name "cos x"            color (90 150 230)  fn [lambda {x} { fcos $x }]}
+            #{id damp   name "sin x · e^(-|x|/5)" color (240 190 80) fn [lambda {x} { * [fsin $x] [fexp [- 0 [/ [fabs $x] 5]]] }]}
+            #{id gauss  name "3 e^(-x²/8)"       color (230 110 110) fn [lambda {x} { * 3 [fexp [- 0 [/ [* $x $x] 8]]] }]}
+            #{id quad   name "x²/20 - 2"         color (200 130 220) fn [lambda {x} { - [/ [* $x $x] 20] 2 }]}
+            #{id cubic  name "x³/100"            color (120 210 210) fn [lambda {x} { / [* [* $x $x] $x] 100 }]})
+
+var series_on #{sin 1 cos 1 damp 0 gauss 0 quad 0 cubic 0}
+
+;; The "walk" series is data, not a function: 41 samples of a random
+;; walk over [-10, 10], regenerated by W / the button.  Xoshiro:: is a
+;; runner package (may be compiled out, like Io::): probe with catch
+;; and fall back to a 31-bit LCG.
+var walk_on 1
+var walk_xs ()
+var walk_ys ()
+var rng ""
+var has_rng 0
+var seed 20260826
+
+if [== 0 [catch { set! rng [Xoshiro::new] } _r _e]] { set! has_rng 1 }
+
+proc lcg {} {
+    if $has_rng { return [Xoshiro::float $rng] }
+
+    set! seed [% [+ [* $seed 1103515245] 12345] 2147483648]
+    return [/ $seed 2147483648.0]
+}
+
+proc new_walk {} {
+    var xs ()
+    var ys ()
+    var y 0.0
+    var i 0
+
+    while [<= $i 40] {
+        set! xs [List::push $xs [- [* $i 0.5] 10]]
+        set! ys [List::push $ys $y]
+        set! y [clampf [+ $y [- [* [lcg] 1.6] 0.8]] -3.8 3.8]
+        set! i [+ $i 1]
+    }
+
+    set! walk_xs $xs
+    set! walk_ys $ys
+    set! dirty 1
+}
+
+;; ---- plot geometry (canvas pixels) ----
+
+let PL 52     ;; margins: left (y labels), right, top, bottom (x labels)
+let PR 12
+let PT 12
+let PB 26
+;; Label widths come from the backend (Lk::text_size), so centring and
+;; right-aligning tick labels is exact for any face.
+proc text_w {s} { get [Lk::text_size ${LkDsl::_ui} $s] 0 }
+
+proc plot_w {} { return [fmax 10 [- [- $cw $PL] $PR]] }
+proc plot_h {} { return [fmax 10 [- [- $ch $PT] $PB]] }
+
+proc x_to_px {x} { return [+ $PL [* [/ [- $x $xmin] [- $xmax $xmin]] [plot_w]]] }
+proc y_to_py {y} { return [+ $PT [* [/ [- $ymax $y] [- $ymax $ymin]] [plot_h]]] }
+proc px_to_x {px} { return [+ $xmin [* [/ [- $px $PL] [plot_w]] [- $xmax $xmin]]] }
+proc py_to_y {py} { return [- $ymax [* [/ [- $py $PT] [plot_h]] [- $ymax $ymin]]] }
+
+;; Series y values far outside the window still need sane integer
+;; pixels — clamp to one plot height beyond either edge.
+proc clamp_py {py} {
+    return [clampf $py [- $PT [plot_h]] [+ $PT [* 2 [plot_h]]]]
+}
+
+;; ---- view window ----
+
+proc reset_view {} {
+    set! xmin -10.0
+    set! xmax 10.0
+    set! ymin -4.0
+    set! ymax 4.0
+    set! dirty 1
+}
+
+;; Zoom by `f` (< 1 zooms in) keeping the data point under canvas
+;; pixel (px, py) fixed.
+proc zoom_at {px py f} {
+    let fx [px_to_x $px]
+    let fy [py_to_y $py]
+    let nw [clampf [* [- $xmax $xmin] $f] 0.001 1000000]
+    let nh [clampf [* [- $ymax $ymin] $f] 0.001 1000000]
+    let ax [/ [- $fx $xmin] [- $xmax $xmin]]
+    let ay [/ [- $fy $ymin] [- $ymax $ymin]]
+
+    set! xmin [- $fx [* $ax $nw]]
+    set! xmax [+ $xmin $nw]
+    set! ymin [- $fy [* $ay $nh]]
+    set! ymax [+ $ymin $nh]
+    set! dirty 1
+}
+
+proc zoom_center {f} {
+    zoom_at [+ $PL [/ [plot_w] 2]] [+ $PT [/ [plot_h] 2]] $f
+}
+
+;; Pan by a pixel delta (drag) or a fraction of the window (keys).
+proc pan_px {dx dy} {
+    let ddx [* [- 0 $dx] [/ [- $xmax $xmin] [plot_w]]]
+    let ddy [* $dy [/ [- $ymax $ymin] [plot_h]]]
+
+    set! xmin [+ $xmin $ddx]
+    set! xmax [+ $xmax $ddx]
+    set! ymin [+ $ymin $ddy]
+    set! ymax [+ $ymax $ddy]
+    set! dirty 1
+}
+
+proc pan_frac {fx fy} {
+    pan_px [* [- 0 $fx] [plot_w]] [* [- 0 $fy] [plot_h]]
+}
+
+;; ---- the display list ----
+
+let BG (18 20 24)
+let PLATE (26 29 35)
+let GRID (42 46 56)
+let AXIS (110 118 135)
+let TICK (150 158 175)
+let CROSS (200 205 215 160)
+let WALK (235 235 240)
+
+proc draw_grid {} {
+    let xstep [nice_step [- $xmax $xmin] 8]
+    let ystep [nice_step [- $ymax $ymin] 6]
+    let xd [step_decimals $xstep]
+    let yd [step_decimals $ystep]
+    let pw [plot_w]
+    let ph [plot_h]
+    let bottom [+ $PT $ph]
+    let right [+ $PL $pw]
+
+    Lk::canvas_fill_rect $cv $PL $PT $pw $ph $PLATE
+
+    ;; vertical grid + x labels
+    var k [fceil [/ $xmin $xstep]]
+    let kx1 [ffloor [/ $xmax $xstep]]
+
+    while [<= $k $kx1] {
+        let x [* $k $xstep]
+        let px [int [x_to_px $x]]
+
+        Lk::canvas_line $cv $px $PT $px $bottom $GRID
+
+        let label [fmt $x $xd]
+        Lk::canvas_text $cv [- $px [/ [text_w $label] 2]] [+ $bottom 6] $label $TICK
+        set! k [+ $k 1]
+    }
+
+    ;; horizontal grid + y labels (right-aligned against the plot edge)
+    set! k [fceil [/ $ymin $ystep]]
+    let ky1 [ffloor [/ $ymax $ystep]]
+
+    while [<= $k $ky1] {
+        let y [* $k $ystep]
+        let py [int [y_to_py $y]]
+
+        Lk::canvas_line $cv $PL $py $right $py $GRID
+
+        let label [fmt $y $yd]
+        Lk::canvas_text $cv [- [- $PL 6] [text_w $label]] [- $py 8] $label $TICK
+        set! k [+ $k 1]
+    }
+
+    ;; axes, when in view
+    if [and [<= $xmin 0] [>= $xmax 0]] {
+        let px [int [x_to_px 0]]
+        Lk::canvas_line $cv $px $PT $px $bottom $AXIS
+    }
+
+    if [and [<= $ymin 0] [>= $ymax 0]] {
+        let py [int [y_to_py 0]]
+        Lk::canvas_line $cv $PL $py $right $py $AXIS
+    }
+}
+
+proc draw_function {fn color} {
+    ;; The mapping is inlined with the scale factors hoisted: every
+    ;; arithmetic op is a proc call, and this loop runs a few hundred
+    ;; times per series per rebuild.
+    let pw [plot_w]
+    let ph [plot_h]
+    let sx [/ [- $xmax $xmin] $pw]
+    let sy [/ $ph [- $ymax $ymin]]
+    let lo [- $PT $ph]
+    let hi [+ $PT [* 2 $ph]]
+    let end [+ $PL $pw]
+    var pts ()
+    var px $PL
+
+    while [<= $px $end] {
+        let y [apply $fn [+ $xmin [* [- $px $PL] $sx]]]
+        var py [+ $PT [* [- $ymax $y] $sy]]
+
+        if [< $py $lo] { set! py $lo }
+        if [> $py $hi] { set! py $hi }
+
+        set! pts [List::push $pts $px]
+        set! pts [List::push $pts $py]
+        set! px [+ $px $px_step]
+    }
+
+    if [>= [len $pts] 4] {
+        Lk::canvas_polyline $cv $pts $color 2
+    }
+}
+
+proc draw_walk {} {
+    var pts ()
+    var i 0
+    let n [len $walk_xs]
+
+    while [< $i $n] {
+        let px [x_to_px [get $walk_xs $i]]
+        let py [clamp_py [y_to_py [get $walk_ys $i]]]
+
+        set! pts [List::push $pts $px]
+        set! pts [List::push $pts $py]
+        Lk::canvas_rect $cv [- [int $px] 2] [- [int $py] 2] 5 5 $WALK
+        set! i [+ $i 1]
+    }
+
+    if [>= [len $pts] 4] {
+        Lk::canvas_polyline $cv $pts $WALK
+    }
+}
+
+;; The plot frame; series are drawn inside a sub-clip of the plot area
+;; (Lk::canvas_clip), so a curve that leaves the window is simply cut
+;; off instead of being painted over afterwards.
+proc draw_frame {} {
+    Lk::canvas_rect $cv $PL $PT [plot_w] [plot_h] $AXIS
+}
+
+proc draw_legend {} {
+    var y [+ $PT 10]
+    let x [+ $PL 12]
+
+    foreach s $SERIES {
+        if [get $series_on [get $s id]] {
+            Lk::canvas_fill_rect $cv $x [+ $y 3] 10 10 [get $s color]
+            Lk::canvas_text $cv [+ $x 16] $y [get $s name] $TICK
+            set! y [+ $y 18]
+        }
+    }
+
+    if $walk_on {
+        Lk::canvas_rect $cv [+ $x 2] [+ $y 5] 5 5 $WALK
+        Lk::canvas_text $cv [+ $x 16] $y "random walk" $TICK
+    }
+}
+
+proc draw_crosshair {} {
+    if [< $hover_px 0] { return }
+
+    let inside [and [and [>= $hover_px $PL] [<= $hover_px [+ $PL [plot_w]]]]
+                    [and [>= $hover_py $PT] [<= $hover_py [+ $PT [plot_h]]]]]
+
+    if [not $inside] { return }
+
+    Lk::canvas_line $cv $hover_px $PT $hover_px [+ $PT [plot_h]] $CROSS
+    Lk::canvas_line $cv $PL $hover_py [+ $PL [plot_w]] $hover_py $CROSS
+
+    let x [px_to_x $hover_px]
+
+    ;; markers where each enabled function crosses the pointer's x
+    foreach s $SERIES {
+        if [get $series_on [get $s id]] {
+            let py [int [clamp_py [y_to_py [apply [get $s fn] $x]]]]
+            Lk::canvas_rect $cv [- $hover_px 3] [- $py 3] 7 7 [get $s color] 2
+        }
+    }
+
+    let text [String::join ("x=" [fmt $x 2] "  y=" [fmt [py_to_y $hover_py] 2]) ""]
+    let tw [+ [text_w $text] 8]
+    var tx [+ $hover_px 10]
+
+    if [> [+ $tx $tw] [+ $PL [plot_w]]] {
+        set! tx [- [- $hover_px 10] $tw]
+    }
+
+    Lk::canvas_fill_rect $cv $tx [- $hover_py 20] $tw 18 (40 44 54 230)
+    Lk::canvas_text $cv [+ $tx 4] [- $hover_py 18] $text (230 232 238)
+}
+
+proc rebuild {} {
+    let t0 [Lk::time_ms ${LkDsl::_ui}]
+
+    Lk::canvas_clear $cv
+    draw_grid
+
+    Lk::canvas_clip $cv $PL $PT [plot_w] [plot_h]
+
+    foreach s $SERIES {
+        if [get $series_on [get $s id]] {
+            draw_function [get $s fn] [get $s color]
+        }
+    }
+
+    if $walk_on { draw_walk }
+
+    Lk::canvas_clip_end $cv
+    draw_frame
+    draw_legend
+    draw_crosshair
+
+    set! ops [Lk::canvas_op_count $cv]
+    set! build_ms [- [Lk::time_ms ${LkDsl::_ui}] $t0]
+    set! dirty 0
+}
+
+;; ---- pointer -> canvas mapping (the Tiny Paint idiom) ----
+
+;; Canvas-relative pixel for a window point, or () before layout.
+;; Not bounds-checked: a drag may leave the canvas.
+proc canvas_rel {ex ey} {
+    let r [Lk::node_rect ${LkDsl::_ui} plot]
+
+    if [== [len $r] 0] { return () }
+
+    return ([- $ex [get $r 0]] [- $ey [get $r 1]])
+}
+
+proc on_canvas? {p} {
+    if [== [len $p] 0] { return 0 }
+
+    let px [get $p 0]
+    let py [get $p 1]
+
+    return [and [and [>= $px 0] [< $px $cw]] [and [>= $py 0] [< $py $ch]]]
+}
+
+;; Adopt the laid-out size; a change marks the list dirty.
+proc sync_size {} {
+    let r [Lk::node_rect ${LkDsl::_ui} plot]
+
+    if [== [len $r] 0] { return }
+
+    let w [get $r 2]
+    let h [get $r 3]
+
+    if [and [> $w 0] [> $h 0]] {
+        if [or [not [== $w $cw]] [not [== $h $ch]]] {
+            set! cw $w
+            set! ch $h
+            set! dirty 1
+        }
+    }
+}
+
+proc set_preset {name} {
+    if [== $name "Trig"] {
+        set! series_on #{sin 1 cos 1 damp 1 gauss 0 quad 0 cubic 0}
+        set! walk_on 0
+    }
+    if [== $name "Polynomial"] {
+        set! series_on #{sin 0 cos 0 damp 0 gauss 1 quad 1 cubic 1}
+        set! walk_on 0
+    }
+    if [== $name "Data"] {
+        set! series_on #{sin 0 cos 0 damp 0 gauss 0 quad 0 cubic 0}
+        set! walk_on 1
+    }
+    if [== $name "Everything"] {
+        set! series_on #{sin 1 cos 1 damp 1 gauss 1 quad 1 cubic 1}
+        set! walk_on 1
+    }
+
+    reset_view
+}
+
+proc status_text {} {
+    ;; No literal brackets in here: inside a list literal a "[" in a
+    ;; quoted string still opens a command substitution.
+    return [String::join ("x " [fmt $xmin 2] " to " [fmt $xmax 2] "   y " [fmt $ymin 2] " to " [fmt $ymax 2]) ""]
+}
+
+proc stats_text {} {
+    return [String::join ($ops " ops · rebuilt in " $build_ms " ms · sample every " $px_step " px") ""]
+}
+
+new_walk
+
+app "Plotter" #{font $font font_size 13 width 1040 height 660} {
+
+    theme {
+        rule window #{bg (30 32 38)}
+        rule * #{fg (205 210 220)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule label #{tag title} #{fg (240 240 245)}
+        rule column #{tag frame} #{padding 1 bg (70 75 90)}
+        rule canvas #{bg (18 20 24) padding 0}
+        rule button #{padding 6 border_width 1 border_color (70 74 88) bg (52 56 68)}
+        rule button #{state hovered} #{bg (72 78 94) border_color (120 126 150)}
+        rule button #{state focused} #{border_color (80 140 220)}
+        rule checkbox #{padding 2}
+        rule slider #{accent (80 140 220)}
+        rule dropdown #{bg (52 56 68) padding 4 border_width 1 border_color (70 74 88)}
+    }
+
+    ;; Commands: series toggles and the stride from value changes,
+    ;; presets from the dropdown, actions from buttons, and global
+    ;; chords (3-arg `keybinding`: no ptype, so they fire with nothing
+    ;; focused and no presentation on the path).
+    translator value_changed series SeriesToggle
+    translator value_changed samples Samples
+    translator value_changed preset Preset
+    translator pointer_down action Action
+    keybinding r "" ResetView
+    keybinding i "" ZoomIn
+    keybinding o "" ZoomOut
+    keybinding w "" NewWalk
+    keybinding left "" PanLeft
+    keybinding right "" PanRight
+    keybinding up "" PanUp
+    keybinding down "" PanDown
+
+    on SeriesToggle [lambda {cmd} {
+        let id [get [get $cmd args] 0]
+        let v [int [get $cmd source_value]]
+
+        if [== $id walk] {
+            set! walk_on $v
+        } else {
+            set! series_on [Dict::merge $series_on [dict $id $v]]
+        }
+
+        set! dirty 1
+    }]
+    on Samples [lambda {cmd} {
+        set! px_step [int [get $cmd source_value]]
+        set! dirty 1
+    }]
+    on Preset [lambda {cmd} { set_preset [get $cmd source_value] }]
+    on Action [lambda {cmd} {
+        let what [get [get $cmd args] 0]
+
+        if [== $what reset] { reset_view }
+        if [== $what zoom_in] { zoom_center 0.8 }
+        if [== $what zoom_out] { zoom_center 1.25 }
+        if [== $what walk] { new_walk }
+    }]
+    on ResetView [lambda {cmd} { reset_view }]
+    on ZoomIn [lambda {cmd} { zoom_center 0.8 }]
+    on ZoomOut [lambda {cmd} { zoom_center 1.25 }]
+    on NewWalk [lambda {cmd} { new_walk }]
+    on PanLeft [lambda {cmd} { pan_frac -0.1 0 }]
+    on PanRight [lambda {cmd} { pan_frac 0.1 0 }]
+    on PanUp [lambda {cmd} { pan_frac 0 0.1 }]
+    on PanDown [lambda {cmd} { pan_frac 0 -0.1 }]
+
+    ;; Gestures the toolkit does not own: drag pans, wheel zooms about
+    ;; the pointer, the pointer position feeds the crosshair.  Every
+    ;; branch only marks `dirty`; the view rebuilds once per frame.
+    event_handler [lambda {ev node} {
+        let type [get $ev type]
+
+        if [== $type wheel] {
+            if [< $hover_px 0] { return 0 }
+
+            let dy [get $ev dy]
+
+            if [== $dy 0] { return 0 }
+
+            zoom_at $hover_px $hover_py [if [> $dy 0] { 0.8 } else { 1.25 }]
+            return 1
+        }
+
+        if [not [or [== $type pointer_down] [or [== $type pointer_move] [== $type pointer_up]]]] {
+            return 0
+        }
+
+        if [not [== [get $ev phase] target]] { return 0 }
+
+        let p [canvas_rel [get $ev x] [get $ev y]]
+        let inside [on_canvas? $p]
+
+        if [== $type pointer_move] {
+            if $inside {
+                set! hover_px [get $p 0]
+                set! hover_py [get $p 1]
+                set! dirty 1
+            } else {
+                if [>= $hover_px 0] {
+                    set! hover_px -1
+                    set! hover_py -1
+                    set! dirty 1
+                }
+            }
+
+            if [and $dragging [len $p]] {
+                pan_px [- [get $p 0] $last_px] [- [get $p 1] $last_py]
+                set! last_px [get $p 0]
+                set! last_py [get $p 1]
+                return 1
+            }
+
+            return 0
+        }
+
+        if [== $type pointer_down] {
+            if [not $inside] { return 0 }
+
+            let btn [get $ev button]
+
+            if [== $btn 1] {
+                set! dragging 1
+                set! last_px [get $p 0]
+                set! last_py [get $p 1]
+                return 1
+            }
+
+            if [== $btn 3] {
+                reset_view
+                return 1
+            }
+
+            return 0
+        }
+
+        if $dragging {
+            set! dragging 0
+            return 1
+        }
+
+        return 0
+    }]
+
+    ;; The display list registers in the window ui's resource table.
+    set! cv [Lk::canvas_new ${LkDsl::_ui} $cw $ch]
+
+    view {
+        sync_size
+
+        if $dirty { rebuild }
+
+        row "main" #{padding 10 gap 12 align stretch} {
+            column "left" #{gap 6 grow 1 align stretch} {
+                column "frame" #{tag frame grow 1 align stretch} {
+                    canvas "plot" #{canvas $cv grow 1}
+                }
+
+                row "status_row" #{gap 16} {
+                    label "status" #{text [status_text] tag dim}
+                    label "stats" #{text [stats_text] tag dim}
+                }
+            }
+
+            column "panel" #{gap 10 w 250 align stretch} {
+                label "title" #{text "Plotter" tag title}
+
+                label "series_l" #{text "Series" tag dim}
+
+                foreach s $SERIES {
+                    let id [get $s id]
+                    checkbox "s_$id" #{text [get $s name] checked [get $series_on $id] focusable 1 present (series ($id))}
+                }
+
+                checkbox "s_walk" #{text "random walk" checked $walk_on focusable 1 present (series (walk))}
+
+                row "preset_row" #{gap 8 align center} {
+                    label "preset_l" #{text "Preset" tag dim}
+                    dropdown "preset" #{value "Trig" focusable 1 grow 1 present (preset (p))} {
+                        option "p_trig" #{text "Trig"}
+                        option "p_poly" #{text "Polynomial"}
+                        option "p_data" #{text "Data"}
+                        option "p_all" #{text "Everything"}
+                    }
+                }
+
+                row "stride_row" #{gap 8 align center} {
+                    label "stride_l" #{text "Stride $px_step" tag dim}
+                    slider "samples" #{value $px_step min 1 max 12 step 1 focusable 1 grow 1 present (samples (s))}
+                }
+
+                grid "actions" #{columns 2 gap 4} {
+                    button "b_in"    #{text "Zoom in   I" focusable 1 present (action (zoom_in))}
+                    button "b_out"   #{text "Zoom out  O" focusable 1 present (action (zoom_out))}
+                    button "b_reset" #{text "Reset     R" focusable 1 present (action (reset))}
+                    button "b_walk"  #{text "New walk  W" focusable 1 present (action (walk))}
+                }
+
+                label "hint" #{text "drag pans · wheel zooms" tag dim}
+                label "hint2" #{text "right-click resets · arrows pan" tag dim}
+            }
+        }
+    }
+}

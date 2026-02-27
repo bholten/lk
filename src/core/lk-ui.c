@@ -1,7 +1,10 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-tabs.h"
 #include <lk.h>
+
+#include "lk-menu.h"
 
 /* lk-state.c */
 lk_state *lk_state_create(void *(*)(void *, lk_u32), void (*)(void *, void *),
@@ -116,6 +119,18 @@ static int props_equal(const lk_tree *a, const lk_node *na, const lk_tree *b,
         return 0;
       }
       break;
+    case UIV_RESOURCE:
+      if (pa->value.as.res.id != pb->value.as.res.id ||
+          pa->value.as.res.gen != pb->value.as.res.gen) {
+        return 0;
+      }
+      break;
+    case UIV_TEXT: /* command/hit scope only — never valid in trees */
+      if (pa->value.as.text.off != pb->value.as.text.off ||
+          pa->value.as.text.len != pb->value.as.text.len) {
+        return 0;
+      }
+      break;
     }
   }
 
@@ -132,6 +147,10 @@ static int value_equal(const lk_value *a, const lk_value *b) {
   case UIV_BOOL: return a->as.b == b->as.b;
   case UIV_I32: return a->as.i == b->as.i;
   case UIV_STR: return a->as.str_id == b->as.str_id;
+  case UIV_RESOURCE:
+    return a->as.res.id == b->as.res.id && a->as.res.gen == b->as.res.gen;
+  case UIV_TEXT:
+    return a->as.text.off == b->as.text.off && a->as.text.len == b->as.text.len;
   }
 
   return 0;
@@ -186,8 +205,18 @@ static int pres_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
       return 0;
     }
 
-    if (!value_equal(&prev->pres[pi].pvalue, &next->pres[ni].pvalue)) {
+    if (prev->pres[pi].pvalue_count != next->pres[ni].pvalue_count) {
       return 0;
+    }
+
+    {
+      lk_u8 ai;
+      for (ai = 0; ai < prev->pres[pi].pvalue_count; ai++) {
+        if (!value_equal(&prev->pres[pi].pvalues[ai],
+                         &next->pres[ni].pvalues[ai])) {
+          return 0;
+        }
+      }
     }
 
     pi++;
@@ -365,6 +394,10 @@ cleanup:
   ui_dealloc(ui, next_arr);
 }
 
+const char *lk_version(void) {
+  return LK_VERSION_STRING;
+}
+
 lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
   lk_ui *ui;
   lk_tree_cfg tcfg;
@@ -387,7 +420,7 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
   ui->dealloc = de;
   ui->alloc_ud = ud;
 
-  ui->intern = lk_intern_new(al, ud);
+  ui->intern = lk_intern_new(al, de, ud);
 
   if (!ui->intern) {
     de(ud, ui);
@@ -417,7 +450,20 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
     return NULL;
   }
 
-  ui->theme = lk_theme_default();
+  /* Resource table — eager, matching the rest of lk_ui's init.  Both
+   * trees borrow it so widget vtable hooks can resolve refs through
+   * the tree alone (docs/editor.md §5). */
+  ui->resources = lk_resources_new(al, de, ud);
+
+  if (!ui->resources) {
+    lk_ui_destroy(ui);
+    return NULL;
+  }
+
+  ui->prev->resources = ui->resources;
+  ui->next->resources = ui->resources;
+
+  ui->theme = lk_theme_default(al, de, ud);
 
   return ui;
 }
@@ -443,6 +489,10 @@ void lk_ui_destroy(lk_ui *ui) {
     lk_state_destroy(ui->state);
   }
 
+  if (ui->resources) {
+    lk_resources_destroy(ui->resources);
+  }
+
   if (ui->changeset.changes) {
     ui_dealloc(ui, ui->changeset.changes);
   }
@@ -455,8 +505,16 @@ void lk_ui_destroy(lk_ui *ui) {
     ui_dealloc(ui, ui->cmd_queue.cmds);
   }
 
+  if (ui->cmd_queue.bytes) {
+    ui_dealloc(ui, ui->cmd_queue.bytes);
+  }
+
   if (ui->cmd_log) {
     ui_dealloc(ui, ui->cmd_log);
+  }
+
+  if (ui->cmd_log_bytes) {
+    ui_dealloc(ui, ui->cmd_log_bytes);
   }
 
   if (ui->theme) {
@@ -471,12 +529,57 @@ void lk_ui_destroy(lk_ui *ui) {
     ui_dealloc(ui, ui->node_states);
   }
 
+  if (ui->geom) {
+    ui_dealloc(ui, ui->geom);
+  }
+
+  if (ui->rects) {
+    ui_dealloc(ui, ui->rects);
+  }
+
+  lk_menu_ui_destroy(ui);
+
+  if (ui->overlays) {
+    ui_dealloc(ui, ui->overlays);
+  }
+
+  if (ui->pending) {
+    ui_dealloc(ui, ui->pending);
+  }
+
   ui->dealloc(ui->alloc_ud, ui);
 }
 
 lk_tree *lk_ui_begin_frame(lk_ui *ui) {
   lk_tree_reset(ui->next);
   return ui->next;
+}
+
+/* 1 when id was REMOVED in cs and not re-ADDED (i.e. truly gone, not
+ * merely moved to a new parent).  Shared by the focus-clear and
+ * overlay GC in lk_ui_end_frame; lk_state_gc applies the same rule. */
+static int cs_id_removed_not_readded(const lk_changeset *cs, lk_node_id id) {
+  lk_u32 i;
+  int removed = 0;
+
+  for (i = 0; i < cs->count; i++) {
+    if (cs->changes[i].kind == LK_CHANGE_REMOVED && cs->changes[i].id == id) {
+      removed = 1;
+      break;
+    }
+  }
+
+  if (!removed) {
+    return 0;
+  }
+
+  for (i = 0; i < cs->count; i++) {
+    if (cs->changes[i].kind == LK_CHANGE_ADDED && cs->changes[i].id == id) {
+      return 0;
+    }
+  }
+
+  return 1;
 }
 
 const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
@@ -502,14 +605,97 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
   ui->prev = ui->next;
   ui->next = tmp;
 
-  /* Clear focus if the focused node was removed */
+  /* Clear focus if the focused node was removed.  A node that is
+   * REMOVED and ADDED in the same changeset merely moved to a new
+   * parent — keep focus in that case.  The clear is an effective
+   * focus change, so it enqueues FOCUS_CHANGED like the lk_focus_*
+   * functions; the host drains it via lk_ui_flush_events (end_frame
+   * itself never routes). */
+  if (ui->focused_id != 0 &&
+      cs_id_removed_not_readded(&ui->changeset, ui->focused_id)) {
+    lk_event fev;
+
+    memset(&fev, 0, sizeof(fev));
+    fev.type = LK_EVENT_FOCUS_CHANGED;
+    fev.target = ui->prev->root; /* clear: no focused node to target */
+    fev.data.focus.prev_id = ui->focused_id;
+    fev.data.focus.next_id = 0;
+    lk_event_enqueue(ui, &fev);
+
+    ui->focused_id = 0;
+  }
+
+  /* A focused node inside a collapsed TAB page (the tabs selection
+   * moved -- by a click, or by an app-controlled `value` change --
+   * while focus lived in the old page) is unreachable: not laid out,
+   * not rendered, skipped by focus traversal.  Clear focus rather than
+   * route keystrokes into an invisible widget.  UIP_HIDDEN subtrees
+   * are deliberately NOT swept here: modal overlay content is a
+   * hidden subtree that legitimately holds focus (focus trap). */
   if (ui->focused_id != 0) {
-    lk_u32 fi;
-    for (fi = 0; fi < ui->changeset.count; fi++) {
-      if (ui->changeset.changes[fi].kind == LK_CHANGE_REMOVED &&
-          ui->changeset.changes[fi].id == ui->focused_id) {
-        ui->focused_id = 0;
+    lk_ix fx = lk_tree_find_by_id(ui->prev, ui->focused_id);
+    int collapsed = 0;
+
+    /* ancestors only: a collapsed TAB itself is its (visible) header */
+    if (fx != 0) {
+      fx = ui->prev->nodes[fx].parent;
+    }
+
+    while (fx != 0) {
+      if (lk_tabs_collapsed(ui->prev, fx, ui->state)) {
+        collapsed = 1;
         break;
+      }
+
+      fx = ui->prev->nodes[fx].parent;
+    }
+
+    if (collapsed) {
+      lk_event fev;
+
+      memset(&fev, 0, sizeof(fev));
+      fev.type = LK_EVENT_FOCUS_CHANGED;
+      fev.target = ui->prev->root;
+      fev.data.focus.prev_id = ui->focused_id;
+      fev.data.focus.next_id = 0;
+      lk_event_enqueue(ui, &fev);
+
+      ui->focused_id = 0;
+    }
+  }
+
+  /* Same rule for pointer capture: a captured node that is truly gone
+   * releases the capture; a move (REMOVED+ADDED) keeps it. */
+  if (ui->captured_id != 0 &&
+      cs_id_removed_not_readded(&ui->changeset, ui->captured_id)) {
+    ui->captured_id = 0;
+  }
+
+  /* Deferred focus (lk_focus_request): the committed tree is the
+   * first place the requested node can exist.  lk_focus_set applies
+   * its own focusable/enabled rules and clears the request on
+   * success; an unsatisfied request simply stays pending. */
+  if (ui->focus_request_id != 0) {
+    lk_focus_set(ui, ui->prev, ui->focus_request_id);
+  }
+
+  /* Pop overlays whose owner node was removed (same move filter:
+   * REMOVED + ADDED in one changeset is a reparent, overlay stays). */
+  {
+    lk_u32 oi = ui->overlay_count;
+
+    while (oi > 0) {
+      oi--;
+
+      if (cs_id_removed_not_readded(&ui->changeset,
+                                    ui->overlays[oi].owner_id)) {
+        lk_u32 k;
+
+        for (k = oi; k + 1 < ui->overlay_count; k++) {
+          ui->overlays[k] = ui->overlays[k + 1];
+        }
+
+        ui->overlay_count--;
       }
     }
   }
@@ -530,6 +716,10 @@ lk_state *lk_ui_state(lk_ui *ui) {
   return ui ? ui->state : NULL;
 }
 
+lk_resources *lk_ui_resources(lk_ui *ui) {
+  return ui ? ui->resources : NULL;
+}
+
 void lk_ui_set_theme(lk_ui *ui, lk_theme *th) {
   if (!ui) {
     return;
@@ -548,6 +738,120 @@ lk_theme *lk_ui_theme(lk_ui *ui) {
 
 const lk_style *lk_ui_styles(const lk_ui *ui) {
   return ui ? ui->styles : NULL;
+}
+
+lk_widget_geom *lk_ui_geom(lk_ui *ui) {
+  const lk_tree *t;
+  lk_u32 nc;
+
+  if (!ui) {
+    return NULL;
+  }
+
+  t = ui->prev; /* current tree (mirrors lk_ui_resolve_styles) */
+  nc = t ? t->node_count : 0;
+
+  if (nc > ui->geom_cap) {
+    if (ui->geom) {
+      ui_dealloc(ui, ui->geom);
+    }
+
+    ui->geom =
+        (lk_widget_geom *)ui_alloc(ui, (lk_u32)(sizeof(lk_widget_geom) * nc));
+
+    if (!ui->geom) {
+      ui->geom_cap = 0;
+      return NULL;
+    }
+
+    ui->geom_cap = nc;
+  }
+
+  return ui->geom;
+}
+
+lk_rect *lk_ui_rects(lk_ui *ui) {
+  const lk_tree *t;
+  lk_u32 nc;
+
+  if (!ui) {
+    return NULL;
+  }
+
+  t = ui->prev; /* current tree (mirrors lk_ui_geom) */
+  nc = t ? t->node_count : 0;
+
+  if (nc > ui->rects_cap) {
+    if (ui->rects) {
+      ui_dealloc(ui, ui->rects);
+    }
+
+    ui->rects = (lk_rect *)ui_alloc(ui, (lk_u32)(sizeof(lk_rect) * nc));
+
+    if (!ui->rects) {
+      ui->rects_cap = 0;
+      return NULL;
+    }
+
+    ui->rects_cap = nc;
+  }
+
+  return ui->rects;
+}
+
+int lk_node_rect(const lk_ui *ui, lk_node_id id, lk_rect *out) {
+  const lk_tree *t;
+  lk_ix n;
+
+  if (!ui || !out || id == 0 || !ui->rects) {
+    return 0;
+  }
+
+  t = ui->prev;
+  n = t ? lk_tree_find_by_id(t, id) : 0;
+
+  if (n == 0 || n >= ui->rects_cap) {
+    return 0;
+  }
+
+  *out = ui->rects[n];
+
+  return 1;
+}
+
+void lk_ui_set_clipboard(lk_ui *ui, lk_clipboard_get_fn get_fn,
+                         lk_clipboard_set_fn set_fn, void *ud) {
+  if (!ui) {
+    return;
+  }
+
+  ui->clipboard_get = get_fn;
+  ui->clipboard_set = set_fn;
+  ui->clipboard_ud = ud;
+}
+
+void lk_ui_set_text_backend(lk_ui *ui, const lk_text_backend *text) {
+  if (!ui) {
+    return;
+  }
+
+  ui->text = text;
+}
+
+void lk_ui_set_time_ms(lk_ui *ui, lk_u32 ms) {
+  if (!ui) {
+    return;
+  }
+
+  ui->time_ms = ms;
+}
+
+lk_u32 lk_ui_time_ms(const lk_ui *ui) {
+  if (!ui) {
+    return 0;
+  }
+
+  return ui->time_ms;
 }
 
 void lk_ui_resolve_styles(lk_ui *ui) {
@@ -608,6 +912,16 @@ void lk_ui_resolve_styles(lk_ui *ui) {
       for (fi = 1; fi < (lk_ix)nc; fi++) {
         if (t->nodes[fi].id == ui->focused_id) {
           ui->node_states[fi] |= LK_NSTATE_FOCUSED;
+          break;
+        }
+      }
+    }
+
+    /* Mark hovered node */
+    if (ui->hovered_id != 0) {
+      for (fi = 1; fi < (lk_ix)nc; fi++) {
+        if (t->nodes[fi].id == ui->hovered_id) {
+          ui->node_states[fi] |= LK_NSTATE_HOVERED;
           break;
         }
       }

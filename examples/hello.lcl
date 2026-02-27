@@ -1,78 +1,78 @@
 proc view {tree} {
-    let w [lk::node $tree "main" "window"]
-    let col [lk::node $tree "layout" "column"]
-    let title [lk::node $tree "title" "label"]
-    let input [lk::node $tree "search" "text_input"]
-    let row [lk::node $tree "buttons" "row"]
-    let ok [lk::node $tree "ok" "button"]
-    let cancel [lk::node $tree "cancel" "button"]
-
-    ;; Scroll container with a list of items
-    let scroll [lk::node $tree "item_list" "scroll"]
+    let w [Lk::node $tree "main" "window"]
+    let col [Lk::node $tree "layout" "column"]
+    let title [Lk::node $tree "title" "label"]
+    let input [Lk::node $tree "search" "text_input"]
+    let row [Lk::node $tree "buttons" "row"]
+    let ok [Lk::node $tree "ok" "button"]
+    let cancel [Lk::node $tree "cancel" "button"]
+    let scroll [Lk::node $tree "item_list" "scroll"]
 
     var i 0
 
     while [< $i 20] {
-        let lbl [lk::node $tree "item_$i" "label"]
+        let lbl [Lk::node $tree "item_$i" "label"]
 
-        lk::prop $tree $lbl "text" "Item $i — scroll me!"
-        lk::append_child $tree $scroll $lbl
+        Lk::prop $tree $lbl "text" "Item $i — scroll me!"
+        Lk::append_child $tree $scroll $lbl
         set! i [+ $i 1]
     }
 
-    let footer [lk::node $tree "footer" "label"]
+    let footer [Lk::node $tree "footer" "label"]
 
-    lk::prop $tree $col "padding" 24
-    lk::prop $tree $col "gap" 16
-    lk::prop $tree $row "gap" 12
-    lk::prop $tree $title "text" "Hello from Lcl!"
-    lk::prop $tree $input "text" "Type here..."
-    lk::prop $tree $input "focusable" 1
-    lk::prop $tree $ok "text" "OK"
-    lk::prop $tree $cancel "text" "Cancel"
-    lk::prop $tree $scroll "h" 200
-    lk::prop $tree $scroll "padding" 8
-    lk::prop $tree $scroll "gap" 4
-    lk::prop $tree $footer "text" "Scroll the list with your mouse wheel! (Tab to cycle focus)"
+    Lk::prop $tree $col "padding" 24
+    Lk::prop $tree $col "gap" 16
+    Lk::prop $tree $row "gap" 12
+    Lk::prop $tree $title "text" "Hello from Lcl!"
+    Lk::prop $tree $input "text" "Type here..."
+    Lk::prop $tree $input "focusable" 1
+    Lk::prop $tree $ok "text" "OK"
+    Lk::prop $tree $cancel "text" "Cancel"
+    Lk::prop $tree $scroll "h" 200
+    Lk::prop $tree $scroll "padding" 8
+    Lk::prop $tree $scroll "gap" 4
+    Lk::prop $tree $footer "text" "Scroll the list with your mouse wheel! (Tab to cycle focus)"
 
     ;; Tag the OK button as "primary"
-    lk::tag $tree $ok "primary"
+    Lk::tag $tree $ok "primary"
 
     ;; Attach presentations: each button presents an "action" with a label
-    lk::present $tree $ok "action" "ok"
-    lk::present $tree $cancel "action" "cancel"
+    Lk::present $tree $ok "action" "ok"
+    Lk::present $tree $cancel "action" "cancel"
 
-    lk::set_root $tree $w
-    lk::append_child $tree $w $col
-    lk::append_child $tree $col $title
-    lk::append_child $tree $col $input
-    lk::append_child $tree $col $row
-    lk::append_child $tree $row $ok
-    lk::append_child $tree $row $cancel
-    lk::append_child $tree $col $scroll
-    lk::append_child $tree $col $footer
+    Lk::set_root $tree $w
+    Lk::append_child $tree $w $col
+    Lk::append_child $tree $col $title
+    Lk::append_child $tree $col $input
+    Lk::append_child $tree $col $row
+    Lk::append_child $tree $row $ok
+    Lk::append_child $tree $row $cancel
+    Lk::append_child $tree $col $scroll
+    Lk::append_child $tree $col $footer
 }
 
 let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 let font_size 16
 
-let win [lk::window_create "Hello Lcl" 800 600 $font $font_size]
-let ui [lk::window_ui $win]
+let win [Lk::window_create "Hello Lcl" 800 600 $font $font_size]
+let ui [Lk::window_ui $win]
 
 ;; Custom theme rules
-lk::theme_rule $ui "window" "" "" #{bg (25 25 35)}
-lk::theme_rule $ui "*" "" "" #{fg (200 200 220)}
-lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12}
-lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255)}
-lk::theme_rule $ui "text_input" "" "" #{bg (40 40 55) padding 8}
-lk::theme_rule $ui "text_input" "" "focused" #{border_width 2 border_color (80 140 220)}
-lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4}
+Lk::theme_rule $ui "window" "" "" #{bg (25 25 35)}
+Lk::theme_rule $ui "*" "" "" #{fg (200 200 220)}
+Lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12 border_width 1 border_color (80 80 100)}
+Lk::theme_rule $ui "button" "" "hovered" #{bg (70 70 85) border_color (120 120 150)}
+Lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255) border_color (70 130 220)}
+Lk::theme_rule $ui "button" "primary" "hovered" #{bg (65 120 210) border_color (100 160 240)}
+Lk::theme_rule $ui "text_input" "" "" #{bg (40 40 55) padding 8}
+Lk::theme_rule $ui "text_input" "" "focused" #{border_width 2 border_color (80 140 220)}
+Lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4 border_width 1 border_color (55 55 70)}
 
 ;; Translator: pointer_down on any "action" presentation -> "ButtonClick" command
-lk::add_translator $ui "pointer_down" "action" "" "ButtonClick"
+Lk::add_translator $ui "pointer_down" "action" "" "" "" "ButtonClick"
 
 ;; Command handler: receives a dict with {name, args, source_node_id, ...}
-lk::set_command_handler $ui [lambda {cmd} {
+Lk::set_command_handler $ui [lambda {cmd} {
     if [== [get $cmd name] ButtonClick] {
         let action [get [get $cmd args] 0]
         puts "Command: ButtonClick, action=$action"
@@ -81,7 +81,7 @@ lk::set_command_handler $ui [lambda {cmd} {
 
 ;; Event handler for keyboard events (not handled by widgets or translators)
 ;; Returns 0 so events continue propagating (Tab cycles focus, etc.)
-lk::window_set_event_handler $win [lambda {ev node} {
+Lk::window_set_event_handler $win [lambda {ev node} {
     if [== [get $ev type] key_down] {
         puts "Key: [get $ev keycode]"
     }
@@ -89,5 +89,5 @@ lk::window_set_event_handler $win [lambda {ev node} {
     return 0
 }]
 
-lk::window_run $win $view
-lk::window_destroy $win
+Lk::window_run $win $view
+Lk::window_destroy $win

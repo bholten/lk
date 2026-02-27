@@ -3,6 +3,18 @@
 
 #include <lcl.h>
 
+#ifdef LK_HAVE_LCL_IO
+#include <lcl-io.h>
+#endif
+
+#ifdef LK_HAVE_LCL_REGEX
+#include <lcl-regex.h>
+#endif
+
+#ifdef LK_HAVE_LCL_RANDOM
+#include <lcl-random.h>
+#endif
+
 #include "lcl-lk.h"
 #include "lk-sdl.h"
 
@@ -26,6 +38,38 @@ int main(int argc, char **argv) {
 
   lcl_register_core(interp);
   lcl_register_lk(interp);
+  lcl_lk_set_args(argc - 2, argv + 2); /* everything after the script */
+
+#ifdef LK_HAVE_LCL_IO
+  /* File IO stays a package: core Lcl is IO-free by design and lk is
+   * a UI library (docs/weft-surface.md section 3).  The runner is
+   * where the Io::* procs belong. */
+  lcl_register_io(interp);
+#endif
+
+#ifdef LK_HAVE_LCL_REGEX
+  lcl_register_regex(interp);
+#endif
+
+#ifdef LK_HAVE_LCL_RANDOM
+  /* xoshiro128** streams (Xoshiro::new/int/float/shuffle) -- runner
+   * only, like Io:: and Regex::; scripts probe with catch. */
+  lcl_register_random(interp);
+#endif
+
+#ifdef LK_DSL_PATH
+  {
+    lcl_value *dsl_result = NULL;
+    int dsl_rc = lcl_eval_file(interp, LK_DSL_PATH, &dsl_result);
+    if (dsl_result) {
+      lcl_ref_dec(dsl_result);
+    }
+    if (dsl_rc != LCL_RC_OK) {
+      fprintf(stderr, "Warning: failed to load DSL prelude (%s)\n",
+              LK_DSL_PATH);
+    }
+  }
+#endif
 
   rc = lcl_eval_file(interp, argv[1], &result);
 

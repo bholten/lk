@@ -1,0 +1,116 @@
+;; files-harness.lcl -- logic harness for examples/files-dsl.lcl.
+;;
+;;   SDL_VIDEODRIVER=offscreen build/lcl_lk_main tools/files-harness.lcl
+;;
+;; Evaluates the example up to its `app` call against a bare ui, then
+;; drives the model: the synthetic index <-> position bijections per
+;; column and direction, the known-files tree, sorting, the cell
+;; formatters, and the editor pane.  Prints "ok"/"FAIL" per check.
+let src [Io::read_file "examples/files-dsl.lcl"]
+let cut [String::find $src "\napp \""]
+eval [String::range $src 0 $cut]
+
+proc check {name got want} {
+    if [== $got $want] { puts "ok   $name" } else { puts "FAIL $name: got $got want $want" }
+}
+
+set! UI [Lk::ui_create]
+
+;; ---- synthetic bijections ----
+foreach col (name size kind) {
+    set! sort_col $col
+    foreach desc (0 1) {
+        set! sort_desc $desc
+        var bad 0
+        foreach j (0 1 49 50 51 999 1000 1001 1048 1049 25003 49999) {
+            if [not [== [synth_pos [synth_index $j]] $j]] { set! bad [+ $bad 1] }
+            let i [synth_index $j]
+            if [or [< $i 0] [>= $i $SYNTH_N]] { set! bad [+ $bad 1] }
+        }
+        check "bijection $col desc=$desc" $bad 0
+    }
+}
+
+set! sort_desc 0
+set! sort_col kind
+check "kind asc: dirs first" [synth_index_asc 0] 0
+check "kind asc: last dir" [synth_index_asc 999] 49950
+check "kind asc: first file" [synth_index_asc 1000] 1
+check "kind asc: skips dir 50" [synth_index_asc 1049] 51
+set! sort_col size
+check "size asc: rank 0 is row 0" [synth_index_asc 0] 0
+check "size asc: rank of row 1" [synth_pos_asc 1] 7919
+set! sort_col name
+
+let r [synth_row 25003]
+check "synth row name" [get $r name] "synthetic/dir_500/file_25003.md"
+check "synth row kind" [get $r kind] md
+check "synth row size" [get $r size] [* [% [* 25003 7919] 50000] 37]
+check "synth dir row" [get [synth_row 25000] kind] dir
+
+;; ---- formatters ----
+check "commas 1804009" [commas 1804009] "1,804,009"
+check "commas 1000" [commas 1000] "1,000"
+check "commas 5" [commas 5] "5"
+check "row_of_id r_12" [row_of_id "r_12"] 12
+check "row_of_id n_0" [row_of_id "n_0"] 0
+check "row_of_id hdr" [row_of_id "hdr"] -1
+check "row_of_id h_name" [row_of_id "h_name"] -1
+check "ext_of lcl" [ext_of "docs/lk.lcl"] lcl
+check "ext_of none" [ext_of "LICENSE"] file
+check "ext_of dotted dir" [ext_of "a.b/README"] file
+check "fmt_size dir" [fmt_size [dir_row docs]] ""
+check "fmt_size unknown" [fmt_size [file_row x -1]] "?"
+
+;; ---- the known-files tree (Posix is not registered by the runner) ----
+check "model source" $source "known files"
+check "first row" [get [get $files 0] name] "CLAUDE.md"
+let ndocs [len [List::filter $files [lambda {r} { == [get $r name] docs }]]]
+check "one docs dir row" $ndocs 1
+var docs_at -1
+var todo_at -1
+var k 0
+foreach r $files {
+    if [== [get $r name] docs] { set! docs_at $k }
+    if [== [get $r name] "docs/TODO.md"] { set! todo_at $k }
+    set! k [+ $k 1]
+}
+check "dir row precedes its files" [< $docs_at $todo_at] 1
+check "sizes read through Io" [> [get [get $files 2] size] 0] 1
+
+;; ---- sorting the real model ----
+set! sort_col size
+resort
+check "size asc: first is a dir (0)" [get [get $sorted 0] size] 0
+check "size asc: monotone" [<= [get [get $sorted 10] size] [get [get $sorted 11] size]] 1
+set! sort_desc 1
+resort
+check "size desc: monotone" [>= [get [get $sorted 0] size] [get [get $sorted 1] size]] 1
+set! sort_desc 0
+set! sort_col name
+resort
+set! k 0
+set! todo_at -1
+foreach r $sorted {
+    if [== [get $r name] "docs/table.md"] { set! todo_at $k }
+    set! k [+ $k 1]
+}
+check "parent_pos of docs/table.md" [get [row_at [parent_pos $todo_at]] name] docs
+check "parent_pos top level" [parent_pos 0] -1
+check "nrows real" [nrows] [len $files]
+
+;; ---- the editor pane ----
+open_row $todo_at
+check "open file: pane header" [> [String::find $pane_msg "bytes"] 0] 1
+check "open file: doc has lines" [> [Lk::doc_line_count $doc] 10] 1
+open_row [parent_pos $todo_at]
+check "open dir: listing" [> [String::find [Lk::doc_text $doc] "table.md"] 0] 1
+
+set! synth 1
+check "nrows synthetic" [nrows] 50000
+check "synthetic parent_pos" [parent_pos 25003] 25000
+open_row 25003
+check "open synthetic: pane header" $pane_msg "synthetic/dir_500/file_25003.md"
+set! cur 25003
+reveal_row 25003
+check "reveal moves the cursor" $cur 25000

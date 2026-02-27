@@ -217,7 +217,8 @@ static int it_by_id_reserve(lk_intern *it) {
   return 1;
 }
 
-lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32), void *alloc_ud) {
+lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32),
+                         void (*dealloc)(void *, void *), void *alloc_ud) {
   lk_intern *it;
 
   if (alloc) {
@@ -232,15 +233,12 @@ lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32), void *alloc_ud) {
 
   memset(it, 0, sizeof(*it));
 
+  /* Callers passing a custom alloc must pass the matching dealloc,
+   * otherwise memory from a custom allocator would be released with
+   * the system deallocator. */
   it->alloc = alloc ? alloc : lk_sys_alloc;
-  /* if custom alloc, user should provide dealloc via different
-     create; keep simple */
-  it->dealloc = alloc ? 0 : lk_sys_dealloc;
+  it->dealloc = dealloc ? dealloc : lk_sys_dealloc;
   it->ud = alloc_ud;
-
-  /* NOTE: if we want symmetric custom alloc/dealloc, adjust create signature.
-   */
-  (void)alloc_ud;
 
   if (!it_ensure(it)) {
     lk_intern_destroy(it);
@@ -372,17 +370,22 @@ lk_node_id lk_intern_cid(lk_intern *it, const char *s) {
   if (!s) {
     return 0;
   }
+
   return lk_intern_id(it, lk_str_c(s));
 }
 
 const char *lk_intern_cstr(const lk_intern *it, lk_node_id id) {
   struct lk_intern_entry *e;
+
   if (!it || id == 0 || id > it->by_id_len) {
     return "";
   }
+
   e = it->by_id[id - 1];
+
   if (!e) {
     return "";
   }
+
   return it->pool + e->str_off;
 }

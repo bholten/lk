@@ -1,0 +1,672 @@
+;; paint-dsl.lcl — Tiny Paint: the RGBA-buffer widget as a canvas.
+;;
+;; A pixel-art editor in pure Lcl.  The canvas is an `Lk::image_new`
+;; buffer shown by the `image` widget at an integer zoom with
+;; `filter nearest`, so every pixel is a crisp square.  Painting is a
+;; custom gesture: the event handler maps window coordinates to a
+;; pixel through `Lk::node_rect` and writes the buffer with
+;; `Lk::image_set_px`; the dirty mark makes the window re-upload the
+;; texture.  Tools, colours, and undo are the command model — buttons
+;; present `tool`/`color`/`action`, the root presents `paint` so the
+;; keybindings work from a cold start.  The toolkit holds no paint
+;; state at all.
+;;
+;; Demonstrates:
+;;   - `image` as an application-owned pixel canvas (the Stego Lab
+;;     buffer, drawn on interactively) and `filter nearest`
+;;   - `Lk::node_rect`: pointer -> content mapping for a gesture the
+;;     toolkit does not own (pointer_down/move/up in `event_handler`,
+;;     target phase, handled = 1 so nothing else sees the stroke)
+;;   - a second 1x1 image as the "current colour" swatch — a buffer
+;;     is the cheapest way to show an arbitrary colour without a rule
+;;   - multi-tag styling: palette swatches carry `swatch`, `c<i>`, and
+;;     `sel` tags, one rule each (later rules win per field)
+;;   - undo/redo as whole-buffer hex snapshots (`Lk::image_bytes` /
+;;     `image_set_bytes`), the line tool previewing by restoring the
+;;     stroke's base snapshot every pointer_move
+;;   - flood fill in script: a breadth-first frontier over
+;;     `image_get_px`, "visited" = already recoloured, so no set
+;;   - `Lk::image_load/save` + the native file dialogs (Stego Lab's
+;;     flow); a loaded image of any small size becomes the canvas
+;;
+;; Controls: left button paints with the colour, right button paints
+;; white (the eraser colour).  P pencil, E eraser, L line, F fill,
+;; K colour picker; 1-4 brush size; Ctrl+Z / Ctrl+Y undo / redo.
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; ---- palette (the classic sixteen) ----
+
+let PALETTE ((0 0 0) (128 128 128) (128 0 0) (128 128 0)
+             (0 128 0) (0 128 128) (0 0 128) (128 0 128)
+             (255 255 255) (192 192 192) (255 0 0) (255 255 0)
+             (0 255 0) (0 255 255) (0 0 255) (255 0 255))
+
+let WHITE (255 255 255 255)
+let VIEW 512      ;; target on-screen canvas size (zoom = VIEW / max(W, H))
+let UNDO_MAX 24
+let ZOOMS (4 6 8 12 16)
+
+;; ---- model (top level, app-owned) ----
+
+var img ""        ;; the canvas (lk_image) — see new_canvas / adopt_image
+var cur ""        ;; 1x1 image showing the current colour
+var W 64
+var H 64
+var ZOOM 8
+
+var tool pencil   ;; pencil | eraser | line | fill | picker
+var color (0 0 0) ;; (r g b) — any colour, not just a palette entry
+var size 1        ;; brush side in pixels (1..4)
+
+var undo_stack () ;; hex snapshots, oldest first
+var redo_stack ()
+
+var stroking 0    ;; a button is held on the canvas
+var stroke_btn 1  ;; 1 primary (colour) | 3 secondary (white)
+var stroke_base "" ;; snapshot taken at stroke start
+var last_x 0
+var last_y 0
+var start_x 0     ;; line tool anchor
+var start_y 0
+
+var hover_x -1    ;; pixel under the pointer (-1 = off-canvas)
+var hover_y -1
+var status "ready"
+
+;; ---- small integer helpers (Lcl has no abs/min/max) ----
+
+proc imax {a b} {
+    if [> $a $b] { return $a }
+    return $b
+}
+
+proc imin {a b} {
+    if [< $a $b] { return $a }
+    return $b
+}
+
+proc iabs {a} {
+    if [< $a 0] { return [- 0 $a] }
+    return $a
+}
+
+proc clamp {v lo hi} {
+    imax $lo [imin $hi $v]
+}
+
+;; ---- the canvas buffer ----
+
+proc fit_zoom {} {
+    set! ZOOM [imax 1 [int [/ $VIEW [imax $W $H]]]]
+}
+
+proc clear_canvas {} {
+    var y 0
+
+    while [< $y $H] {
+        var x 0
+
+        while [< $x $W] {
+            Lk::image_set_px $img $x $y $WHITE
+            set! x [+ $x 1]
+        }
+
+        set! y [+ $y 1]
+    }
+}
+
+;; Fresh white w x h canvas registered in `ui`'s resource table.
+proc new_canvas {ui w h} {
+    set! W $w
+    set! H $h
+    set! img [Lk::image_new $ui $w $h]
+    clear_canvas
+    fit_zoom
+    set! undo_stack ()
+    set! redo_stack ()
+}
+
+;; A loaded image becomes the canvas, whatever its size.
+proc adopt_image {new} {
+    let sz [Lk::image_size $new]
+
+    set! img $new
+    set! W [get $sz 0]
+    set! H [get $sz 1]
+    fit_zoom
+    set! undo_stack ()
+    set! redo_stack ()
+}
+
+proc snapshot {} {
+    Lk::image_bytes $img 0 [* [* $W $H] 4]
+}
+
+proc restore {hex} {
+    Lk::image_set_bytes $img 0 $hex
+}
+
+;; ---- undo / redo ----
+
+proc push_undo {snap} {
+    set! undo_stack [List::push $undo_stack $snap]
+
+    if [> [len $undo_stack] $UNDO_MAX] {
+        set! undo_stack [List::slice $undo_stack 1 [len $undo_stack]]
+    }
+
+    set! redo_stack ()
+}
+
+proc undo {} {
+    let n [len $undo_stack]
+
+    if [== $n 0] {
+        set! status "nothing to undo"
+        return 0
+    }
+
+    set! redo_stack [List::push $redo_stack [snapshot]]
+    restore [get $undo_stack [- $n 1]]
+    set! undo_stack [List::slice $undo_stack 0 [- $n 1]]
+    set! status "undo"
+    return 1
+}
+
+proc redo {} {
+    let n [len $redo_stack]
+
+    if [== $n 0] {
+        set! status "nothing to redo"
+        return 0
+    }
+
+    set! undo_stack [List::push $undo_stack [snapshot]]
+    restore [get $redo_stack [- $n 1]]
+    set! redo_stack [List::slice $redo_stack 0 [- $n 1]]
+    set! status "redo"
+    return 1
+}
+
+;; ---- drawing primitives ----
+
+proc paint_rgba {} {
+    ([get $color 0] [get $color 1] [get $color 2] 255)
+}
+
+;; The colour a stroke lays down: the right button always erases.
+proc stroke_rgba {} {
+    if [== $stroke_btn 3] { return $WHITE }
+    if [== $tool eraser] { return $WHITE }
+    paint_rgba
+}
+
+;; A size x size square around (x, y), clipped to the canvas.
+proc plot {x y rgba} {
+    let half [int [/ [- $size 1] 2]]
+    let x0 [- $x $half]
+    let y0 [- $y $half]
+    var yy $y0
+
+    while [< $yy [+ $y0 $size]] {
+        var xx $x0
+
+        while [< $xx [+ $x0 $size]] {
+            if [and [>= $xx 0] [< $xx $W]] {
+                if [and [>= $yy 0] [< $yy $H]] {
+                    Lk::image_set_px $img $xx $yy $rgba
+                }
+            }
+
+            set! xx [+ $xx 1]
+        }
+
+        set! yy [+ $yy 1]
+    }
+}
+
+;; Bresenham from (x0, y0) to (x1, y1), plotting the brush at each step.
+proc line {x0 y0 x1 y1 rgba} {
+    let dx [iabs [- $x1 $x0]]
+    let dy [- 0 [iabs [- $y1 $y0]]]
+    var sx 1
+    var sy 1
+    var x $x0
+    var y $y0
+    var err [+ $dx $dy]
+    var done 0
+
+    if [> $x0 $x1] { set! sx [- 0 1] }
+    if [> $y0 $y1] { set! sy [- 0 1] }
+
+    while [not $done] {
+        plot $x $y $rgba
+
+        if [and [== $x $x1] [== $y $y1]] {
+            set! done 1
+        } else {
+            let e2 [* 2 $err]
+
+            if [>= $e2 $dy] {
+                set! err [+ $err $dy]
+                set! x [+ $x $sx]
+            }
+
+            if [<= $e2 $dx] {
+                set! err [+ $err $dx]
+                set! y [+ $y $sy]
+            }
+        }
+    }
+}
+
+;; Flood fill: breadth-first over 4-neighbours.  A pixel is "visited"
+;; once it is recoloured, so the target colour itself is the frontier
+;; test and no visited set is needed.
+proc fill {x y rgba} {
+    let target [Lk::image_get_px $img $x $y]
+
+    if [== $target $rgba] { return 0 }
+
+    Lk::image_set_px $img $x $y $rgba
+    var frontier (($x $y))
+    var count 1
+
+    while [> [len $frontier] 0] {
+        var next ()
+
+        foreach p $frontier {
+            let px [get $p 0]
+            let py [get $p 1]
+
+            foreach d ((1 0) (0 1)) {
+                let ddx [get $d 0]
+                let ddy [get $d 1]
+
+                foreach sgn (1 -1) {
+                    let nx [+ $px [* $sgn $ddx]]
+                    let ny [+ $py [* $sgn $ddy]]
+
+                    if [and [>= $nx 0] [< $nx $W]] {
+                        if [and [>= $ny 0] [< $ny $H]] {
+                            if [== [Lk::image_get_px $img $nx $ny] $target] {
+                                Lk::image_set_px $img $nx $ny $rgba
+                                set! next [List::push $next ($nx $ny)]
+                                set! count [+ $count 1]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        set! frontier $next
+    }
+
+    return $count
+}
+
+;; ---- strokes (the gesture, driven from the event handler) ----
+
+proc commit_stroke {what} {
+    set! stroking 0
+    push_undo $stroke_base
+    set! status $what
+}
+
+proc stroke_begin {x y btn} {
+    ;; Capture the pointer: MOVE/UP keep targeting the canvas node
+    ;; until stroke_end, wherever the cursor goes (hover is suppressed).
+    Lk::capture_set ${LkDsl::_ui} canvas
+    set! stroke_base [snapshot]
+    set! stroking 1
+    set! stroke_btn $btn
+    set! last_x $x
+    set! last_y $y
+    set! start_x $x
+    set! start_y $y
+
+    if [== $tool picker] {
+        let px [Lk::image_get_px $img $x $y]
+        set! color ([get $px 0] [get $px 1] [get $px 2])
+        set! stroking 0
+        set! status "picked [String::join $color " "]"
+        return 0
+    }
+
+    if [== $tool fill] {
+        let n [fill $x $y [stroke_rgba]]
+        commit_stroke "filled $n px"
+        return 0
+    }
+
+    plot $x $y [stroke_rgba]
+}
+
+proc stroke_move {x y} {
+    if [not $stroking] { return 0 }
+
+    if [== $tool line] {
+        restore $stroke_base
+        line $start_x $start_y $x $y [stroke_rgba]
+        return 0
+    }
+
+    if [and [== $x $last_x] [== $y $last_y]] { return 0 }
+
+    line $last_x $last_y $x $y [stroke_rgba]
+    set! last_x $x
+    set! last_y $y
+}
+
+proc stroke_end {} {
+    if [not $stroking] { return 0 }
+    Lk::capture_clear ${LkDsl::_ui}
+    commit_stroke $tool
+}
+
+;; Window coordinates -> (px py), or () when outside the canvas.
+proc canvas_pixel {ex ey} {
+    let r [Lk::node_rect ${LkDsl::_ui} canvas]
+
+    if [== [len $r] 0] { return () }
+
+    let lx [- $ex [get $r 0]]
+    let ly [- $ey [get $r 1]]
+
+    if [or [< $lx 0] [< $ly 0]] { return () }
+    if [or [>= $lx [get $r 2]] [>= $ly [get $r 3]]] { return () }
+
+    ([int [/ $lx $ZOOM]] [int [/ $ly $ZOOM]])
+}
+
+;; Same, but a stroke that leaves the canvas continues along its edge.
+proc canvas_pixel_clamped {ex ey} {
+    let r [Lk::node_rect ${LkDsl::_ui} canvas]
+
+    if [== [len $r] 0] { return ($last_x $last_y) }
+
+    let px [int [/ [- $ex [get $r 0]] $ZOOM]]
+    let py [int [/ [- $ey [get $r 1]] $ZOOM]]
+
+    ([clamp $px 0 [- $W 1]] [clamp $py 0 [- $H 1]])
+}
+
+;; ---- view helpers ----
+
+proc set_tool {t} {
+    set! tool $t
+    set! status $t
+}
+
+proc tool_tag {t} {
+    if [== $t $tool] { return tool_on }
+    return tool
+}
+
+proc status_text {} {
+    var where "off canvas"
+
+    if [>= $hover_x 0] { set! where "$hover_x,$hover_y" }
+
+    "$tool · $size px · $where · ${W}x$H @${ZOOM}x · $status"
+}
+
+;; ---- the app ----
+
+app "Tiny Paint" #{font $font font_size 14 width 820 height 600} {
+
+    theme {
+        rule window #{bg (30 32 38)}
+        rule * #{fg (205 210 220)}
+        rule label #{tag dim} #{fg (125 132 148)}
+        rule label #{tag title} #{fg (240 240 245)}
+        rule column #{tag frame} #{padding 1 bg (90 95 110)}
+        rule image #{padding 0}
+        rule button #{padding 6 border_width 1 border_color (70 74 88) bg (52 56 68)}
+        rule button #{state hovered} #{bg (72 78 94) border_color (120 126 150)}
+        rule button #{state focused} #{border_color (80 140 220)}
+        rule button #{tag tool_on} #{bg (80 140 220) fg (255 255 255) border_color (120 170 240)}
+        rule button #{tag tool_on state hovered} #{bg (95 155 235)}
+        rule slider #{accent (80 140 220)}
+        rule dropdown #{bg (52 56 68) padding 4 border_width 1 border_color (70 74 88)}
+
+        ;; Palette swatches: base look, then one bg rule per colour,
+        ;; then the hover and selection borders — later rules win, so
+        ;; the border rules never clobber the colour.
+        rule button #{tag swatch} #{padding 0 border_width 2 border_color (30 32 38)}
+
+        var i 0
+
+        foreach c $PALETTE {
+            rule button #{tag "c$i"} #{bg $c}
+            set! i [+ $i 1]
+        }
+
+        rule button #{tag swatch state hovered} #{border_color (160 165 180)}
+        rule button #{tag sel} #{border_color (255 255 255)}
+    }
+
+    ;; Commands: tools and colours from buttons, actions, keys.
+    translator pointer_down tool ToolPick
+    translator pointer_down color ColorPick
+    translator pointer_down action Action
+    translator value_changed brush Brush
+    translator value_changed zoom Zoom
+    keybinding p "" ToolPencil
+    keybinding e "" ToolEraser
+    keybinding l "" ToolLine
+    keybinding f "" ToolFill
+    keybinding k "" ToolPicker
+    keybinding 1 "" Size1
+    keybinding 2 "" Size2
+    keybinding 3 "" Size3
+    keybinding 4 "" Size4
+    keybinding z ctrl Undo
+    keybinding y ctrl Redo
+
+    on ToolPick   [lambda {cmd} { set_tool [get [get $cmd args] 0] }]
+    on ToolPencil [lambda {cmd} { set_tool pencil }]
+    on ToolEraser [lambda {cmd} { set_tool eraser }]
+    on ToolLine   [lambda {cmd} { set_tool line }]
+    on ToolFill   [lambda {cmd} { set_tool fill }]
+    on ToolPicker [lambda {cmd} { set_tool picker }]
+    on Size1 [lambda {cmd} { set! size 1 }]
+    on Size2 [lambda {cmd} { set! size 2 }]
+    on Size3 [lambda {cmd} { set! size 3 }]
+    on Size4 [lambda {cmd} { set! size 4 }]
+    on Undo  [lambda {cmd} { undo }]
+    on Redo  [lambda {cmd} { redo }]
+
+    on ColorPick [lambda {cmd} {
+        set! color [get $cmd args]
+    }]
+
+    on Brush [lambda {cmd} {
+        set! size [int [get $cmd source_value]]
+    }]
+
+    on Zoom [lambda {cmd} {
+        set! ZOOM [int [get $cmd source_value]]
+    }]
+
+    on Action [lambda {cmd} {
+        let verb [get [get $cmd args] 0]
+
+        if [== $verb undo] { undo }
+        if [== $verb redo] { redo }
+
+        if [== $verb new] {
+            push_undo [snapshot]
+            clear_canvas
+            set! status "new canvas"
+        }
+
+        if [== $verb load] {
+            Lk::open_file_dialog ${LkDsl::_win} [lambda {paths} {
+                if [len $paths] {
+                    if [== 0 [catch { adopt_image [Lk::image_load ${LkDsl::_ui} [get $paths 0]] } _r lerr]] {
+                        set! status "loaded [get $paths 0]"
+                    } else {
+                        set! status $lerr
+                    }
+                }
+            }] (("Images" "bmp;png"))
+        }
+
+        if [== $verb save] {
+            Lk::save_file_dialog ${LkDsl::_win} [lambda {paths} {
+                if [len $paths] {
+                    if [== 0 [catch { Lk::image_save $img [get $paths 0] } ok serr]] {
+                        if $ok {
+                            set! status "saved [get $paths 0]"
+                        } else {
+                            set! status "save failed"
+                        }
+                    } else {
+                        set! status $serr
+                    }
+                }
+            }] (("PNG image" "png") ("BMP image" "bmp")) "drawing.png"
+        }
+    }]
+
+    ;; The stroke gesture.  Only the target phase, only pointer events,
+    ;; only when the pointer is (or the stroke started) on the canvas;
+    ;; everything else is left to the toolkit.
+    event_handler [lambda {ev node} {
+        let type [get $ev type]
+
+        if [not [or [== $type pointer_down] [or [== $type pointer_move] [== $type pointer_up]]]] {
+            return 0
+        }
+
+        if [not [== [get $ev phase] target]] { return 0 }
+
+        let ex [get $ev x]
+        let ey [get $ev y]
+
+        if [== $type pointer_down] {
+            let p [canvas_pixel $ex $ey]
+
+            if [== [len $p] 0] { return 0 }
+
+            let btn [get $ev button]
+
+            if [not [or [== $btn 1] [== $btn 3]]] { return 0 }
+
+            stroke_begin [get $p 0] [get $p 1] $btn
+            return 1
+        }
+
+        if [== $type pointer_move] {
+            let p [canvas_pixel $ex $ey]
+
+            if [len $p] {
+                set! hover_x [get $p 0]
+                set! hover_y [get $p 1]
+            } else {
+                set! hover_x -1
+                set! hover_y -1
+            }
+
+            if $stroking {
+                let q [canvas_pixel_clamped $ex $ey]
+                stroke_move [get $q 0] [get $q 1]
+                return 1
+            }
+
+            return 0
+        }
+
+        if $stroking {
+            stroke_end
+            return 1
+        }
+
+        return 0
+    }]
+
+    ;; Both buffers register in the window ui's resource table.
+    new_canvas ${LkDsl::_ui} 64 64
+    set! cur [Lk::image_new ${LkDsl::_ui} 1 1]
+
+    view {
+        ;; The current-colour swatch is a 1x1 buffer, repainted per frame.
+        Lk::image_set_px $cur 0 0 [paint_rgba]
+
+        row "main" #{padding 12 gap 14} {
+            column "left" #{gap 6 align start} {
+                column "frame" #{tag frame} {
+                    image "canvas" #{image $img w [* $W $ZOOM] h [* $H $ZOOM] filter nearest}
+                }
+
+                label "status" #{text [status_text] tag dim}
+            }
+
+            column "panel" #{gap 10 w 220 align stretch} {
+                label "title" #{text "Tiny Paint" tag title}
+
+                grid "tools" #{columns 2 gap 4} {
+                    button "t_pencil" #{text "Pencil  P" tag [tool_tag pencil] present (tool (pencil))}
+                    button "t_eraser" #{text "Eraser  E" tag [tool_tag eraser] present (tool (eraser))}
+                    button "t_line"   #{text "Line    L" tag [tool_tag line]   present (tool (line))}
+                    button "t_fill"   #{text "Fill    F" tag [tool_tag fill]   present (tool (fill))}
+                    button "t_picker" #{text "Picker  K" tag [tool_tag picker] present (tool (picker))}
+                }
+
+                row "brush_row" #{gap 8 align center} {
+                    label "brush_l" #{text "Brush $size" tag dim}
+                    slider "brush" #{value $size min 1 max 4 step 1 focusable 1 grow 1 present (brush (b))}
+                }
+
+                row "color_row" #{gap 8 align center} {
+                    column "cur_frame" #{tag frame} {
+                        image "cur" #{image $cur w 36 h 26}
+                    }
+                    label "cur_l" #{text [String::join $color " "] tag dim}
+                }
+
+                grid "palette" #{columns 8 gap 3} {
+                    var i 0
+
+                    foreach c $PALETTE {
+                        let n [button "sw_$i" #{tag swatch w 24 h 22 present (color $c) tooltip [String::join $c " "]}]
+
+                        Lk::tag ${LkDsl::_tree} $n "c$i"
+
+                        if [== $c $color] {
+                            Lk::tag ${LkDsl::_tree} $n sel
+                        }
+
+                        set! i [+ $i 1]
+                    }
+                }
+
+                row "zoom_row" #{gap 8 align center} {
+                    label "zoom_l" #{text "Zoom" tag dim}
+                    dropdown "zoom" #{value "$ZOOM" focusable 1 present (zoom (z))} {
+                        foreach z $ZOOMS {
+                            option "z_$z" #{text "$z"}
+                        }
+                    }
+                }
+
+                row "hist" #{gap 4} {
+                    button "b_undo" #{text "Undo" focusable 1 present (action (undo)) tooltip "Ctrl+Z"}
+                    button "b_redo" #{text "Redo" focusable 1 present (action (redo)) tooltip "Ctrl+Y"}
+                    button "b_new"  #{text "New" focusable 1 present (action (new))}
+                }
+
+                row "files" #{gap 4} {
+                    button "b_load" #{text "Load..." focusable 1 present (action (load))}
+                    button "b_save" #{text "Save..." focusable 1 present (action (save))}
+                }
+
+                label "hint" #{text "left paints · right erases" tag dim}
+                label "hint2" #{text "1-4 brush · Ctrl+Z undo" tag dim}
+            }
+        }
+    }
+}
