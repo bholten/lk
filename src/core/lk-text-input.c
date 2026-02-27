@@ -46,16 +46,22 @@ static lk_str get_text(const lk_tree *t, lk_ix n, const lk_state *state,
 }
 
 static lk_i32 clamp_i32(lk_i32 val, lk_i32 lo, lk_i32 hi) {
-  if (val < lo) return lo;
-  if (val > hi) return hi;
+  if (val < lo) {
+    return lo;
+  }
+  if (val > hi) {
+    return hi;
+  }
   return val;
 }
 
 /* Read cursor pos from state, clamped to [0, text_len]. */
 static lk_i32 get_cursor(const lk_state *state, lk_node_id nid,
-                          lk_i32 text_len) {
+                         lk_i32 text_len) {
   lk_value v;
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   v = lk_state_get(state, nid, LKS_CURSOR_POS);
   if (v.tag == UIV_I32) {
     return clamp_i32((lk_i32)v.as.i, 0, text_len);
@@ -64,9 +70,11 @@ static lk_i32 get_cursor(const lk_state *state, lk_node_id nid,
 }
 
 static lk_i32 get_sel_start(const lk_state *state, lk_node_id nid,
-                             lk_i32 text_len) {
+                            lk_i32 text_len) {
   lk_value v;
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   v = lk_state_get(state, nid, LKS_SELECTION_START);
   if (v.tag == UIV_I32) {
     return clamp_i32((lk_i32)v.as.i, 0, text_len);
@@ -75,9 +83,11 @@ static lk_i32 get_sel_start(const lk_state *state, lk_node_id nid,
 }
 
 static lk_i32 get_sel_end(const lk_state *state, lk_node_id nid,
-                           lk_i32 text_len) {
+                          lk_i32 text_len) {
   lk_value v;
-  if (!state) return 0;
+  if (!state) {
+    return 0;
+  }
   v = lk_state_get(state, nid, LKS_SELECTION_END);
   if (v.tag == UIV_I32) {
     return clamp_i32((lk_i32)v.as.i, 0, text_len);
@@ -119,10 +129,9 @@ static void ensure_text_buf(lk_ui *ui, const lk_tree *t, lk_ix n) {
 
 /* ---- Measure ---- */
 
-static void measure_text_input(const lk_tree *t, lk_ix n,
-                                const lk_size *sizes,
-                                const lk_layout_cfg *cfg,
-                                lk_i32 *out_w, lk_i32 *out_h) {
+static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
+                               const lk_layout_cfg *cfg, lk_i32 *out_w,
+                               lk_i32 *out_h) {
   lk_str text;
   lk_i32 tw = 0;
   lk_i32 th = 0;
@@ -163,10 +172,9 @@ static void measure_text_input(const lk_tree *t, lk_ix n,
 
 /* ---- Render ---- */
 
-static void render_text_input(const lk_tree *t, lk_ix n,
-                               const lk_rect *rect, const lk_style *style,
-                               const lk_state *state,
-                               lk_render_list *out) {
+static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
+                              const lk_style *style, const lk_state *state,
+                              lk_render_list *out) {
   lk_i32 pad = style->padding;
   lk_u32 sid = 0;
   lk_str text;
@@ -199,7 +207,9 @@ static void render_text_input(const lk_tree *t, lk_ix n,
         lk_i32 cursor_pos = get_cursor(state, nid, (lk_i32)text.len);
         if (cx_v.tag == UIV_I32 && cursor_pos > 0) {
           char_w = (lk_i32)cx_v.as.i / cursor_pos;
-          if (char_w < 1) char_w = 1;
+          if (char_w < 1) {
+            char_w = 1;
+          }
         }
       }
       memset(&cmd, 0, sizeof(cmd));
@@ -251,7 +261,7 @@ static void render_text_input(const lk_tree *t, lk_ix n,
  * Writes the edited text back to state.  Returns -1 if no selection.
  */
 static lk_i32 delete_selection(lk_ui *ui, const lk_tree *t, lk_ix n,
-                                const char *text, lk_i32 text_len) {
+                               const char *text, lk_i32 text_len) {
   lk_state *st = lk_ui_state(ui);
   lk_node_id nid = t->nodes[n].id;
   lk_i32 sel_s = get_sel_start(st, nid, text_len);
@@ -269,8 +279,12 @@ static lk_i32 delete_selection(lk_ui *ui, const lk_tree *t, lk_ix n,
 
   /* Build new string: text[0..lo] + text[hi..text_len] */
   new_len = text_len - (hi - lo);
-  if (new_len < 0) new_len = 0;
-  if (new_len > LK_TEXT_INPUT_MAX - 1) new_len = LK_TEXT_INPUT_MAX - 1;
+  if (new_len < 0) {
+    new_len = 0;
+  }
+  if (new_len > LK_TEXT_INPUT_MAX - 1) {
+    new_len = LK_TEXT_INPUT_MAX - 1;
+  }
 
   memcpy(buf, text, (size_t)lo);
   memcpy(buf + lo, text + hi, (size_t)(text_len - hi));
@@ -295,7 +309,7 @@ static lk_i32 delete_selection(lk_ui *ui, const lk_tree *t, lk_ix n,
 }
 
 static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
-                             lk_event *ev) {
+                            lk_event *ev) {
   lk_state *st = lk_ui_state(ui);
   lk_node_id nid = t->nodes[n].id;
   lk_str text;
@@ -491,8 +505,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
       }
       return 0;
 
-    default:
-      break;
+    default: break;
     }
 
     /* TAB, RETURN, ESCAPE: let them bubble */
@@ -508,7 +521,7 @@ lk_widget_def lk_text_input_widget_def(void) {
   lk_widget_def def;
   memset(&def, 0, sizeof(def));
   def.measure = measure_text_input;
-  def.layout = 0;    /* leaf node */
+  def.layout = 0; /* leaf node */
   def.render = render_text_input;
   def.event = event_text_input;
   def.clips = 0;

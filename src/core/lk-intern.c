@@ -372,17 +372,22 @@ lk_node_id lk_intern_cid(lk_intern *it, const char *s) {
   if (!s) {
     return 0;
   }
+
   return lk_intern_id(it, lk_str_c(s));
 }
 
 const char *lk_intern_cstr(const lk_intern *it, lk_node_id id) {
   struct lk_intern_entry *e;
+
   if (!it || id == 0 || id > it->by_id_len) {
     return "";
   }
+
   e = it->by_id[id - 1];
+
   if (!e) {
     return "";
   }
+
   return it->pool + e->str_off;
 }

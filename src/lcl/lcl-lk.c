@@ -40,15 +40,15 @@ typedef struct str_enum {
 } str_enum;
 
 static const str_enum kind_table[] = {
-    {"window", UIK_WINDOW},
-    {"row",    UIK_ROW   },
-    {"column", UIK_COLUMN},
-    {"spacer", UIK_SPACER},
-    {"label",  UIK_LABEL },
+    {"window",     UIK_WINDOW    },
+    {"row",        UIK_ROW       },
+    {"column",     UIK_COLUMN    },
+    {"spacer",     UIK_SPACER    },
+    {"label",      UIK_LABEL     },
     {"button",     UIK_BUTTON    },
     {"text_input", UIK_TEXT_INPUT},
-    {"scroll",     UIK_SCROLL   },
-    {NULL,         0            }
+    {"scroll",     UIK_SCROLL    },
+    {NULL,         0             }
 };
 
 static const str_enum prop_table[] = {
@@ -844,8 +844,7 @@ static int c_lk_set_command_handler(lcl_interp *interp, int argc,
   struct lcl_cmd_ctx *ctx;
 
   if (argc != 2) {
-    lcl_set_error(interp,
-                  "lk::set_command_handler: expected 2 arguments");
+    lcl_set_error(interp, "lk::set_command_handler: expected 2 arguments");
 
     return LCL_RC_ERR;
   }
@@ -1854,9 +1853,9 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::command_log", c_lk_command_log));
   lcl_ns_def(ns, "clear_command_log",
              lcl_c_proc_new("lk::clear_command_log", c_lk_clear_command_log));
-  lcl_ns_def(ns, "set_command_handler",
-             lcl_c_proc_new("lk::set_command_handler",
-                            c_lk_set_command_handler));
+  lcl_ns_def(
+      ns, "set_command_handler",
+      lcl_c_proc_new("lk::set_command_handler", c_lk_set_command_handler));
 
   /* State */
   lcl_ns_def(ns, "state_set", lcl_c_proc_new("lk::state_set", c_lk_state_set));

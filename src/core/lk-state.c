@@ -81,9 +81,11 @@ static int state_grow(lk_state *st, lk_u32 new_cap) {
       if (old_tab[i].used) {
         lk_u32 idx =
             state_hash(old_tab[i].node, old_tab[i].key) & (new_cap - 1);
+
         while (new_tab[idx].used) {
           idx = (idx + 1) & (new_cap - 1);
         }
+
         new_tab[idx] = old_tab[i];
         st->tab_len++;
       }

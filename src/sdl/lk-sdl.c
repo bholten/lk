@@ -43,9 +43,11 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
     if (out_w) {
       *out_w = 0;
     }
+
     if (out_h) {
       *out_h = 0;
     }
+
     return;
   }
 
@@ -54,9 +56,11 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
     if (out_w) {
       *out_w = 0;
     }
+
     if (out_h) {
       *out_h = 0;
     }
+
     return;
   }
 
@@ -69,6 +73,7 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
   if (out_w) {
     *out_w = (lk_i32)w;
   }
+
   if (out_h) {
     *out_h = (lk_i32)h;
   }
@@ -80,6 +85,7 @@ static void text_cache_clear(lk_window *win) {
     if (win->text_cache[i].tex) {
       SDL_DestroyTexture(win->text_cache[i].tex);
     }
+
     win->text_cache[i].str_id = 0;
     win->text_cache[i].tex = NULL;
   }
@@ -109,6 +115,7 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
       c.b = color.b;
       c.a = color.a;
       surf = TTF_RenderText_Blended(win->font, text, 0, c);
+
       if (!surf) {
         return NULL;
       }
@@ -117,6 +124,7 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
       w = surf->w;
       h = surf->h;
       SDL_DestroySurface(surf);
+
       if (!tex) {
         return NULL;
       }
@@ -130,12 +138,14 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
       *out_h = h;
       return tex;
     }
+
     if (e->str_id == str_id) {
       /* Cache hit */
       *out_w = e->w;
       *out_h = e->h;
       return e->tex;
     }
+
     slot = (slot + 1) & (TEXT_CACHE_CAP - 1);
     probes++;
   }
@@ -310,18 +320,23 @@ static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
 
 static lk_u8 sdl_to_lk_mods(SDL_Keymod m) {
   lk_u8 r = 0;
+
   if (m & SDL_KMOD_SHIFT) {
     r |= (lk_u8)LK_MOD_SHIFT;
   }
+
   if (m & SDL_KMOD_CTRL) {
     r |= (lk_u8)LK_MOD_CTRL;
   }
+
   if (m & SDL_KMOD_ALT) {
     r |= (lk_u8)LK_MOD_ALT;
   }
+
   if (m & SDL_KMOD_GUI) {
     r |= (lk_u8)LK_MOD_GUI;
   }
+
   return r;
 }
 
