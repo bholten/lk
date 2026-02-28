@@ -417,7 +417,7 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
     return NULL;
   }
 
-  ui->theme = lk_theme_default();
+  ui->theme = lk_theme_default(al, de, ud);
 
   return ui;
 }
@@ -608,6 +608,16 @@ void lk_ui_resolve_styles(lk_ui *ui) {
       for (fi = 1; fi < (lk_ix)nc; fi++) {
         if (t->nodes[fi].id == ui->focused_id) {
           ui->node_states[fi] |= LK_NSTATE_FOCUSED;
+          break;
+        }
+      }
+    }
+
+    /* Mark hovered node */
+    if (ui->hovered_id != 0) {
+      for (fi = 1; fi < (lk_ix)nc; fi++) {
+        if (t->nodes[fi].id == ui->hovered_id) {
+          ui->node_states[fi] |= LK_NSTATE_HOVERED;
           break;
         }
       }

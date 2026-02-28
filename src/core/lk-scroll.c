@@ -205,10 +205,7 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.y = rect->y + pad;
     cmd.rect.w = SCROLL_BAR_W;
     cmd.rect.h = track_h;
-    cmd.color.r = 50;
-    cmd.color.g = 50;
-    cmd.color.b = 50;
-    cmd.color.a = 128;
+    cmd.color = style->scrollbar_track;
     lk_render_list_push(out, cmd);
 
     /* Thumb */
@@ -218,10 +215,7 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.y = thumb_y;
     cmd.rect.w = SCROLL_BAR_W;
     cmd.rect.h = thumb_h;
-    cmd.color.r = 120;
-    cmd.color.g = 120;
-    cmd.color.b = 120;
-    cmd.color.a = 200;
+    cmd.color = style->scrollbar_thumb;
     lk_render_list_push(out, cmd);
   }
 }

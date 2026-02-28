@@ -470,6 +470,7 @@ typedef struct lk_ui {
   lk_event_handler_fn event_handler;
   void *event_ud;
   lk_node_id focused_id; /* 0 = no focus */
+  lk_node_id hovered_id; /* 0 = nothing hovered */
   lk_state *state;       /* retained per-node state */
 
   /* Translators */
@@ -637,6 +638,7 @@ typedef struct lk_color {
 
 typedef struct lk_style {
   lk_color fg, bg, border_color;
+  lk_color scrollbar_track, scrollbar_thumb;
   lk_u32 font_id;
   lk_i32 font_size, padding, gap, border_width, border_radius;
   lk_u8 align, justify;
@@ -654,6 +656,8 @@ typedef struct lk_style {
 #define LK_SF_BORDER_RADIUS (1u << 8)
 #define LK_SF_ALIGN (1u << 9)
 #define LK_SF_JUSTIFY (1u << 10)
+#define LK_SF_SCROLLBAR_TRACK (1u << 11)
+#define LK_SF_SCROLLBAR_THUMB (1u << 12)
 
 /* Inheritable fields: fg, font_id, font_size */
 #define LK_STYLE_INHERIT_MASK (LK_SF_FG | LK_SF_FONT_ID | LK_SF_FONT_SIZE)
@@ -665,12 +669,14 @@ typedef struct lk_style {
 
 typedef struct lk_theme lk_theme;
 
-lk_theme *lk_theme_new(void);
+lk_theme *lk_theme_new(void *(*alloc)(void *, lk_u32),
+                       void (*dealloc)(void *, void *), void *ud);
 void lk_theme_destroy(lk_theme *th);
 void lk_theme_add_rule(lk_theme *th, lk_u16 kind, lk_u32 tag_id,
                        lk_u8 state_mask, const lk_style *style,
                        lk_u32 field_mask);
-lk_theme *lk_theme_default(void);
+lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
+                            void (*dealloc)(void *, void *), void *ud);
 
 void lk_style_resolve(const lk_theme *th, const lk_tree *t,
                       const lk_u8 *node_states, lk_style *styles);
@@ -774,6 +780,9 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t);
 lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t);
 lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t);
 
+void lk_hover_set(lk_ui *ui, lk_node_id id);
+void lk_hover_clear(lk_ui *ui);
+
 /**
  * Translator + command API
  **/
@@ -795,31 +804,6 @@ void lk_ui_clear_command_log(lk_ui *ui);
 
 /* Internal: translator dispatch (called from event routing) */
 void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event);
-
-/**
- * lk_ht - Hash Table
- **/
-typedef struct lk_ht lk_ht;
-
-lk_ht *lk_ht_new(size_t elem_size);
-int lk_ht_delete(lk_ht *ht);
-int lk_ht_get(lk_ht *ht, const char *key, void **out);
-const char *lk_ht_set(lk_ht *ht, const char *key, void *value);
-size_t lk_ht_length(lk_ht *ht);
-
-/**
- * lk_hti
- **/
-
-typedef struct lk_hti {
-  const char *key;
-  void *value;
-  lk_ht *ht;
-  size_t index;
-} lk_hti;
-
-lk_hti lk_hti_iterator(lk_ht *ht);
-int lk_hti_next(lk_hti *hti);
 
 #ifdef __cplusplus
 }

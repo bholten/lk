@@ -40,9 +40,8 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
     lk_ix n = stack[--sp];
     const lk_node *nd = &t->nodes[n];
     lk_ix child;
-    int child_count;
-    lk_ix *kids;
-    int ki;
+    lk_u32 sp_start;
+    lk_u32 lo, hi;
 
     if (!rect_contains(&rects[n], x, y)) {
       continue;
@@ -50,33 +49,25 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
 
     best = n;
 
-    /* Push children in reverse order for left-to-right DFS */
-    child_count = 0;
+    /* Push children forward, then reverse segment for left-to-right DFS */
+    sp_start = sp;
     child = nd->first_child;
 
     while (child) {
-      child_count++;
+      stack[sp++] = child;
       child = t->nodes[child].next_sibling;
     }
 
-    if (child_count > 0) {
-      kids = (lk_ix *)lk_sys_alloc(
-          NULL, (lk_u32)(sizeof(lk_ix) * (lk_u32)child_count));
+    if (sp > sp_start) {
+      lo = sp_start;
+      hi = sp - 1;
 
-      if (kids) {
-        ki = 0;
-        child = nd->first_child;
-
-        while (child) {
-          kids[ki++] = child;
-          child = t->nodes[child].next_sibling;
-        }
-
-        while (ki > 0) {
-          stack[sp++] = kids[--ki];
-        }
-
-        lk_sys_dealloc(NULL, kids);
+      while (lo < hi) {
+        lk_ix tmp = stack[lo];
+        stack[lo] = stack[hi];
+        stack[hi] = tmp;
+        lo++;
+        hi--;
       }
     }
   }
@@ -125,6 +116,18 @@ void lk_focus_clear(lk_ui *ui) {
   }
 }
 
+void lk_hover_set(lk_ui *ui, lk_node_id id) {
+  if (ui) {
+    ui->hovered_id = id;
+  }
+}
+
+void lk_hover_clear(lk_ui *ui) {
+  if (ui) {
+    ui->hovered_id = 0;
+  }
+}
+
 lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t) {
   if (!ui || !t || ui->focused_id == 0) {
     return 0;
@@ -157,40 +160,31 @@ static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
     lk_ix n = stack[--sp];
     const lk_node *nd = &t->nodes[n];
     lk_ix child;
-    int child_count, ki;
-    lk_ix *kids;
+    lk_u32 sp_start, lo, hi;
 
     if (node_is_focusable(t, n) && !node_is_disabled(t, n)) {
       buf[count++] = n;
     }
 
-    /* Push children in reverse order */
-    child_count = 0;
+    /* Push children forward, then reverse segment */
+    sp_start = sp;
     child = nd->first_child;
 
     while (child) {
-      child_count++;
+      stack[sp++] = child;
       child = t->nodes[child].next_sibling;
     }
 
-    if (child_count > 0) {
-      kids = (lk_ix *)lk_sys_alloc(
-          NULL, (lk_u32)(sizeof(lk_ix) * (lk_u32)child_count));
+    if (sp > sp_start) {
+      lo = sp_start;
+      hi = sp - 1;
 
-      if (kids) {
-        ki = 0;
-        child = nd->first_child;
-
-        while (child) {
-          kids[ki++] = child;
-          child = t->nodes[child].next_sibling;
-        }
-
-        while (ki > 0) {
-          stack[sp++] = kids[--ki];
-        }
-
-        lk_sys_dealloc(NULL, kids);
+      while (lo < hi) {
+        lk_ix tmp = stack[lo];
+        stack[lo] = stack[hi];
+        stack[hi] = tmp;
+        lo++;
+        hi--;
       }
     }
   }
