@@ -18,7 +18,7 @@ set(LK_SOURCES
   src/core/lk-tree.c
   src/core/lk-ui.c
   src/core/lk-state.c
-  src/core/lk-ht.c
+
   src/core/lk-layout.c
   src/core/lk-render.c
   src/core/lk-event.c

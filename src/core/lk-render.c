@@ -50,7 +50,7 @@ static void init_fallback_styles(void) {
   memset(g_fallback_styles, 0, sizeof(g_fallback_styles));
 
   /* Build a small tree with one node of each kind and resolve */
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   if (!th) {
     return;
   }

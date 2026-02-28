@@ -10,6 +10,7 @@ typedef struct lk_window_cfg {
   int width, height;
   const char *font_path;
   int font_size;
+  int text_cache_cap; /* 0 = default (2048). Must be power of two. */
 } lk_window_cfg;
 
 /* Frame callback: build the tree. Run loop handles begin/end

@@ -61,7 +61,9 @@ let ui [lk::window_ui $win]
 lk::theme_rule $ui "window" "" "" #{bg (25 25 35)}
 lk::theme_rule $ui "*" "" "" #{fg (200 200 220)}
 lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12}
+lk::theme_rule $ui "button" "" "hovered" #{bg (70 70 85)}
 lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255)}
+lk::theme_rule $ui "button" "primary" "hovered" #{bg (65 120 210)}
 lk::theme_rule $ui "text_input" "" "" #{bg (40 40 55) padding 8}
 lk::theme_rule $ui "text_input" "" "focused" #{border_width 2 border_color (80 140 220)}
 lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4}

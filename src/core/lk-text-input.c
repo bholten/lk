@@ -29,19 +29,23 @@ static lk_str get_text(const lk_tree *t, lk_ix n, const lk_state *state,
   if (state) {
     lk_node_id nid = t->nodes[n].id;
     v = lk_state_get(state, nid, LKS_TEXT_BUF);
+
     if (v.tag == UIV_STR) {
       if (out_str_id) {
         *out_str_id = v.as.str_id;
       }
+
       return lk_intern_str(t->intern, v.as.str_id);
     }
   }
 
   /* Fall back to tree prop */
   s = lk_node_text(t, n);
+
   if (out_str_id) {
     *out_str_id = lk_node_text_id(t, n);
   }
+
   return s;
 }
 
@@ -49,9 +53,11 @@ static lk_i32 clamp_i32(lk_i32 val, lk_i32 lo, lk_i32 hi) {
   if (val < lo) {
     return lo;
   }
+
   if (val > hi) {
     return hi;
   }
+
   return val;
 }
 
@@ -59,36 +65,47 @@ static lk_i32 clamp_i32(lk_i32 val, lk_i32 lo, lk_i32 hi) {
 static lk_i32 get_cursor(const lk_state *state, lk_node_id nid,
                          lk_i32 text_len) {
   lk_value v;
+
   if (!state) {
     return 0;
   }
+
   v = lk_state_get(state, nid, LKS_CURSOR_POS);
+
   if (v.tag == UIV_I32) {
     return clamp_i32((lk_i32)v.as.i, 0, text_len);
   }
+
   return 0;
 }
 
 static lk_i32 get_sel_start(const lk_state *state, lk_node_id nid,
                             lk_i32 text_len) {
   lk_value v;
+
   if (!state) {
     return 0;
   }
+
   v = lk_state_get(state, nid, LKS_SELECTION_START);
+
   if (v.tag == UIV_I32) {
     return clamp_i32((lk_i32)v.as.i, 0, text_len);
   }
+
   return 0;
 }
 
 static lk_i32 get_sel_end(const lk_state *state, lk_node_id nid,
                           lk_i32 text_len) {
   lk_value v;
+
   if (!state) {
     return 0;
   }
+
   v = lk_state_get(state, nid, LKS_SELECTION_END);
+
   if (v.tag == UIV_I32) {
     return clamp_i32((lk_i32)v.as.i, 0, text_len);
   }
@@ -103,6 +120,7 @@ static void ensure_text_buf(lk_ui *ui, const lk_tree *t, lk_ix n) {
   lk_u32 sid;
 
   v = lk_state_get(st, nid, LKS_TEXT_BUF);
+
   if (v.tag != UIV_NONE) {
     return; /* already initialized */
   }
@@ -115,12 +133,15 @@ static void ensure_text_buf(lk_ui *ui, const lk_tree *t, lk_ix n) {
   /* Initialize cursor at end of text (only if not already set) */
   {
     lk_str text = lk_node_text(t, n);
+
     if (lk_state_get(st, nid, LKS_CURSOR_POS).tag == UIV_NONE) {
       lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32((lk_i32)text.len));
     }
+
     if (lk_state_get(st, nid, LKS_SELECTION_START).tag == UIV_NONE) {
       lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
     }
+
     if (lk_state_get(st, nid, LKS_SELECTION_END).tag == UIV_NONE) {
       lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
     }
@@ -194,6 +215,7 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
   if (state) {
     lk_i32 sel_s = get_sel_start(state, nid, (lk_i32)text.len);
     lk_i32 sel_e = get_sel_end(state, nid, (lk_i32)text.len);
+
     if (sel_s != sel_e) {
       lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
       lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
@@ -202,16 +224,20 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
        * Here we use a simple 8px/char estimate as the stub measurer does.
        */
       lk_i32 char_w = 8;
+
       if (text.len > 0) {
         lk_value cx_v = lk_state_get(state, nid, LKS_CURSOR_X);
         lk_i32 cursor_pos = get_cursor(state, nid, (lk_i32)text.len);
+
         if (cx_v.tag == UIV_I32 && cursor_pos > 0) {
           char_w = (lk_i32)cx_v.as.i / cursor_pos;
+
           if (char_w < 1) {
             char_w = 1;
           }
         }
       }
+
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
       cmd.rect.x = rect->x + pad + lo * char_w;
@@ -242,6 +268,7 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
   /* Cursor bar (only when focused — check if cursor_x is in state) */
   if (state) {
     lk_value cx_v = lk_state_get(state, nid, LKS_CURSOR_X);
+
     if (cx_v.tag == UIV_I32) {
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
@@ -279,9 +306,11 @@ static lk_i32 delete_selection(lk_ui *ui, const lk_tree *t, lk_ix n,
 
   /* Build new string: text[0..lo] + text[hi..text_len] */
   new_len = text_len - (hi - lo);
+
   if (new_len < 0) {
     new_len = 0;
   }
+
   if (new_len > LK_TEXT_INPUT_MAX - 1) {
     new_len = LK_TEXT_INPUT_MAX - 1;
   }
@@ -342,6 +371,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
 
     /* Delete selection first */
     sel_cursor = delete_selection(ui, t, n, text.ptr, text_len);
+
     if (sel_cursor >= 0) {
       /* Re-read after deletion */
       text = get_text(t, n, st, NULL);
@@ -382,9 +412,11 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
     switch (kc) {
     case LKK_BACKSPACE: {
       lk_i32 sel_cursor = delete_selection(ui, t, n, text.ptr, text_len);
+
       if (sel_cursor >= 0) {
         return 1;
       }
+
       if (cursor > 0) {
         char buf[LK_TEXT_INPUT_MAX];
         lk_i32 new_len = text_len - 1;
@@ -401,6 +433,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         lk_state_set(st, nid, LKS_TEXT_BUF, v);
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(cursor - 1));
       }
+
       return 1;
     }
 
@@ -432,67 +465,83 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
       if (cursor > 0) {
         lk_i32 new_pos = cursor - 1;
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(new_pos));
+
         if (shift) {
           lk_i32 ss = get_sel_start(st, nid, text_len);
           lk_i32 se = get_sel_end(st, nid, text_len);
+
           if (ss == 0 && se == 0) {
             /* Start new selection from current cursor */
             lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(cursor));
           }
+
           lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(new_pos));
         } else {
           lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
           lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
         }
       }
+
       return 1;
 
     case LKK_RIGHT:
       if (cursor < text_len) {
         lk_i32 new_pos = cursor + 1;
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(new_pos));
+
         if (shift) {
           lk_i32 ss = get_sel_start(st, nid, text_len);
           lk_i32 se = get_sel_end(st, nid, text_len);
+
           if (ss == 0 && se == 0) {
             lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(cursor));
           }
+
           lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(new_pos));
         } else {
           lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
           lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
         }
       }
+
       return 1;
 
     case LKK_HOME:
       lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(0));
+
       if (shift) {
         lk_i32 ss = get_sel_start(st, nid, text_len);
         lk_i32 se = get_sel_end(st, nid, text_len);
+
         if (ss == 0 && se == 0) {
           lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(cursor));
         }
+
         lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
       } else {
         lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
         lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
       }
+
       return 1;
 
     case LKK_END:
       lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(text_len));
+
       if (shift) {
         lk_i32 ss = get_sel_start(st, nid, text_len);
         lk_i32 se = get_sel_end(st, nid, text_len);
+
         if (ss == 0 && se == 0) {
           lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(cursor));
         }
+
         lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(text_len));
       } else {
         lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
         lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
       }
+
       return 1;
 
     case LKK_A:
@@ -503,6 +552,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(text_len));
         return 1;
       }
+
       return 0;
 
     default: break;

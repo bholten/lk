@@ -3780,7 +3780,7 @@ static void test_state_remove_node_manual(void) {
 static void test_theme_create_destroy(void) {
   lk_theme *th;
   BEGIN_TEST("style: theme create/destroy");
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   CHECK(th != NULL);
   lk_theme_destroy(th);
   END_TEST();
@@ -3803,7 +3803,7 @@ static void test_style_resolve_basic(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, btn);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   CHECK(th != NULL);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
@@ -3847,7 +3847,7 @@ static void test_style_resolve_inheritance(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, lbl);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
   if (th && styles) {
@@ -3882,7 +3882,7 @@ static void test_style_resolve_tree_prop_override(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, btn);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
   if (th && styles) {
@@ -3910,7 +3910,7 @@ static void test_style_resolve_rule_order(void) {
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   lk_tree_set_root(t, w);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 10;
   s.bg.a = 255;
@@ -3951,7 +3951,7 @@ static void test_style_resolve_state_match(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, btn);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* normal button bg */
   memset(&s, 0, sizeof(s));
   s.bg.r = 60;
@@ -3994,7 +3994,7 @@ static void test_style_trace(void) {
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   lk_tree_set_root(t, w);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* rule 0: wildcard fg */
   memset(&s, 0, sizeof(s));
   s.fg.r = 220;
@@ -4054,7 +4054,7 @@ static void test_layout_with_resolved_styles(void) {
   lk_tree_append_child(t, col, btn);
 
   /* Custom theme with padding=20 on buttons */
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.padding = 20;
   s.bg.r = 60; s.bg.a = 255;
@@ -4134,7 +4134,7 @@ static void test_layout_style_tree_prop_override(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, btn);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.padding = 10;
   s.bg.r = 60; s.bg.a = 255;
@@ -4251,7 +4251,7 @@ static void test_style_resolve_with_tag(void) {
   lk_tree_append_child(t, w, btn);
   lk_tree_add_tag_s(t, btn, "danger");
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* base button bg */
   memset(&s, 0, sizeof(s));
   s.bg.r = 60;
@@ -4371,7 +4371,7 @@ static void test_ui_set_theme_custom(void) {
   ui = lk_ui_create(NULL);
 
   /* Create custom theme with red window bg */
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 255;
   s.bg.g = 0;
@@ -4401,6 +4401,76 @@ static void test_ui_set_theme_custom(void) {
   END_TEST();
 }
 
+static void test_ui_hover_state(void) {
+  lk_ui *ui;
+  lk_tree *tree;
+  lk_ix w, btn;
+  const lk_style *styles;
+  lk_theme *th;
+  lk_style s;
+
+  BEGIN_TEST("ui: hover_set populates HOVERED node state");
+
+  ui = lk_ui_create(NULL);
+
+  /* Add a hover rule: hovered buttons get bg=(100,200,100) */
+  th = lk_ui_theme(ui);
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 100;
+  s.bg.g = 200;
+  s.bg.b = 100;
+  s.bg.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, LK_NSTATE_HOVERED, &s, LK_SF_BG);
+
+  /* Build a frame */
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+
+  /* No hover: button should have default bg (60,60,60) */
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles[btn].bg.r == 60);
+  CHECK(styles[btn].bg.g == 60);
+
+  /* Set hover on button */
+  lk_hover_set(ui, lk_ui_tree(ui)->nodes[btn].id);
+
+  /* Rebuild same frame so resolve runs with hover state */
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles[btn].bg.r == 100);
+  CHECK(styles[btn].bg.g == 200);
+  CHECK(styles[btn].bg.b == 100);
+
+  /* Clear hover: should revert */
+  lk_hover_clear(ui);
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(tree, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, btn);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles[btn].bg.r == 60);
+  CHECK(styles[btn].bg.g == 60);
+
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
 /* ================================================================
  * Additional style resolution tests
  * ================================================================ */
@@ -4422,7 +4492,7 @@ static void test_style_bg_does_not_inherit(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, lbl);
 
-  th = lk_theme_default();
+  th = lk_theme_default(NULL, NULL, NULL);
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
   if (th && styles) {
@@ -4464,7 +4534,7 @@ static void test_style_font_inherits(void) {
   lk_tree_append_child(t, w, col);
   lk_tree_append_child(t, col, lbl);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* Set font on wildcard (all nodes) */
   memset(&s, 0, sizeof(s));
   s.font_id = 42;
@@ -4508,7 +4578,7 @@ static void test_style_kind_no_cross_match(void) {
   lk_tree_append_child(t, w, btn);
   lk_tree_append_child(t, w, lbl);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 80;
   s.bg.a = 255;
@@ -4549,7 +4619,7 @@ static void test_style_state_requires_all_bits(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, btn);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* base rule */
   memset(&s, 0, sizeof(s));
   s.bg.r = 50;
@@ -4605,7 +4675,7 @@ static void test_style_tag_no_match_untagged(void) {
   lk_tree_append_child(t, w, btn_plain);
   lk_tree_add_tag_s(t, btn_tagged, "primary");
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   /* base button */
   memset(&s, 0, sizeof(s));
   s.bg.r = 60;
@@ -4650,7 +4720,7 @@ static void test_style_gap_prop_override(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, col);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.gap = 8;
   lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_GAP);
@@ -4686,7 +4756,7 @@ static void test_style_align_justify_prop_override(void) {
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, col);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.align = LK_ALIGN_START;
   s.justify = LK_ALIGN_START;
@@ -4730,7 +4800,7 @@ static void test_render_uses_style_colors(void) {
   lk_tree_append_child(t, w, btn);
 
   /* Custom theme: button bg = (0, 200, 100, 255) */
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.bg.r = 0;
   s.bg.g = 200;
@@ -4809,7 +4879,7 @@ static void test_layout_style_gap(void) {
   lk_tree_append_child(t, col, lbl1);
   lk_tree_append_child(t, col, lbl2);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.gap = 20;
   lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_GAP);
@@ -4863,7 +4933,7 @@ static void test_style_wildcard_matches_all(void) {
   lk_tree_append_child(t, col, btn);
   lk_tree_append_child(t, col, sp);
 
-  th = lk_theme_new();
+  th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.fg.r = 123;
   s.fg.a = 255;
@@ -6113,6 +6183,7 @@ int main(void) {
   test_ui_owns_default_theme();
   test_ui_resolve_styles_headless();
   test_ui_set_theme_custom();
+  test_ui_hover_state();
 
   /* deferred prop append */
   printf("\nlk deferred prop tests:\n");

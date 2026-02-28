@@ -9,13 +9,22 @@
 
 /* ------- Text texture cache ------- */
 
-#define TEXT_CACHE_CAP 256 /* must be power of two */
+#define TEXT_CACHE_DEFAULT_CAP 2048
 
 typedef struct text_cache_entry {
   lk_u32 str_id; /* 0 = empty slot */
   SDL_Texture *tex;
   int w, h;
+  lk_u32 last_frame; /* frame counter when last accessed */
 } text_cache_entry;
+
+typedef struct text_cache_stats {
+  lk_u32 hits;
+  lk_u32 misses;
+  lk_u32 evictions;
+  lk_u32 probe_steps_total;
+  lk_u32 probe_steps_max;
+} text_cache_stats;
 
 struct lk_window {
   SDL_Window *sdl_win;
@@ -25,7 +34,11 @@ struct lk_window {
   lk_rect *rects;
   lk_u32 rects_cap;
   lk_render_list rl;
-  text_cache_entry text_cache[TEXT_CACHE_CAP];
+  text_cache_entry *text_cache;
+  lk_u32 text_cache_cap;
+  lk_u32 frame_counter;
+  text_cache_stats cache_stats;
+  int warned_probe;
   int width;
   int height;
   int running;
@@ -79,96 +92,150 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
   }
 }
 
+static lk_u32 next_pow2(lk_u32 v) {
+  v--;
+  v |= v >> 1;
+  v |= v >> 2;
+  v |= v >> 4;
+  v |= v >> 8;
+  v |= v >> 16;
+  v++;
+  return v;
+}
+
 static void text_cache_clear(lk_window *win) {
-  int i;
-  for (i = 0; i < TEXT_CACHE_CAP; i++) {
+  lk_u32 i;
+
+  if (!win->text_cache) {
+    return;
+  }
+
+  for (i = 0; i < win->text_cache_cap; i++) {
     if (win->text_cache[i].tex) {
       SDL_DestroyTexture(win->text_cache[i].tex);
     }
-
-    win->text_cache[i].str_id = 0;
-    win->text_cache[i].tex = NULL;
   }
+
+  memset(win->text_cache, 0, sizeof(text_cache_entry) * win->text_cache_cap);
 }
 
 /* Look up or create a cached text texture.  Returns the texture, sets
  * out_w/out_h to the texture dimensions.  Returns NULL on failure.
+ *
+ * On miss: probes for a match or empty slot, tracking the stalest entry
+ * seen.  Inserts into the empty slot if found, otherwise evicts the
+ * stalest entry in the probe chain.  Cache always owns the returned
+ * texture — caller must not destroy it.
  */
 static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
                                    const char *text, lk_color color, int *out_w,
                                    int *out_h) {
-  unsigned slot = str_id & (TEXT_CACHE_CAP - 1);
-  int probes = 0;
+  lk_u32 mask = win->text_cache_cap - 1;
+  lk_u32 slot = str_id & mask;
+  lk_u32 probes = 0;
+  lk_u32 stalest_slot = slot;
+  lk_u32 stalest_frame = (lk_u32)~0u;
+  int found_empty = 0;
+  lk_u32 empty_slot = 0;
 
-  /* Linear probe for existing entry */
-  while (probes < TEXT_CACHE_CAP) {
+  /* Linear probe: look for match or empty slot */
+  while (probes < win->text_cache_cap) {
     text_cache_entry *e = &win->text_cache[slot];
+    probes++;
+
     if (e->str_id == 0) {
-      /* Empty slot — not cached.  Render and insert. */
-      SDL_Color c;
-      SDL_Surface *surf;
-      SDL_Texture *tex;
-      int w, h;
-
-      c.r = color.r;
-      c.g = color.g;
-      c.b = color.b;
-      c.a = color.a;
-      surf = TTF_RenderText_Blended(win->font, text, 0, c);
-
-      if (!surf) {
-        return NULL;
-      }
-
-      tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
-      w = surf->w;
-      h = surf->h;
-      SDL_DestroySurface(surf);
-
-      if (!tex) {
-        return NULL;
-      }
-
-      e->str_id = str_id;
-      e->tex = tex;
-      e->w = w;
-      e->h = h;
-
-      *out_w = w;
-      *out_h = h;
-      return tex;
+      empty_slot = slot;
+      found_empty = 1;
+      break;
     }
 
     if (e->str_id == str_id) {
       /* Cache hit */
+      e->last_frame = win->frame_counter;
+      win->cache_stats.hits++;
+      win->cache_stats.probe_steps_total += probes;
+
+      if (probes > win->cache_stats.probe_steps_max) {
+        win->cache_stats.probe_steps_max = probes;
+      }
+
       *out_w = e->w;
       *out_h = e->h;
       return e->tex;
     }
 
-    slot = (slot + 1) & (TEXT_CACHE_CAP - 1);
-    probes++;
+    /* Track stalest entry in probe chain for potential eviction */
+    if (e->last_frame < stalest_frame) {
+      stalest_frame = e->last_frame;
+      stalest_slot = slot;
+    }
+
+    slot = (slot + 1) & mask;
   }
 
-  /* Cache full — render without caching (should be rare) */
+  /* Cache miss — render the texture and insert */
+  win->cache_stats.misses++;
+  win->cache_stats.probe_steps_total += probes;
+
+  if (probes > win->cache_stats.probe_steps_max) {
+    win->cache_stats.probe_steps_max = probes;
+  }
+
+  /* One-time warning for long probe chains */
+  if (!win->warned_probe && win->cache_stats.probe_steps_max > 32) {
+    SDL_Log("lk: text cache max probe reached %u (cap=%u). "
+            "Consider increasing text_cache_cap.",
+            win->cache_stats.probe_steps_max, win->text_cache_cap);
+    win->warned_probe = 1;
+  }
+
   {
     SDL_Color c;
     SDL_Surface *surf;
     SDL_Texture *tex;
+    text_cache_entry *target;
+    int w, h;
 
     c.r = color.r;
     c.g = color.g;
     c.b = color.b;
     c.a = color.a;
     surf = TTF_RenderText_Blended(win->font, text, 0, c);
+
     if (!surf) {
       return NULL;
     }
 
     tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
-    *out_w = surf->w;
-    *out_h = surf->h;
+    w = surf->w;
+    h = surf->h;
     SDL_DestroySurface(surf);
+
+    if (!tex) {
+      return NULL;
+    }
+
+    if (found_empty) {
+      target = &win->text_cache[empty_slot];
+    } else {
+      /* Evict stalest entry in probe chain */
+      target = &win->text_cache[stalest_slot];
+
+      if (target->tex) {
+        SDL_DestroyTexture(target->tex);
+      }
+
+      win->cache_stats.evictions++;
+    }
+
+    target->str_id = str_id;
+    target->tex = tex;
+    target->w = w;
+    target->h = h;
+    target->last_frame = win->frame_counter;
+
+    *out_w = w;
+    *out_h = h;
     return tex;
   }
 }
@@ -233,11 +300,38 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
     /* NULL font is OK — falls back to stub measurer */
   }
 
+  /* Allocate text cache */
+  {
+    lk_u32 cache_cap = cfg->text_cache_cap > 0
+                           ? next_pow2((lk_u32)cfg->text_cache_cap)
+                           : TEXT_CACHE_DEFAULT_CAP;
+    win->text_cache = (text_cache_entry *)lk_sys_alloc(
+        NULL, (lk_u32)(sizeof(text_cache_entry) * cache_cap));
+
+    if (!win->text_cache) {
+      if (win->font) {
+        TTF_CloseFont(win->font);
+      }
+
+      SDL_DestroyRenderer(win->sdl_ren);
+      SDL_DestroyWindow(win->sdl_win);
+      TTF_Quit();
+      SDL_Quit();
+      lk_sys_dealloc(NULL, win);
+      return NULL;
+    }
+
+    memset(win->text_cache, 0, sizeof(text_cache_entry) * cache_cap);
+    win->text_cache_cap = cache_cap;
+  }
+
   SDL_StartTextInput(win->sdl_win);
 
   win->ui = lk_ui_create(NULL);
 
   if (!win->ui) {
+    lk_sys_dealloc(NULL, win->text_cache);
+
     if (win->font) {
       TTF_CloseFont(win->font);
     }
@@ -260,6 +354,11 @@ void lk_window_destroy(lk_window *win) {
   }
 
   text_cache_clear(win);
+
+  if (win->text_cache) {
+    lk_sys_dealloc(NULL, win->text_cache);
+  }
+
   lk_render_list_destroy(&win->rl);
 
   if (win->rects) {
@@ -500,6 +599,13 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           lk_ev.target = lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
                                      lk_ev.data.pointer.y);
         }
+
+        /* Update hover state */
+        if (lk_ev.target != 0) {
+          lk_hover_set(win->ui, cur->nodes[lk_ev.target].id);
+        } else {
+          lk_hover_clear(win->ui);
+        }
       } else if (lk_ev.type == LK_EVENT_WHEEL) {
         if (have_rects) {
           lk_ev.target =
@@ -614,6 +720,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     }
 
     SDL_RenderPresent(win->sdl_ren);
+    win->frame_counter++;
     SDL_Delay(16);
   }
 }

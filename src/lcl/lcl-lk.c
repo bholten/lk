@@ -1284,6 +1284,20 @@ static int c_lk_theme_rule(lcl_interp *interp, int argc, lcl_value **argv,
     }
   }
 
+  /* scrollbar_track: {r g b} or {r g b a} */
+  if (lcl_dict_get(dict, "scrollbar_track", &v) == LCL_OK) {
+    if (parse_color_list(v, &style.scrollbar_track)) {
+      field_mask |= LK_SF_SCROLLBAR_TRACK;
+    }
+  }
+
+  /* scrollbar_thumb: {r g b} or {r g b a} */
+  if (lcl_dict_get(dict, "scrollbar_thumb", &v) == LCL_OK) {
+    if (parse_color_list(v, &style.scrollbar_thumb)) {
+      field_mask |= LK_SF_SCROLLBAR_THUMB;
+    }
+  }
+
   th = lk_ui_theme(ui);
 
   if (!th) {
