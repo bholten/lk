@@ -27,6 +27,20 @@ int main(int argc, char **argv) {
   lcl_register_core(interp);
   lcl_register_lk(interp);
 
+#ifdef LK_DSL_PATH
+  {
+    lcl_value *dsl_result = NULL;
+    int dsl_rc = lcl_eval_file(interp, LK_DSL_PATH, &dsl_result);
+    if (dsl_result) {
+      lcl_ref_dec(dsl_result);
+    }
+    if (dsl_rc != LCL_RC_OK) {
+      fprintf(stderr, "Warning: failed to load DSL prelude (%s)\n",
+              LK_DSL_PATH);
+    }
+  }
+#endif
+
   rc = lcl_eval_file(interp, argv[1], &result);
 
   if (rc != LCL_RC_OK) {
