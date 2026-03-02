@@ -111,6 +111,8 @@ if(LK_BUILD_LCL)
       ${CMAKE_CURRENT_SOURCE_DIR}/include
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
+    target_compile_definitions(lcl_lk_main PRIVATE
+      LK_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
     target_compile_options(lcl_lk_main PRIVATE -Wall -Wextra)
     set_target_properties(lcl_lk_main PROPERTIES
       C_STANDARD 11
