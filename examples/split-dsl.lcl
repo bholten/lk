@@ -2,12 +2,12 @@
 ;;
 ;; Demonstrates:
 ;;   - split_h: two panes side-by-side with a draggable vertical divider
-;;   - -split_ratio: initial divider position in per-mille (300 = 30%)
+;;   - split_ratio prop: initial divider position in per-mille (300 = 30%)
 ;;   - Drag the divider band to resize; both panes keep >= 40 px
 
 let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 
-app "Split Panes" -font $font -font_size 16 -width 800 -height 500 {
+app "Split Panes" #{font $font font_size 16 width 800 height 500} {
 
     theme {
         rule window #{bg (25 25 35)}
@@ -18,20 +18,20 @@ app "Split Panes" -font $font -font_size 16 -width 800 -height 500 {
     }
 
     view {
-        split_h "main_split" -split_ratio 300 {
-            column "sidebar" -padding 12 -gap 8 {
-                label "nav_title" -text "Navigation"
-                label "nav_home" -text "* Home"
-                label "nav_files" -text "* Files"
-                label "nav_search" -text "* Search"
-                label "nav_settings" -text "* Settings"
-                label "nav_hint" -text "(drag the divider ->)"
+        split_h "main_split" #{split_ratio 300} {
+            column "sidebar" #{padding 12 gap 8} {
+                label "nav_title" #{text "Navigation"}
+                label "nav_home" #{text "* Home"}
+                label "nav_files" #{text "* Files"}
+                label "nav_search" #{text "* Search"}
+                label "nav_settings" #{text "* Settings"}
+                label "nav_hint" #{text "(drag the divider ->)"}
             }
 
-            scroll "content" -padding 8 -gap 4 {
+            scroll "content" #{padding 8 gap 4} {
                 var i 0
                 while [< $i 30] {
-                    label "line_$i" -text "Content line $i — resize me with the divider"
+                    label "line_$i" #{text "Content line $i — resize me with the divider"}
                     set! i [+ $i 1]
                 }
             }

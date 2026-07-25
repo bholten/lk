@@ -1573,11 +1573,13 @@ static void test_split_ratio_prop_lcl(void) {
 }
 
 /* ============================================================================
- * Layer-2 DSL tests (lib/lk-dsl.lcl) — DSL v2 stage 1 harness.
+ * Layer-2 DSL tests (lib/lk-dsl.lcl) — DSL v2 harness.
  *
- * These pin the behavior of the CURRENT -flag syntax; the stage-3
- * syntax migration must preserve everything asserted here except where
- * a comment explicitly marks a WART that v2 is required to change.
+ * These pin the v2 props-dict syntax (docs/dsl-v2.md §3 candidate A):
+ * `kind id ?props-dict? ?body-block?`, disambiguated by value shape
+ * (dict = props, anything else = body).  Unknown prop keys are hard
+ * errors carrying the widget id and known-key list; malformed trailing
+ * args (numeric, stale -flag, second dict) are hard errors too.
  *
  * The `app` proc is NOT tested here: it creates an SDL window and runs
  * the event loop (lk::window_create / lk::window_run), which needs a
@@ -1621,6 +1623,33 @@ static void dsl_begin(lcl_interp *interp) {
     "set! lk_dsl::_parent_stack ()",
     &r);
   if (r) lcl_ref_dec(r);
+}
+
+/* Eval expecting an error: asserts eval fails and that the interp
+ * error message contains each given substring (NULL subs are skipped). */
+static void eval_expect_err(lcl_interp *interp, const char *src,
+                            const char *sub1, const char *sub2,
+                            const char *sub3) {
+  lcl_value *r = NULL;
+  int rc = lcl_eval_string(interp, src, &r);
+
+  if (r) lcl_ref_dec(r);
+  if (rc == LCL_RC_OK) {
+    if (g_cur_ok)
+      printf("FAIL\n");
+    printf("    expected error but eval succeeded\n    src: %.80s\n", src);
+    g_cur_ok = 0;
+  } else {
+    const char *msg = lcl_interp_error_msg(interp);
+    CHECK(msg != NULL);
+    if (msg) {
+      if (sub1) CHECK(strstr(msg, sub1) != NULL);
+      if (sub2) CHECK(strstr(msg, sub2) != NULL);
+      if (sub3) CHECK(strstr(msg, sub3) != NULL);
+      if (!g_cur_ok)
+        printf("    error message was: %s\n", msg);
+    }
+  }
 }
 
 /* Fetch the lk_tree* behind the script-side "$t". */
@@ -1726,16 +1755,16 @@ static void test_dsl_widget_kinds(void) {
   END_TEST();
 }
 
-static void test_dsl_flag_text_dims(void) {
+static void test_dsl_props_text_dims(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -text/-w/-h flags land as props");
+  BEGIN_TEST("dsl: text/w/h props land as props");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp, "label f_lab -text \"Hello\" -w 120 -h 40", &r);
+  eval_ok(interp, "label f_lab #{text \"Hello\" w 120 h 40}", &r);
   if (r) lcl_ref_dec(r);
 
   t = dsl_tree(interp);
@@ -1752,16 +1781,16 @@ static void test_dsl_flag_text_dims(void) {
   END_TEST();
 }
 
-static void test_dsl_flag_layout(void) {
+static void test_dsl_props_layout(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -padding/-gap/-align/-justify flags");
+  BEGIN_TEST("dsl: padding/gap/align/justify props");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp, "column f_col -padding 8 -gap 4 -align center -justify end",
+  eval_ok(interp, "column f_col #{padding 8 gap 4 align center justify end}",
           &r);
   if (r) lcl_ref_dec(r);
 
@@ -1780,19 +1809,19 @@ static void test_dsl_flag_layout(void) {
   END_TEST();
 }
 
-static void test_dsl_flag_bools(void) {
+static void test_dsl_props_bools(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -focusable/-disabled/-hidden flags");
+  BEGIN_TEST("dsl: focusable/disabled/hidden props");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
   eval_ok(interp,
-    "button f_btn -focusable 1 -disabled 1\n"
-    "column f_hid -hidden 1\n"
-    "button f_off -focusable 0",
+    "button f_btn #{focusable 1 disabled 1}\n"
+    "column f_hid #{hidden 1}\n"
+    "button f_off #{focusable 0}",
     &r);
   if (r) lcl_ref_dec(r);
 
@@ -1813,18 +1842,18 @@ static void test_dsl_flag_bools(void) {
   END_TEST();
 }
 
-static void test_dsl_flag_tooltip_split_ratio(void) {
+static void test_dsl_props_tooltip_split_ratio(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -tooltip/-split_ratio flags");
+  BEGIN_TEST("dsl: tooltip/split_ratio props");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
   eval_ok(interp,
-    "button f_tip -tooltip \"Saves the file\"\n"
-    "split_h f_spl -split_ratio 300",
+    "button f_tip #{tooltip \"Saves the file\"}\n"
+    "split_h f_spl #{split_ratio 300}",
     &r);
   if (r) lcl_ref_dec(r);
 
@@ -1849,11 +1878,11 @@ static void test_dsl_tag(void) {
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -tag applies a tag");
+  BEGIN_TEST("dsl: tag prop applies a tag");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp, "button g_tag -tag primary", &r);
+  eval_ok(interp, "button g_tag #{tag primary}", &r);
   if (r) lcl_ref_dec(r);
 
   t = dsl_tree(interp);
@@ -1874,11 +1903,11 @@ static void test_dsl_present_scalar(void) {
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -present (ptype value) attaches presentation");
+  BEGIN_TEST("dsl: present (ptype value) attaches presentation");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp, "button g_p1 -present (item 42)", &r);
+  eval_ok(interp, "button g_p1 #{present (item 42)}", &r);
   if (r) lcl_ref_dec(r);
 
   t = dsl_tree(interp);
@@ -1906,11 +1935,11 @@ static void test_dsl_present_multiarg(void) {
   lcl_value *r = NULL;
   lk_tree *t;
 
-  BEGIN_TEST("dsl: -present list shape (action (remove_row 3))");
+  BEGIN_TEST("dsl: present list shape (action (remove_row 3))");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp, "button g_p2 -present (action (remove_row 3))", &r);
+  eval_ok(interp, "button g_p2 #{present (action (remove_row 3))}", &r);
   if (r) lcl_ref_dec(r);
 
   t = dsl_tree(interp);
@@ -1946,10 +1975,10 @@ static void test_dsl_nesting(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "column outer -gap 2 {\n"
+    "column outer #{gap 2} {\n"
     "    row mid {\n"
-    "        label leaf1 -text a\n"
-    "        label leaf2 -text b\n"
+    "        label leaf1 #{text a}\n"
+    "        label leaf2 #{text b}\n"
     "    }\n"
     "}",
     &r);
@@ -1977,66 +2006,47 @@ static void test_dsl_nesting(void) {
   END_TEST();
 }
 
-static void test_dsl_wart_unknown_flag_ignored(void) {
+static void test_dsl_unknown_prop_errors(void) {
   lcl_interp *interp;
-  lcl_value *r = NULL;
-  lk_tree *t;
 
-  /* WART (pinned current behavior): _apply_flags silently drops any
-   * flag not in the _prop_keys whitelist — `-bogus 42` vanishes with
-   * no error (this is how -tooltip/-hidden were lost pre-whitelist).
-   * DSL v2 stage 3 MUST turn unknown keys into a hard error carrying
-   * the widget id and the known-key list; flip this test then. */
-  BEGIN_TEST("dsl: WART unknown flag silently ignored");
+  /* Flipped WART (DSL v2): unknown prop keys are hard errors carrying
+   * the widget id and the known-key list — the v1 whitelist silently
+   * swallowed them (how -tooltip/-hidden were lost pre-whitelist). */
+  BEGIN_TEST("dsl: unknown prop key is a hard error");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp, "label w_unk -bogus 42 -text ok", &r);
-  if (r) lcl_ref_dec(r);
-
-  t = dsl_tree(interp);
-  CHECK(t != NULL);
-  if (t) {
-    lk_ix n = dsl_find(t, "w_unk");
-    CHECK(n != 0);
-    CHECK(strcmp(lk_node_text_cstr(t, n), "ok") == 0);
-    /* only the text prop landed; -bogus left no trace */
-    CHECK(t->nodes[n].props_len == 1);
-  }
+  eval_expect_err(interp, "label w_unk #{bogus 42 text ok}",
+                  "w_unk", "unknown prop 'bogus'", "(known:");
 
   lcl_interp_free(interp);
   END_TEST();
 }
 
-static void test_dsl_wart_trailing_flag_boolean(void) {
+static void test_dsl_bad_trailing_arg_errors(void) {
   lcl_interp *interp;
-  lcl_value *r = NULL;
-  lk_tree *t;
 
-  /* WART (pinned current behavior): a trailing flag with no value is
-   * parsed as boolean 1 by _parse_flags — `-focusable` becomes
-   * focusable=1, and even `-w` becomes w=1.  DSL v2 stage 3 replaces
-   * flag parsing with a props dict, making this shape inexpressible
-   * (an odd-length dict literal is a parse error). */
-  BEGIN_TEST("dsl: WART trailing flag becomes boolean 1");
+  /* Flipped WART (DSL v2): the trailing-flag-becomes-boolean shape is
+   * gone with flag parsing.  Malformed trailing args now error cleanly:
+   * a lone numeric arg (not a dict, not a plausible body), a stale
+   * v1 `-flag`, a non-dict where props are expected, a second dict
+   * where the body should be, and >2 trailing args.  A lone non-dict,
+   * non-numeric, non-dash arg is treated as the body block (blocks are
+   * plain strings in Lcl — not distinguishable by value shape). */
+  BEGIN_TEST("dsl: malformed trailing args error cleanly");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp,
-    "button w_tr1 -focusable\n"
-    "label w_tr2 -w",
-    &r);
-  if (r) lcl_ref_dec(r);
-
-  t = dsl_tree(interp);
-  CHECK(t != NULL);
-  if (t) {
-    lk_ix b = dsl_find(t, "w_tr1");
-    lk_ix l = dsl_find(t, "w_tr2");
-    CHECK(b != 0 && l != 0);
-    CHECK(lk_node_prop_bool(t, b, UIP_FOCUSABLE) == 1);
-    CHECK(lk_node_prop_i32(t, l, UIP_W, -1) == 1);
-  }
+  eval_expect_err(interp, "button w_tr1 42",
+                  "w_tr1", "expected a props dict", NULL);
+  eval_expect_err(interp, "label w_tr2 -w",
+                  "w_tr2", "'-flag' syntax was removed", NULL);
+  eval_expect_err(interp, "button w_tr3 42 { label x }",
+                  "w_tr3", "expected a props dict", NULL);
+  eval_expect_err(interp, "row w_tr4 #{gap 2} #{gap 3}",
+                  "w_tr4", "body must be a block", NULL);
+  eval_expect_err(interp, "row w_tr5 #{gap 2} { label y } extra",
+                  "w_tr5", "too many arguments", NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -2047,7 +2057,7 @@ static void test_dsl_theme_rules(void) {
   lcl_value *r = NULL;
   lk_ui *ui;
 
-  BEGIN_TEST("dsl: theme + rule with -tag/-state resolve");
+  BEGIN_TEST("dsl: theme + rule selector dicts resolve");
   interp = make_dsl_interp();
   dsl_begin(interp);
 
@@ -2056,13 +2066,13 @@ static void test_dsl_theme_rules(void) {
    * hovered state at resolve time). */
   eval_ok(interp,
     "theme {\n"
-    "    rule button -tag primary #{bg (10 20 30)}\n"
+    "    rule button #{tag primary} #{bg (10 20 30)}\n"
     "    rule * #{fg (200 201 202)}\n"
-    "    rule button -state hovered #{bg (1 2 3)}\n"
+    "    rule button #{state hovered} #{bg (1 2 3)}\n"
     "}\n"
     "let w [lk::node $t rw window]\n"
     "lk::set_root $t $w\n"
-    "let b [button pb -tag primary]\n"
+    "let b [button pb #{tag primary}]\n"
     "lk::append_child $t $w $b\n"
     "lk::end_frame $u",
     &r);
@@ -2185,9 +2195,9 @@ static void test_dsl_frame_view_rebuild(void) {
     "let u [lk::ui_create]\n"
     "set! lk_dsl::_ui $u\n"
     "view {\n"
-    "    column main -padding 4 {\n"
-    "        label greet -text Hi\n"
-    "        button ok -text OK\n"
+    "    column main #{padding 4} {\n"
+    "        label greet #{text Hi}\n"
+    "        button ok #{text OK}\n"
     "    }\n"
     "}\n"
     "let t [lk::begin_frame $u]\n"
@@ -2240,6 +2250,73 @@ static void test_dsl_frame_view_rebuild(void) {
   if (ui) {
     const lk_tree *cur = lk_ui_tree(ui);
     CHECK(lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "greet")) != 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_props_dict_variable(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  /* DSL v2 exit criterion: a props dict built in a variable and
+   * shared across two widgets works. */
+  BEGIN_TEST("dsl: props dict in a variable, shared");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "let compact #{padding 2 gap 2}\n"
+    "column v1 $compact\n"
+    "column v2 $compact",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix a = dsl_find(t, "v1");
+    lk_ix b = dsl_find(t, "v2");
+    CHECK(a != 0 && b != 0);
+    CHECK(lk_node_prop_i32(t, a, UIP_PADDING, -1) == 2);
+    CHECK(lk_node_prop_i32(t, a, UIP_GAP, -1) == 2);
+    CHECK(lk_node_prop_i32(t, b, UIP_PADDING, -1) == 2);
+    CHECK(lk_node_prop_i32(t, b, UIP_GAP, -1) == 2);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_props_dict_merge(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  /* Composition: Dict::merge of a base props dict with an override
+   * (later dict wins on key collisions). */
+  BEGIN_TEST("dsl: Dict::merge base props + override");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "let base #{text Base w 100}\n"
+    "button v3 [Dict::merge $base #{w 150 tooltip Hi}]",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "v3");
+    const char *tip;
+    CHECK(n != 0);
+    CHECK(strcmp(lk_node_text_cstr(t, n), "Base") == 0);
+    CHECK(lk_node_prop_i32(t, n, UIP_W, -1) == 150);
+    tip = dsl_prop_str(t, n, UIP_TOOLTIP);
+    CHECK(tip != NULL && strcmp(tip, "Hi") == 0);
   }
 
   lcl_interp_free(interp);
@@ -2311,21 +2388,23 @@ int main(void) {
   test_split_kinds();
   test_split_ratio_prop_lcl();
 
-  /* Layer-2 DSL (lib/lk-dsl.lcl) — stage 1 harness */
+  /* Layer-2 DSL (lib/lk-dsl.lcl) — v2 props-dict harness */
   test_dsl_widget_kinds();
-  test_dsl_flag_text_dims();
-  test_dsl_flag_layout();
-  test_dsl_flag_bools();
-  test_dsl_flag_tooltip_split_ratio();
+  test_dsl_props_text_dims();
+  test_dsl_props_layout();
+  test_dsl_props_bools();
+  test_dsl_props_tooltip_split_ratio();
   test_dsl_tag();
   test_dsl_present_scalar();
   test_dsl_present_multiarg();
   test_dsl_nesting();
-  test_dsl_wart_unknown_flag_ignored();
-  test_dsl_wart_trailing_flag_boolean();
+  test_dsl_unknown_prop_errors();
+  test_dsl_bad_trailing_arg_errors();
   test_dsl_theme_rules();
   test_dsl_translators_keybindings();
   test_dsl_on_dispatch();
+  test_dsl_props_dict_variable();
+  test_dsl_props_dict_merge();
   test_dsl_frame_view_rebuild();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);

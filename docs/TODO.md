@@ -344,10 +344,20 @@ decides **how it looks**.
 - [x] **DSL library** (`lib/lk-dsl.lcl`)
   - Pure-Lcl declarative sugar over Layer 1 bindings.
   - Kind names as commands (`column`, `button`, ...), nesting implies parent-child,
-    `-flag value` sets props. `app` top-level entry, `view` captures frame body,
+    a props dict sets props (`kind id ?props-dict? ?body?` — DSL v2; the
+    original `-flag value` syntax was replaced 2026-07-25, see
+    `docs/dsl-v2.md`). `app` top-level entry, `view` captures frame body,
     `theme`/`rule` for styling, `translator`/`on` for commands.
   - Auto-loaded by `lcl_lk_main` via `LK_DSL_PATH` compile definition.
   - `examples/hello-dsl.lcl` demonstrates full rewrite (~60 lines vs ~90 Layer 1).
+- [x] ~~**DSL debt: silent flag swallowing / flag-parsing warts**~~
+  Resolved by DSL v2 stage 3 (2026-07-25, `docs/dsl-v2.md`):
+  `_parse_flags`/`_apply_flags`/`_prop_keys` deleted.  Unknown prop
+  keys are now hard errors carrying the widget id and known-key list
+  (no whitelist to fall behind); trailing-flag-becomes-boolean and the
+  `app` nested-if flag parser are gone (malformed trailing args error
+  cleanly).  Props dicts are first-class values (shareable,
+  `Dict::merge`-composable); theme rules take selector dicts.
 
 
 ## Up Next
@@ -450,10 +460,10 @@ None block shipping the budget app; revisit as the app surfaces them.
 - **Dropdown popup doesn't scroll.**  Long option lists past
   `DROPDOWN_POPUP_MAX_HEIGHT` (240 px) hide overflow invisibly.  Fix:
   either enable scroll inside popup, or raise the cap and let it clip.
-- **`-value` flag on dropdown is not wired.**  Initial selection defaults
+- **`value` prop on dropdown is not wired.**  Initial selection defaults
   to the first option.  To preset selection, the app must call
   `lk::state_set $ui <dd_id> LKS_SELECTED_INDEX <i>` — awkward.  Fix:
-  DSL-level `-value "Food"` that does the text-to-index lookup and
+  DSL-level `value "Food"` prop that does the text-to-index lookup and
   sets state.
 - **`lk_v_none()` leaves the union uninitialized.**  Reading `.as.i` on a
   NONE value yields garbage.  Low-impact (callers should check `.tag`)

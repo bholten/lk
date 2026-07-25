@@ -1,18 +1,22 @@
-;; lk-dsl.lcl — Layer 2 declarative DSL for lk
+;; lk-dsl.lcl — Layer 2 declarative DSL for lk (DSL v2, props dicts)
 ;;
 ;; Wraps Layer 1 lk:: procs with declarative syntax:
 ;;   - Kind names (column, button, ...) are commands
 ;;   - Nesting implies parent-child
-;;   - -flag value sets props
+;;   - Props are passed as a single dict: kind id ?props-dict? ?body-block?
 ;;
 ;; Usage:
-;;   app "My App" -font "/path/to/font.ttf" {
+;;   app "My App" #{font "/path/to/font.ttf" font_size 16} {
 ;;       view {
-;;           column "main" -padding 24 {
-;;               label "title" -text "Hello!"
+;;           column "main" #{padding 24} {
+;;               label "title" #{text "Hello!"}
 ;;           }
 ;;       }
 ;;   }
+;;
+;; Props dicts are ordinary values: build them in variables, share them
+;; across widgets, compose with [Dict::merge $base $override].
+;; Unknown prop keys are hard errors (see _apply_props).
 
 namespace lk_dsl {
 
@@ -24,73 +28,90 @@ namespace lk_dsl {
     var _view_body {}
     var _cmd_handlers #{}
 
-    ;; ---- Flag parsing ----
-    ;; Walks args list for -key value pairs. Last non-flag arg is the body.
-    ;; Returns #{id <id> flags <dict> body <block>}
-    proc _parse_flags {id args} {
-        var flags #{}
+    ;; ---- Prop schema ----
+    ;; Every key a widget props dict may carry.  `tag` and `present` are
+    ;; handled specially (lk::tag / lk::present); the rest map to
+    ;; lk::prop.  Values are 1 for now; per-kind validation may hang
+    ;; richer descriptors here later.
+    let _prop_schema #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1 split_ratio 1 tag 1 present 1}
+    let _known_props [String::join [Dict::keys $_prop_schema] ", "]
+
+    ;; ---- Trailing-arg disambiguation ----
+    ;; kind id ?props-dict? ?body-block? — both optional, disambiguated
+    ;; by shape: a dict value is props, anything else is the body block.
+    ;; Strictness (v2): more than two trailing args is an error; with
+    ;; two, the first must be a dict and the second must not be; a lone
+    ;; numeric arg (e.g. `button "x" 42`) or a stale `-flag` arg is an
+    ;; error.  A lone non-dict, non-numeric, non-dash arg is the body
+    ;; (blocks are plain strings in Lcl — not distinguishable by type).
+    ;; Returns #{props <dict> body <block>}.
+    proc _split_args {kind id rest} {
+        var props #{}
         var body {}
-        var i 0
-        let n [len $args]
+        let n [len $rest]
 
-        while [< $i $n] {
-            let arg [get $args $i]
+        if [> $n 2] {
+            error "$kind \"$id\": too many arguments (expected: $kind id ?props-dict? ?body-block?)"
+        }
 
-            if [== [String::index $arg 0] -] {
-                ;; Flag: strip the leading - and take next arg as value
-                let key [String::range $arg 1 [len $arg]]
-
-                if [< [+ $i 1] $n] {
-                    set! flags [put $flags $key [get $args [+ $i 1]]]
-                    set! i [+ $i 2]
-                } else {
-                    ;; Trailing flag with no value — treat as boolean true
-                    set! flags [put $flags $key 1]
-                    set! i [+ $i 1]
-                }
-            } else {
-                if [== $i [- $n 1]] {
-                    ;; Last non-flag arg is the body block
-                    set! body $arg
-                } else {
-                    ;; Unexpected positional arg — ignore
-                }
-                set! i [+ $i 1]
+        if [== $n 2] {
+            set! props [get $rest 0]
+            set! body [get $rest 1]
+            if [not [dict? $props]] {
+                error "$kind \"$id\": expected a props dict (#{...}) before the body block"
+            }
+            if [dict? $body] {
+                error "$kind \"$id\": body must be a block, got a second dict"
             }
         }
 
-        return #{id $id flags $flags body $body}
+        if [== $n 1] {
+            let a [get $rest 0]
+            if [dict? $a] {
+                set! props $a
+            } else {
+                if [not [empty? $a]] {
+                    if [number? $a] {
+                        error "$kind \"$id\": expected a props dict (#{...}) or body block, got '$a'"
+                    }
+                    if [== [String::index $a 0] -] {
+                        error "$kind \"$id\": '-flag' syntax was removed; use a props dict (#{...})"
+                    }
+                }
+                set! body $a
+            }
+        }
+
+        return #{props $props body $body}
     }
 
     ;; ---- Prop application ----
-    ;; Known prop keys that map to lk::prop
-    let _prop_keys #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1 split_ratio 1}
-
-    proc _apply_flags {node flags} {
-        let pk $_prop_keys
-        foreach key [Dict::keys $flags] {
-            let val [get $flags $key]
+    ;; Walks the props dict.  Unknown keys are hard errors carrying the
+    ;; widget id and the known-key list — no silent swallowing.
+    proc _apply_props {kind id node props} {
+        foreach key [Dict::keys $props] {
+            if [not [has? $_prop_schema $key]] {
+                error "$kind \"$id\": unknown prop '$key' (known: $_known_props)"
+            }
+            let val [get $props $key]
 
             if [== $key tag] {
                 lk::tag $_tree $node $val
             } else {
                 if [== $key present] {
-                    ;; -present (ptype value) — a list of two elements
+                    ;; present (ptype value-or-list) — a list of two elements
                     lk::present $_tree $node [get $val 0] [get $val 1]
                 } else {
-                    if [has? $pk $key] {
-                        lk::prop $_tree $node $key $val
-                    }
-                    ;; Unknown keys silently ignored
+                    lk::prop $_tree $node $key $val
                 }
             }
         }
     }
 
     ;; ---- Node creation ----
-    proc _make_node {kind parsed} {
-        let id [get $parsed id]
-        let flags [get $parsed flags]
+    proc _make_node {kind id rest} {
+        let parsed [_split_args $kind $id $rest]
+        let props [get $parsed props]
         let body [get $parsed body]
 
         let node [lk::node $_tree $id $kind]
@@ -102,8 +123,8 @@ namespace lk_dsl {
             lk::append_child $_tree $parent $node
         }
 
-        ;; Apply flags as props
-        _apply_flags $node $flags
+        ;; Apply props
+        _apply_props $kind $id $node $props
 
         ;; If body present, push this node as parent, eval body, pop
         if [not [empty? $body]] {
@@ -117,82 +138,92 @@ namespace lk_dsl {
 
     ;; ---- Widget kind procs ----
 
-    proc column {id *args} {
-        _make_node column [_parse_flags $id $args]
+    proc column {id *rest} {
+        _make_node column $id $rest
     }
 
-    proc row {id *args} {
-        _make_node row [_parse_flags $id $args]
+    proc row {id *rest} {
+        _make_node row $id $rest
     }
 
-    proc label {id *args} {
-        _make_node label [_parse_flags $id $args]
+    proc label {id *rest} {
+        _make_node label $id $rest
     }
 
-    proc button {id *args} {
-        _make_node button [_parse_flags $id $args]
+    proc button {id *rest} {
+        _make_node button $id $rest
     }
 
-    proc text_input {id *args} {
-        _make_node text_input [_parse_flags $id $args]
+    proc text_input {id *rest} {
+        _make_node text_input $id $rest
     }
 
-    proc spacer {id *args} {
-        _make_node spacer [_parse_flags $id $args]
+    proc spacer {id *rest} {
+        _make_node spacer $id $rest
     }
 
-    proc scroll {id *args} {
-        _make_node scroll [_parse_flags $id $args]
+    proc scroll {id *rest} {
+        _make_node scroll $id $rest
     }
 
-    proc dropdown {id *args} {
-        _make_node dropdown [_parse_flags $id $args]
+    proc dropdown {id *rest} {
+        _make_node dropdown $id $rest
     }
 
-    proc option {id *args} {
-        _make_node option [_parse_flags $id $args]
+    proc option {id *rest} {
+        _make_node option $id $rest
     }
 
-    proc split_h {id *args} {
-        _make_node split_h [_parse_flags $id $args]
+    proc split_h {id *rest} {
+        _make_node split_h $id $rest
     }
 
-    proc split_v {id *args} {
-        _make_node split_v [_parse_flags $id $args]
+    proc split_v {id *rest} {
+        _make_node split_v $id $rest
     }
 
     ;; ---- Theme ----
 
     proc theme {body} {
-        ;; Parse a rule inside theme body:
-        ;; rule <kind> ?-tag <tag>? ?-state <state>? <style_dict>
-        ;; kind "*" matches any
-        proc rule {kind *args} {
+        ;; rule <kind> ?selector-dict? style-dict
+        ;; kind "*" matches any.  One dict arg = style; two = selector
+        ;; then style.  Selector keys: tag, state (unknown keys error).
+        proc rule {kind *rest} {
             var tag {}
             var state {}
-            var style_dict #{}
-            var i 0
-            let n [len $args]
+            var style #{}
+            let n [len $rest]
 
-            while [< $i $n] {
-                let arg [get $args $i]
-
-                if [== $arg -tag] {
-                    set! tag [get $args [+ $i 1]]
-                    set! i [+ $i 2]
-                } else {
-                    if [== $arg -state] {
-                        set! state [get $args [+ $i 1]]
-                        set! i [+ $i 2]
-                    } else {
-                        ;; Must be the style dict (last positional)
-                        set! style_dict $arg
-                        set! i [+ $i 1]
+            if [== $n 1] {
+                set! style [get $rest 0]
+            } else {
+                if [== $n 2] {
+                    let sel [get $rest 0]
+                    if [not [dict? $sel]] {
+                        error "rule $kind: selector must be a dict (#{tag <tag> state <state>})"
                     }
+                    foreach k [Dict::keys $sel] {
+                        if [== $k tag] {
+                            set! tag [get $sel $k]
+                        } else {
+                            if [== $k state] {
+                                set! state [get $sel $k]
+                            } else {
+                                error "rule $kind: unknown selector key '$k' (known: tag, state)"
+                            }
+                        }
+                    }
+                    set! style [get $rest 1]
+                } else {
+                    error "rule $kind: expected ?selector-dict? style-dict"
                 }
             }
 
-            lk::theme_rule $_ui $kind $tag $state $style_dict
+            if [not [dict? $style]] {
+                error "rule $kind: style must be a dict (#{bg (r g b) ...})"
+            }
+
+            lk::theme_rule $_ui $kind $tag $state $style
         }
 
         eval $body
@@ -243,7 +274,7 @@ namespace lk_dsl {
         let name [get $cmd name]
         if [has? $_cmd_handlers $name] {
             let handler [get $_cmd_handlers $name]
-            $handler $cmd
+            apply $handler $cmd
         }
     }
 
@@ -264,39 +295,47 @@ namespace lk_dsl {
     }
 
     ;; ---- Top-level: app ----
-    ;; app <title> ?-width N? ?-height N? ?-font path? ?-font_size N? { body }
-    proc app {title *args} {
-        ;; Parse app-level flags
+    ;; app <title> ?#{width N height N font <path> font_size N}? { body }
+    proc app {title *rest} {
+        var props #{}
+        var body {}
         var width 800
         var height 600
         var font {}
         var font_size 16
-        var body {}
-        var i 0
-        let n [len $args]
+        let n [len $rest]
 
-        while [< $i $n] {
-            let arg [get $args $i]
+        if [or [< $n 1] [> $n 2]] {
+            error "app \"$title\": expected app title ?props-dict? body-block"
+        }
+        if [== $n 2] {
+            set! props [get $rest 0]
+            set! body [get $rest 1]
+            if [not [dict? $props]] {
+                error "app \"$title\": expected a props dict (#{...}) before the body block"
+            }
+        } else {
+            set! body [get $rest 0]
+        }
+        if [dict? $body] {
+            error "app \"$title\": body must be a block, got a dict"
+        }
 
-            if [== $arg -width] {
-                set! width [get $args [+ $i 1]]
-                set! i [+ $i 2]
+        foreach key [Dict::keys $props] {
+            let val [get $props $key]
+            if [== $key width] {
+                set! width $val
             } else {
-                if [== $arg -height] {
-                    set! height [get $args [+ $i 1]]
-                    set! i [+ $i 2]
+                if [== $key height] {
+                    set! height $val
                 } else {
-                    if [== $arg -font] {
-                        set! font [get $args [+ $i 1]]
-                        set! i [+ $i 2]
+                    if [== $key font] {
+                        set! font $val
                     } else {
-                        if [== $arg -font_size] {
-                            set! font_size [get $args [+ $i 1]]
-                            set! i [+ $i 2]
+                        if [== $key font_size] {
+                            set! font_size $val
                         } else {
-                            ;; Last non-flag arg is the body
-                            set! body $arg
-                            set! i [+ $i 1]
+                            error "app \"$title\": unknown key '$key' (known: width, height, font, font_size)"
                         }
                     }
                 }

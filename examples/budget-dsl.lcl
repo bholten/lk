@@ -41,7 +41,7 @@ proc remove_row_by_id {rid} {
     set! rows $out
 }
 
-app "Budget" -font $font -font_size 16 -width 720 -height 500 {
+app "Budget" #{font $font font_size 16 width 720 height 500} {
 
     theme {
         rule window #{bg (22 25 32)}
@@ -49,14 +49,14 @@ app "Budget" -font $font -font_size 16 -width 720 -height 500 {
         rule column #{padding 24 gap 12}
         rule row #{gap 8}
         rule button #{bg (50 55 70) padding 8 border_width 1 border_color (80 85 100)}
-        rule button -state hovered #{bg (70 75 90) border_color (120 125 150)}
-        rule button -tag danger #{bg (120 40 40) border_color (160 70 70)}
-        rule button -tag primary #{bg (45 90 180) border_color (70 130 220)}
+        rule button #{state hovered} #{bg (70 75 90) border_color (120 125 150)}
+        rule button #{tag danger} #{bg (120 40 40) border_color (160 70 70)}
+        rule button #{tag primary} #{bg (45 90 180) border_color (70 130 220)}
         rule text_input #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
-        rule text_input -state focused #{border_color (80 140 220)}
+        rule text_input #{state focused} #{border_color (80 140 220)}
         rule dropdown #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
-        rule dropdown -state hovered #{border_color (120 125 150)}
-        rule dropdown -state focused #{border_color (80 140 220)}
+        rule dropdown #{state hovered} #{border_color (120 125 150)}
+        rule dropdown #{state focused} #{border_color (80 140 220)}
         rule option #{bg (35 40 50) padding 4}
     }
 
@@ -86,33 +86,35 @@ app "Budget" -font $font -font_size 16 -width 720 -height 500 {
 
     view {
         column "main" {
-            label "title" -text "Budget Tracker"
-            label "total" -text "Total: $[total]"
+            label "title" #{text "Budget Tracker"}
+            label "total" #{text "Total: $[total]"}
 
-            row "header" -gap 8 {
-                label "h_name" -text "Item" -w 180
-                label "h_amt" -text "Amount" -w 100
-                label "h_cat" -text "Category" -w 140
-                label "h_rm" -text "" -w 40
+            row "header" #{gap 8} {
+                label "h_name" #{text "Item" w 180}
+                label "h_amt" #{text "Amount" w 100}
+                label "h_cat" #{text "Category" w 140}
+                label "h_rm" #{text "" w 40}
             }
 
             foreach r $rows {
                 let rid [get $r id]
-                row "r_$rid" -gap 8 {
-                    text_input "name_$rid" -text [get $r name] -w 180 -focusable 1 -present (field_edit ($rid name))
-                    text_input "amt_$rid" -text [get $r amount] -w 100 -focusable 1 -present (field_edit ($rid amount))
-                    dropdown "cat_$rid" -w 140 -focusable 1 -present (field_edit ($rid category)) {
-                        option "opt_food_$rid" -text "Food"
-                        option "opt_transport_$rid" -text "Transport"
-                        option "opt_rent_$rid" -text "Rent"
-                        option "opt_other_$rid" -text "Other"
+                row "r_$rid" #{gap 8} {
+                    text_input "name_$rid" #{text [get $r name] w 180 focusable 1
+                                             present (field_edit ($rid name))}
+                    text_input "amt_$rid" #{text [get $r amount] w 100 focusable 1
+                                            present (field_edit ($rid amount))}
+                    dropdown "cat_$rid" #{w 140 focusable 1 present (field_edit ($rid category))} {
+                        option "opt_food_$rid" #{text "Food"}
+                        option "opt_transport_$rid" #{text "Transport"}
+                        option "opt_rent_$rid" #{text "Rent"}
+                        option "opt_other_$rid" #{text "Other"}
                     }
-                    button "rm_$rid" -text "X" -w 40 -tag danger -present (action (remove_row $rid))
+                    button "rm_$rid" #{text "X" w 40 tag danger present (action (remove_row $rid))}
                 }
             }
 
-            row "controls" -gap 12 {
-                button "add" -text "+ Add Row" -tag primary -present (action (add_row))
+            row "controls" #{gap 12} {
+                button "add" #{text "+ Add Row" tag primary present (action (add_row))}
             }
         }
     }
