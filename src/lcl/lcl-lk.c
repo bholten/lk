@@ -1,9 +1,10 @@
 /*
  * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
  *
- * Exposes 28 procs in the "lk" namespace for building UI trees,
- * managing frames, commands, translators, state, focus, and interning.
- * SDL window procs are conditionally compiled when LK_HAVE_SDL is set.
+ * Exposes 32 procs in the "lk" namespace (26 core + 6 SDL) for
+ * building UI trees, managing frames, commands, translators, state,
+ * focus, interning, and windows/fonts.  SDL procs (window_* and
+ * register_font) are conditionally compiled when LK_HAVE_SDL is set.
  *
  * C89 (matches lk + lcl).
  */
@@ -1392,13 +1393,32 @@ static int c_lk_theme_rule(lcl_interp *interp, int argc, lcl_value **argv,
     }
   }
 
-  /* font_size: int */
+  /* font_id: int (from lk::register_font; 0 = default face) */
+  if (lcl_dict_get(dict, "font_id", &v) == LCL_OK) {
+    long iv;
+    if (lcl_value_to_int(v, &iv) != LCL_OK || iv < 0) {
+      lcl_set_error(interp,
+                    "lk::theme_rule: font_id must be a non-negative int");
+
+      return LCL_RC_ERR;
+    }
+
+    style.font_id = (lk_u32)iv;
+    field_mask |= LK_SF_FONT_ID;
+  }
+
+  /* font_size: int (0 = face default size) */
   if (lcl_dict_get(dict, "font_size", &v) == LCL_OK) {
     long iv;
-    if (lcl_value_to_int(v, &iv) == LCL_OK) {
-      style.font_size = (lk_i32)iv;
-      field_mask |= LK_SF_FONT_SIZE;
+    if (lcl_value_to_int(v, &iv) != LCL_OK || iv < 0) {
+      lcl_set_error(interp,
+                    "lk::theme_rule: font_size must be a non-negative int");
+
+      return LCL_RC_ERR;
     }
+
+    style.font_size = (lk_i32)iv;
+    field_mask |= LK_SF_FONT_SIZE;
   }
 
   /* border_width: int */
@@ -1999,6 +2019,35 @@ static int c_lk_window_set_event_handler(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* lk::register_font [win, path] -> font_id (int; 0 = failure).
+ * Mirrors the C contract: bad arguments are errors, but an unreadable
+ * path returns 0 rather than erroring. */
+static int c_lk_register_font(lcl_interp *interp, int argc, lcl_value **argv,
+                              lcl_value **out) {
+  struct lcl_lk_window *lw;
+  const char *path;
+  lk_u16 id;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::register_font: expected 2 arguments (win, path)");
+
+    return LCL_RC_ERR;
+  }
+
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
+
+  path = lcl_value_to_string(argv[1]);
+  id = lk_window_register_font(lw->win, path);
+
+  *out = lcl_int_new((long)id);
+
+  return LCL_RC_OK;
+}
+
 #endif /* LK_HAVE_SDL */
 
 /* ============================================================================
@@ -2132,5 +2181,7 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def(ns, "window_set_event_handler",
              lcl_c_proc_new("lk::window_set_event_handler",
                             c_lk_window_set_event_handler));
+  lcl_ns_def(ns, "register_font",
+             lcl_c_proc_new("lk::register_font", c_lk_register_font));
 #endif
 }
