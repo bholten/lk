@@ -908,8 +908,7 @@ static lk_rect *run_layout(lk_tree *t, lk_i32 vw, lk_i32 vh) {
   lk_rect *rects;
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
-  cfg.measure_ud = NULL;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = vw;
   cfg.viewport_h = vh;
 
@@ -1338,7 +1337,7 @@ static void test_layout_empty_tree(void) {
   BEGIN_TEST("layout: empty tree (no root)");
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
 
@@ -4444,7 +4443,7 @@ static void test_layout_with_resolved_styles(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -4526,7 +4525,7 @@ static void test_layout_style_tree_prop_override(void) {
     CHECK_EQ((unsigned)styles[btn].padding, 5u);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -5201,7 +5200,7 @@ static void test_render_uses_style_colors(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -5268,7 +5267,7 @@ static void test_layout_style_gap(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -6061,8 +6060,7 @@ static lk_rect *run_layout_with_state(lk_tree *t, lk_i32 vw, lk_i32 vh,
   lk_rect *rects;
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
-  cfg.measure_ud = NULL;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = vw;
   cfg.viewport_h = vh;
   cfg.state = state;
@@ -6534,7 +6532,7 @@ static void test_border_render_four_fill_rects(void) {
     styles[btn].border_color.a = 255;
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -6594,7 +6592,7 @@ static void test_border_inset_layout(void) {
     styles[col].align = LK_ALIGN_STRETCH;
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 400;
     cfg.viewport_h = 300;
     cfg.styles = styles;
@@ -6645,7 +6643,7 @@ static void test_border_zero_no_extra_commands(void) {
     styles[btn].border_width = 0;
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -6711,7 +6709,7 @@ static void test_border_theme_integration(void) {
     lk_style_resolve(th, t, NULL, styles);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.measure_text = lk_measure_text_stub;
+    cfg.text = lk_text_backend_stub();
     cfg.viewport_w = 800;
     cfg.viewport_h = 600;
     cfg.styles = styles;
@@ -7164,7 +7162,7 @@ static void test_dropdown_overlay_hit_test(void) {
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   lk_ui_resolve_styles(ui);
@@ -7212,7 +7210,7 @@ static void test_dropdown_click_outside_closes(void) {
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   lk_ui_resolve_styles(ui);
@@ -7251,7 +7249,7 @@ static void test_dropdown_overlay_render_when_expanded(void) {
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   lk_ui_resolve_styles(ui);
@@ -7487,7 +7485,7 @@ static void test_text_input_cursor_only_when_focused(void) {
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   cfg.state = lk_ui_state(ui);
@@ -7542,7 +7540,7 @@ static void test_dropdown_padding_click_stays_open(void) {
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   lk_ui_resolve_styles(ui);
@@ -7619,7 +7617,7 @@ static void test_dropdown_hover_follows_pointer(void) {
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
-  cfg.measure_text = lk_measure_text_stub;
+  cfg.text = lk_text_backend_stub();
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   lk_ui_resolve_styles(ui);
@@ -7674,6 +7672,194 @@ static void test_dropdown_hover_follows_pointer(void) {
 /* ================================================================
  * Main
  * ================================================================ */
+
+/* ---- text backend contract tests (stage A) ----
+ *
+ * Stub metrics: 8 px advance per codepoint, h=16, baseline=12,
+ * line_height=16, independent of font_id/font_size.
+ */
+
+static void test_text_stub_measure_x_agree(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  lk_text_metrics m;
+  lk_str run;
+
+  BEGIN_TEST("text stub: x_from_index(len) == measure().w");
+
+  /* ASCII run: 5 codepoints -> 40 px */
+  run = lk_str_c("hello");
+  tb->measure(tb->ud, run, 0, 0, &m);
+  CHECK_EQ((unsigned)m.w, 40u);
+  CHECK_EQ((unsigned)m.h, 16u);
+  CHECK_EQ((unsigned)m.baseline, 12u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, run.len),
+           (unsigned)m.w);
+
+  /* Empty run */
+  run = lk_str_c("");
+  tb->measure(tb->ud, run, 0, 0, &m);
+  CHECK_EQ((unsigned)m.w, 0u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 0), 0u);
+
+  /* Multibyte run: "a" + e-acute (2 bytes) + CJK (3 bytes) = 3 cp */
+  run = lk_str_c("a\xC3\xA9\xE6\x97\xA5");
+  tb->measure(tb->ud, run, 0, 0, &m);
+  CHECK_EQ((unsigned)m.w, 24u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, run.len),
+           (unsigned)m.w);
+
+  /* Metrics independent of font_id/font_size */
+  run = lk_str_c("hello");
+  tb->measure(tb->ud, run, 7, 99, &m);
+  CHECK_EQ((unsigned)m.w, 40u);
+  CHECK_EQ((unsigned)m.h, 16u);
+  CHECK_EQ((unsigned)tb->line_height(tb->ud, 0, 0), 16u);
+  CHECK_EQ((unsigned)tb->line_height(tb->ud, 7, 99), 16u);
+
+  END_TEST();
+}
+
+static void test_text_stub_x_from_index_multibyte(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  /* bytes: 'a' [0], e-acute [1..2], CJK [3..5]; len 6, 3 codepoints */
+  lk_str run = lk_str_c("a\xC3\xA9\xE6\x97\xA5");
+
+  BEGIN_TEST("text stub: x_from_index counts codepoints");
+
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 0), 0u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 1), 8u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 3), 16u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 6), 24u);
+
+  /* Mid-codepoint indices snap DOWN to the previous boundary */
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 2), 8u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 4), 16u);
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 5), 16u);
+
+  /* Out-of-range clamps to len */
+  CHECK_EQ((unsigned)tb->x_from_index(tb->ud, run, 0, 0, 99), 24u);
+
+  END_TEST();
+}
+
+static void test_text_stub_index_from_x_rounding(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  lk_str run;
+
+  BEGIN_TEST("text stub: index_from_x nearest boundary");
+
+  /* ASCII "ab": boundaries at byte 0 (x=0), 1 (x=8), 2 (x=16) */
+  run = lk_str_c("ab");
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, -5), 0u); /* clamp low */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 0), 0u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 3), 0u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 4), 1u); /* tie rounds up */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 11), 1u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 12), 2u); /* tie rounds up */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 100), 2u); /* clamp high */
+
+  /* Multibyte: e-acute [0..1], CJK [2..4]; boundaries at bytes 0, 2, 5 */
+  run = lk_str_c("\xC3\xA9\xE6\x97\xA5");
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 4), 2u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 7), 2u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 11), 2u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 12), 5u);
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 100), 5u); /* clamp to len */
+
+  END_TEST();
+}
+
+static void test_text_stub_register_font_ids(void) {
+  const lk_text_backend *tb = lk_text_backend_stub();
+  lk_u16 a;
+  lk_u16 b;
+
+  BEGIN_TEST("text stub: register_font increasing ids");
+
+  a = tb->register_font(tb->ud, "fake-a.ttf");
+  b = tb->register_font(tb->ud, "fake-b.ttf");
+  CHECK(a >= 1);
+  CHECK_EQ((unsigned)b, (unsigned)(a + 1));
+
+  END_TEST();
+}
+
+static void test_render_text_carries_font(void) {
+  lk_ui *ui;
+  lk_tree *tree;
+  lk_theme *th;
+  lk_style s;
+  lk_ix w, lbl;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  const lk_style *styles;
+  lk_u32 i;
+  int found;
+
+  BEGIN_TEST("render: DRAW_TEXT carries style font_id/size");
+
+  ui = lk_ui_create(NULL);
+
+  /* Theme rule: labels use font_id 3 at size 24 */
+  th = lk_ui_theme(ui);
+  memset(&s, 0, sizeof(s));
+  s.font_id = 3;
+  s.font_size = 24;
+  lk_theme_add_rule(th, UIK_LABEL, 0, 0, &s,
+                    LK_SF_FONT_ID | LK_SF_FONT_SIZE);
+
+  tree = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);
+  lbl = lk_tree_add_node_s(tree, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(tree, lbl, UIP_TEXT, lk_v_cstr(tree->intern, "Hi"));
+  lk_tree_set_root(tree, w);
+  lk_tree_append_child(tree, w, lbl);
+  lk_ui_end_frame(ui);
+
+  lk_ui_resolve_styles(ui);
+  styles = lk_ui_styles(ui);
+  CHECK(styles != NULL);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.styles = styles;
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, styles, NULL, &rl);
+
+  found = 0;
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+      found = 1;
+      CHECK_EQ((unsigned)rl.cmds[i].font_id, 3u);
+      CHECK_EQ((unsigned)rl.cmds[i].font_size, 24u);
+    }
+  }
+  CHECK(found);
+
+  /* Without styles (fallback path): default theme sets no fonts,
+   * so DRAW_TEXT carries 0/0 */
+  lk_render_build(lk_ui_tree(ui), rects, NULL, NULL, &rl);
+  found = 0;
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+      found = 1;
+      CHECK_EQ((unsigned)rl.cmds[i].font_id, 0u);
+      CHECK_EQ((unsigned)rl.cmds[i].font_size, 0u);
+    }
+  }
+  CHECK(found);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
 
 int main(void) {
   printf("lk diff tests:\n");
@@ -7946,6 +8132,14 @@ int main(void) {
   test_dropdown_overlay_hit_test();
   test_dropdown_click_outside_closes();
   test_dropdown_overlay_render_when_expanded();
+
+  /* text backend contract (stage A) */
+  printf("\nlk text backend tests:\n");
+  test_text_stub_measure_x_agree();
+  test_text_stub_x_from_index_multibyte();
+  test_text_stub_index_from_x_rounding();
+  test_text_stub_register_font_ids();
+  test_render_text_carries_font();
 
   /* bug-fix regressions */
   printf("\nlk bug-fix regression tests:\n");

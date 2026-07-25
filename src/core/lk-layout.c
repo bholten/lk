@@ -4,18 +4,6 @@
 #include "lk-memory.h"
 #include <lk.h>
 
-void lk_measure_text_stub(void *ud, lk_str text, lk_i32 *out_w, lk_i32 *out_h) {
-  (void)ud;
-
-  if (out_w) {
-    *out_w = (lk_i32)text.len * 8;
-  }
-
-  if (out_h) {
-    *out_h = 16;
-  }
-}
-
 static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
                          lk_size *sizes) {
   lk_ix *stack;
@@ -162,7 +150,7 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
 int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
   lk_size *sizes;
 
-  if (!t || !cfg || !rects || !cfg->measure_text) {
+  if (!t || !cfg || !rects) {
     return 0;
   }
 

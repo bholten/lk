@@ -20,6 +20,7 @@ set(LK_SOURCES
   src/core/lk-state.c
 
   src/core/lk-layout.c
+  src/core/lk-text-stub.c
   src/core/lk-render.c
   src/core/lk-event.c
   src/core/lk-style.c

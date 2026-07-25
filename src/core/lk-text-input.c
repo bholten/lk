@@ -170,12 +170,26 @@ static void ensure_text_buf(lk_ui *ui, const lk_tree *t, lk_ix n) {
 
 /* ---- Measure ---- */
 
+/* Measure a run through cfg->text with the node's resolved font
+ * (0/0 defaults when no styles).  Zero metrics when no backend. */
+static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
+                        lk_text_metrics *m) {
+  m->w = 0;
+  m->h = 0;
+  m->baseline = 0;
+
+  if (cfg->text) {
+    lk_u16 font_id = cfg->styles ? (lk_u16)cfg->styles[n].font_id : 0;
+    lk_u16 font_size = cfg->styles ? (lk_u16)cfg->styles[n].font_size : 0;
+    cfg->text->measure(cfg->text->ud, run, font_id, font_size, m);
+  }
+}
+
 static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
                                const lk_layout_cfg *cfg, lk_i32 *out_w,
                                lk_i32 *out_h) {
   lk_str text;
-  lk_i32 tw = 0;
-  lk_i32 th = 0;
+  lk_text_metrics m;
   lk_i32 pad;
   lk_i32 bw;
   lk_i32 inset;
@@ -189,28 +203,29 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
   inset = pad + bw;
 
   text = get_text(t, n, cfg->state, NULL);
-  cfg->measure_text(cfg->measure_ud, text, &tw, &th);
+  measure_run(cfg, n, text, &m);
 
   /* Minimum width when text is empty */
-  if (tw < 100) {
-    tw = 100;
+  if (m.w < 100) {
+    m.w = 100;
   }
 
-  *out_w = tw + inset * 2;
-  *out_h = th + inset * 2;
+  *out_w = m.w + inset * 2;
+  *out_h = m.h + inset * 2;
 
-  /* Compute cursor pixel offset and store in state */
+  /* Compute cursor pixel offset and store in state.
+   * Prefix re-measure for now; migrating to x_from_index is stage C
+   * of the text-contract plan. */
   if (cfg->state) {
     nid = t->nodes[n].id;
     {
       lk_i32 cursor_pos = get_cursor(cfg->state, nid, (lk_i32)text.len);
-      lk_i32 cx = 0;
-      lk_i32 cy = 0;
+      lk_text_metrics cm;
       lk_str sub;
       sub.ptr = text.ptr;
       sub.len = (lk_u32)cursor_pos;
-      cfg->measure_text(cfg->measure_ud, sub, &cx, &cy);
-      lk_state_set(cfg->state, nid, LKS_CURSOR_X, lk_v_i32(cx));
+      measure_run(cfg, n, sub, &cm);
+      lk_state_set(cfg->state, nid, LKS_CURSOR_X, lk_v_i32(cm.w));
     }
   }
 }
@@ -284,6 +299,8 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.h = rect->h - inset * 2;
     cmd.color = style->fg;
     cmd.str_id = sid;
+    cmd.font_id = (lk_u16)style->font_id;
+    cmd.font_size = (lk_u16)style->font_size;
     lk_render_list_push(out, cmd);
   }
 

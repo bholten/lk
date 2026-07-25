@@ -112,18 +112,47 @@ static lk_u32 selected_text_id(const lk_tree *t, lk_ix n,
   return lk_node_text_id(t, n);
 }
 
-/* Row-height of an option: max(measured-text-height, min) + pad*2. */
+/* Measure a run through cfg->text with the node's resolved font
+ * (0/0 defaults when no styles).  Zero metrics when no backend. */
+static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
+                        lk_i32 *out_w, lk_i32 *out_h) {
+  lk_text_metrics m;
+
+  m.w = 0;
+  m.h = 0;
+  m.baseline = 0;
+
+  if (cfg && cfg->text) {
+    lk_u16 font_id = cfg->styles ? (lk_u16)cfg->styles[n].font_id : 0;
+    lk_u16 font_size = cfg->styles ? (lk_u16)cfg->styles[n].font_size : 0;
+    cfg->text->measure(cfg->text->ud, run, font_id, font_size, &m);
+  }
+
+  *out_w = m.w;
+  *out_h = m.h;
+}
+
+/* Row-height of an option: max(measured-text-height, min) + pad*2.
+ * No node context here, so probes with the default face (0/0). */
 static lk_i32 option_row_height(const lk_layout_cfg *cfg) {
   lk_i32 th = 0;
   lk_i32 tw = 0;
   lk_str probe;
+  lk_text_metrics m;
 
   probe.ptr = "Xg";
   probe.len = 2;
 
-  if (cfg && cfg->measure_text) {
-    cfg->measure_text(cfg->measure_ud, probe, &tw, &th);
+  if (cfg && cfg->text) {
+    m.w = 0;
+    m.h = 0;
+    m.baseline = 0;
+    cfg->text->measure(cfg->text->ud, probe, 0, 0, &m);
+    tw = m.w;
+    th = m.h;
   }
+
+  (void)tw;
 
   if (th < DROPDOWN_MIN_OPTION_H - DROPDOWN_OPTION_PAD_Y * 2) {
     th = DROPDOWN_MIN_OPTION_H - DROPDOWN_OPTION_PAD_Y * 2;
@@ -150,9 +179,7 @@ static void measure_dropdown(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
   sid = selected_text_id(t, n, cfg->state);
   s = lk_intern_str(t->intern, sid);
-  if (cfg->measure_text) {
-    cfg->measure_text(cfg->measure_ud, s, &tw, &th);
-  }
+  measure_run(cfg, n, s, &tw, &th);
 
   if (tw < 80) {
     tw = 80; /* sensible minimum when no selection */
@@ -204,6 +231,8 @@ static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.h = rect->h - inset * 2;
     cmd.color = style->fg;
     cmd.str_id = sid;
+    cmd.font_id = (lk_u16)style->font_id;
+    cmd.font_size = (lk_u16)style->font_size;
     lk_render_list_push(out, cmd);
   }
 
@@ -625,6 +654,8 @@ int lk_render_build_overlays(const lk_tree *t, const lk_rect *rects,
           cmd.rect.h = r.h - DROPDOWN_OPTION_PAD_Y * 2;
           if (opt_style) {
             cmd.color = opt_style->fg;
+            cmd.font_id = (lk_u16)opt_style->font_id;
+            cmd.font_size = (lk_u16)opt_style->font_size;
           } else {
             cmd.color.r = 220;
             cmd.color.g = 220;

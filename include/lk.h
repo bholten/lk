@@ -658,12 +658,40 @@ typedef struct lk_size {
   lk_i32 w, h;
 } lk_size;
 
-typedef void (*lk_measure_text_fn)(void *ud, lk_str text, lk_i32 *out_w,
-                                   lk_i32 *out_h);
+/**
+ * Text backend contract — see docs/text-contract.md §4.1.
+ *
+ * Contract rules:
+ * - run is a single-line UTF-8 run (no newlines; caller splits).
+ * - byte_ix in/out values are always codepoint-boundary-aligned.
+ *   index_from_x snaps to the NEAREST boundary (not floor) and clamps
+ *   out-of-range x to 0 / run.len.
+ * - font_id = 0 means the default face; font_size = 0 means the
+ *   face's default size.
+ * - x_from_index(run, run.len) equals measure(run).w.
+ * - register_font returns a new font_id (>= 1); 0 is both "default
+ *   face" and the failure sentinel.
+ **/
+
+typedef struct lk_text_metrics {
+  lk_i32 w, h;     /* tight box of the run */
+  lk_i32 baseline; /* top of box -> baseline, px */
+} lk_text_metrics;
+
+typedef struct lk_text_backend {
+  void *ud;
+  void (*measure)(void *ud, lk_str run, lk_u16 font_id, lk_u16 font_size,
+                  lk_text_metrics *out);
+  lk_i32 (*x_from_index)(void *ud, lk_str run, lk_u16 font_id,
+                         lk_u16 font_size, lk_u32 byte_ix);
+  lk_u32 (*index_from_x)(void *ud, lk_str run, lk_u16 font_id,
+                         lk_u16 font_size, lk_i32 x);
+  lk_i32 (*line_height)(void *ud, lk_u16 font_id, lk_u16 font_size);
+  lk_u16 (*register_font)(void *ud, const char *path);
+} lk_text_backend;
 
 typedef struct lk_layout_cfg {
-  lk_measure_text_fn measure_text;
-  void *measure_ud;
+  const lk_text_backend *text;   /* NULL = all text measures as 0x0 */
   lk_i32 viewport_w, viewport_h;
   const struct lk_style *styles; /* NULL = read tree props directly */
   lk_state *state;               /* NULL ok; widgets may use for cursor etc. */
@@ -675,8 +703,12 @@ typedef struct lk_layout_cfg {
  */
 int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects);
 
-/* Stub text measurer: 8px per char, 16px tall. */
-void lk_measure_text_stub(void *ud, lk_str text, lk_i32 *out_w, lk_i32 *out_h);
+/* Deterministic monospace stub backend for headless tests:
+ * 8 px advance per CODEPOINT (not per byte), h = 16, baseline = 12,
+ * line_height = 16, independent of font_id/font_size (all faces and
+ * sizes identical — documented stub behavior).  register_font hands
+ * out 1, 2, 3, ... from a process-global counter. */
+const lk_text_backend *lk_text_backend_stub(void);
 
 /* Convenience: layout with stub text measurer (for bindings). */
 int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,
@@ -761,7 +793,9 @@ typedef struct lk_render_cmd {
   lk_u8 op; /* lk_render_op */
   lk_rect rect;
   lk_color color;
-  lk_u32 str_id; /* for DRAW_TEXT: interned string ID */
+  lk_u32 str_id;     /* for DRAW_TEXT: interned string ID */
+  lk_u16 font_id;    /* for DRAW_TEXT: face from resolved style (0 = default) */
+  lk_u16 font_size;  /* for DRAW_TEXT: size from resolved style (0 = default) */
 } lk_render_cmd;
 
 typedef struct lk_render_list {

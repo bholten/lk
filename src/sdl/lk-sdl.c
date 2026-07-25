@@ -36,6 +36,7 @@ struct lk_window {
   SDL_Window *sdl_win;
   SDL_Renderer *sdl_ren;
   TTF_Font *font;
+  lk_text_backend text_backend; /* ud = font; see sdl_text_* */
   lk_ui *ui;
   lk_rect *rects;
   lk_u32 rects_cap;
@@ -81,23 +82,22 @@ static void sdl_global_release(void) {
   }
 }
 
-static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
-                             lk_i32 *out_h) {
-  TTF_Font *font = (TTF_Font *)ud;
+/* ------- Text backend (minimal adapter over the single global font;
+ * the real TTF_TextEngine implementation is stage B of the
+ * text-contract plan) ------- */
+
+/* Measure text.ptr[0..len) with the window's single TTF_Font.
+ * font_id/font_size are ignored until stage B (one global font). */
+static void sdl_text_size(TTF_Font *font, lk_str text, int *out_w, int *out_h) {
   int w = 0;
   int h = 0;
   char stack_buf[256];
   char *buf = stack_buf;
 
+  *out_w = 0;
+  *out_h = 0;
+
   if (!font || text.len == 0) {
-    if (out_w) {
-      *out_w = 0;
-    }
-
-    if (out_h) {
-      *out_h = 0;
-    }
-
     return;
   }
 
@@ -106,14 +106,6 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
     buf = (char *)malloc(text.len + 1);
 
     if (!buf) {
-      if (out_w) {
-        *out_w = 0;
-      }
-
-      if (out_h) {
-        *out_h = 0;
-      }
-
       return;
     }
   }
@@ -127,24 +119,108 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
     free(buf);
   }
 
-  if (out_w) {
-    *out_w = (lk_i32)w;
-  }
-
-  if (out_h) {
-    *out_h = (lk_i32)h;
-  }
+  *out_w = w;
+  *out_h = h;
 }
 
-static lk_u32 next_pow2(lk_u32 v) {
-  v--;
-  v |= v >> 1;
-  v |= v >> 2;
-  v |= v >> 4;
-  v |= v >> 8;
-  v |= v >> 16;
-  v++;
-  return v;
+static void sdl_text_measure(void *ud, lk_str run, lk_u16 font_id,
+                             lk_u16 font_size, lk_text_metrics *out) {
+  TTF_Font *font = (TTF_Font *)ud;
+  int w;
+  int h;
+
+  (void)font_id;
+  (void)font_size;
+
+  if (!out) {
+    return;
+  }
+
+  sdl_text_size(font, run, &w, &h);
+  out->w = (lk_i32)w;
+  out->h = (lk_i32)h;
+  out->baseline = font ? (lk_i32)TTF_GetFontAscent(font) : 0;
+}
+
+static lk_i32 sdl_text_x_from_index(void *ud, lk_str run, lk_u16 font_id,
+                                    lk_u16 font_size, lk_u32 byte_ix) {
+  TTF_Font *font = (TTF_Font *)ud;
+  lk_str prefix;
+  int w;
+  int h;
+
+  (void)font_id;
+  (void)font_size;
+
+  prefix.ptr = run.ptr;
+  prefix.len = byte_ix > run.len ? run.len : byte_ix;
+  sdl_text_size(font, prefix, &w, &h);
+  return (lk_i32)w;
+}
+
+/* Linear scan of prefix widths picking the nearest codepoint
+ * boundary.  O(n^2) — interim until stage B (TTF_TextEngine's
+ * TTF_GetTextSubStringForPoint). */
+static lk_u32 sdl_text_index_from_x(void *ud, lk_str run, lk_u16 font_id,
+                                    lk_u16 font_size, lk_i32 x) {
+  TTF_Font *font = (TTF_Font *)ud;
+  lk_u32 best_ix = 0;
+  lk_i32 best_dist = x < 0 ? -x : x; /* distance to boundary 0 (x=0) */
+  lk_u32 i = 0;
+
+  (void)font_id;
+  (void)font_size;
+
+  if (x <= 0) {
+    return 0;
+  }
+
+  while (i < run.len) {
+    lk_str prefix;
+    int w;
+    int h;
+    lk_i32 dist;
+
+    /* advance to next codepoint boundary */
+    i++;
+    while (i < run.len && ((unsigned char)run.ptr[i] & 0xC0) == 0x80) {
+      i++;
+    }
+
+    prefix.ptr = run.ptr;
+    prefix.len = i;
+    sdl_text_size(font, prefix, &w, &h);
+    dist = x - (lk_i32)w;
+
+    if (dist < 0) {
+      dist = -dist;
+    }
+
+    /* <= so ties round toward the later boundary */
+    if (dist <= best_dist) {
+      best_dist = dist;
+      best_ix = i;
+    }
+  }
+
+  return best_ix;
+}
+
+static lk_i32 sdl_text_line_height(void *ud, lk_u16 font_id,
+                                   lk_u16 font_size) {
+  TTF_Font *font = (TTF_Font *)ud;
+
+  (void)font_id;
+  (void)font_size;
+
+  return font ? (lk_i32)TTF_GetFontHeight(font) : 0;
+}
+
+static lk_u16 sdl_text_register_font(void *ud, const char *path) {
+  /* Stage B: face registry.  Until then only the default face exists. */
+  (void)ud;
+  (void)path;
+  return 0;
 }
 
 static void text_cache_clear(lk_window *win) {
@@ -229,8 +305,7 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id, lk_str text,
 
   /* One-time warning for long probe chains */
   if (!win->warned_probe && win->cache_stats.probe_steps_max > 32) {
-    SDL_Log("lk: text cache max probe reached %u (cap=%u). "
-            "Consider increasing text_cache_cap.",
+    SDL_Log("lk: text cache max probe reached %u (cap=%u).",
             win->cache_stats.probe_steps_max, win->text_cache_cap);
     win->warned_probe = 1;
   }
@@ -389,14 +464,19 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
 
   if (cfg->font_path) {
     win->font = TTF_OpenFont(cfg->font_path, (float)cfg->font_size);
-    /* NULL font is OK — falls back to stub measurer */
+    /* NULL font is OK — falls back to the stub text backend */
   }
 
-  /* Allocate text cache */
+  win->text_backend.ud = win->font;
+  win->text_backend.measure = sdl_text_measure;
+  win->text_backend.x_from_index = sdl_text_x_from_index;
+  win->text_backend.index_from_x = sdl_text_index_from_x;
+  win->text_backend.line_height = sdl_text_line_height;
+  win->text_backend.register_font = sdl_text_register_font;
+
+  /* Allocate text cache (dies wholesale in stage B) */
   {
-    lk_u32 cache_cap = cfg->text_cache_cap > 0
-                           ? next_pow2((lk_u32)cfg->text_cache_cap)
-                           : TEXT_CACHE_DEFAULT_CAP;
+    lk_u32 cache_cap = TEXT_CACHE_DEFAULT_CAP;
     win->text_cache = (text_cache_entry *)lk_sys_alloc(
         NULL, (lk_u32)(sizeof(text_cache_entry) * cache_cap));
 
@@ -689,13 +769,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       const lk_style *styles = lk_ui_styles(win->ui);
       memset(&lcfg, 0, sizeof(lcfg));
 
-      if (win->font) {
-        lcfg.measure_text = sdl_measure_text;
-        lcfg.measure_ud = win->font;
-      } else {
-        lcfg.measure_text = lk_measure_text_stub;
-        lcfg.measure_ud = NULL;
-      }
+      lcfg.text = win->font ? &win->text_backend : lk_text_backend_stub();
 
       lcfg.viewport_w = win->width;
       lcfg.viewport_h = win->height;
