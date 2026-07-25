@@ -340,15 +340,126 @@ decides **how it looks**.
     overrides, render-uses-style-colors, layout-style-gap, wildcard matching.
 
 
+## Phase 5.9: Lcl DSL (Layer 2)
+
+- [x] **DSL library** (`lib/lk-dsl.lcl`)
+  - Pure-Lcl declarative sugar over Layer 1 bindings.
+  - Kind names as commands (`column`, `button`, ...), nesting implies parent-child,
+    `-flag value` sets props. `app` top-level entry, `view` captures frame body,
+    `theme`/`rule` for styling, `translator`/`on` for commands.
+  - Auto-loaded by `lcl_lk_main` via `LK_DSL_PATH` compile definition.
+  - `examples/hello-dsl.lcl` demonstrates full rewrite (~60 lines vs ~90 Layer 1).
+
+
 ## Up Next
 
-- **Lcl binding Layer 2 (DSL)**: Pure-Lcl DSL sugar with implicit context.
-  Declarative tree building (`button "id" -text "Click" -focusable 1 { ... }`),
-  translator-to-handler mapping, implicit frame loop. Depends on Layer 1 (done)
-  and a stable style/theme system (done). This would dramatically simplify
-  hello.lcl from ~30 lines of manual node/prop/append_child calls to a concise
-  declarative form.
+### ~~1. Border rendering~~ ✓
 
+### ~~2. Clipboard API + input polish~~ ✓
+
+- `lk_clipboard_get_fn`/`lk_clipboard_set_fn` callbacks on `lk_ui`.
+- SDL backend installs real clipboard. Ctrl+C/V/X in text input widget.
+- Lcl bindings: `lk::clipboard_get`, `lk::clipboard_set`.
+- 4 new core tests, 2 new Lcl tests.
+
+### ~~3. Modifier-aware keybindings~~ ✓
+
+- Extended `lk_translator` with `keycode` (lk_u16) and `mods` (lk_u8) fields.
+- When `keycode != 0`, exact match on `event.data.key.keycode` and `event.mods`.
+- When `keycode == 0`, backward-compatible (ignores key/mods).
+- Full A-Z keycodes in `lk_keycode` enum; SDL backend maps all 26 letters.
+- Lcl bindings: 7-arg `lk::add_translator` with keycode + mods strings.
+- DSL: new `keybinding <key> <mods> ?<ptype>? <cmd>` command.
+- Mods parsed from `+`-joined strings (e.g. `"ctrl+shift"`).
+- 6 new core tests, 3 new Lcl tests.
+
+### ~~4. Dropdown widget (MVP row-editor)~~ ✓
+
+- New kinds `UIK_DROPDOWN` + `UIK_OPTION`. Leaf in main layout; popup
+  rendered via `lk_render_build_overlays` overlay pass.
+- New state keys `LKS_SELECTED_INDEX`, `LKS_HOVER_INDEX`. `LKS_EXPANDED`
+  reused for open/closed.
+- Event-driven value sync: `LK_EVENT_VALUE_CHANGED` + `source_value` on
+  `lk_command` route selection (and text_input buffer changes) through
+  normal translator/command pipeline.
+- Multi-arg presentations: `lk_presentation` now carries up to
+  `LK_PRES_MAX_ARGS` (4) values, copied into the emitted command's
+  `args`.  DSL: `-present (action (remove_row $rid))`.
+- Lean overlay machinery in `lk-dropdown.c` (render + hit-test +
+  dismiss).  Generalization path documented in `docs/overlays.md`.
+- Example: `examples/budget-dsl.lcl` — row-based budget tracker.
+- 7 new core tests, 2 new Lcl tests (178 core, 38 Lcl).
+
+### 5. Resizable split layout
+
+New `SPLIT_H`/`SPLIT_V` widget kinds with draggable dividers and ratio stored
+in `lk_state`. Gateway to multi-panel applications (editor panes, inspector
+panels). See `docs/weft-gap-analysis.md` §4.
+
+### 6. Per-character styled text
+
+`STYLED_TEXT` widget kind that accepts an array of `(start, end, style)` runs.
+Required for syntax-highlighted code display, colored logs, rich text.
+See `docs/weft-gap-analysis.md` §3.
+
+### 7. Overlays / positioning — generalization
+
+Lean dropdown-specific overlay machinery shipped in MVP-1.0
+(`lk-dropdown.c` + three `lk.h` entry points).  Tooltips, context
+menus, and modals require the Proper generalization described in
+`docs/overlays.md`.
+
+
+## Known issues / small hardening items
+
+Low-priority polish, mostly surfaced during the MVP-1.0 dropdown work.
+None block shipping the budget app; revisit as the app surfaces them.
+
+- **Dropdown popup clipping near viewport edges.** Popup draws at
+  `(trigger.x, trigger.y + trigger.h)` unconditionally — near the
+  bottom/right of the window it clips off-screen.  Fix: viewport-edge
+  clamp + flip-above when overflowing down (see `docs/overlays.md`
+  step 3).
+- **Dropdown popup doesn't scroll.**  Long option lists past
+  `DROPDOWN_POPUP_MAX_HEIGHT` (240 px) hide overflow invisibly.  Fix:
+  either enable scroll inside popup, or raise the cap and let it clip.
+- **`-value` flag on dropdown is not wired.**  Initial selection defaults
+  to the first option.  To preset selection, the app must call
+  `lk::state_set $ui <dd_id> LKS_SELECTED_INDEX <i>` — awkward.  Fix:
+  DSL-level `-value "Food"` that does the text-to-index lookup and
+  sets state.
+- **`lk_v_none()` leaves the union uninitialized.**  Reading `.as.i` on a
+  NONE value yields garbage.  Low-impact (callers should check `.tag`)
+  but trivially hardened by zero-initing the union.
+- **Moving a node between parents wipes its retained state.**  Because
+  the diff emits REMOVED+ADDED for moves, `lk_state` entries keyed on
+  that node_id get GC'd.  Documented behavior but worth flagging if
+  anyone builds a reorder UI.
+
+
+## Design-coherence items
+
+Places where the implementation diverges from `design_draft.md`/`layers.md`
+in mechanism (not meaning). Tracked so they don't fossilize; none block
+shipping.
+
+- **Overlay pass is dropdown-specific.**  `layers.md` §7 specifies overlays
+  as anchored subtrees (`OverlayNode {anchor, subtree}`) in an overlay
+  root; `lk_render_build_overlays` is hard-wired to dropdowns.  Migration
+  path already written in `docs/overlays.md`.
+- **`LK_EVENT_VALUE_CHANGED` re-enters `lk_event_route` mid-dispatch.**
+  Widgets synthesize it by recursively calling the router from inside
+  their own event handlers.  Cleaner: a small pending-event queue on
+  `lk_ui` drained after the outer route completes (matches the design's
+  "commands are returned as a queue" shape).
+- **Widget-private state keys are a public flat enum.**  `LKS_*` keys are
+  encapsulated by convention only; the dropdown `-value` gap (above)
+  forces hosts to poke `LKS_SELECTED_INDEX` directly — the one live
+  violation of "scripts never poke internal widget state".
+- **Derived geometry stored in retained state.**  `LKS_CURSOR_X` /
+  `LKS_SCROLL_MAX` are computed during measure/layout but written to
+  `lk_state`, making those passes non-idempotent.  They belong in
+  per-frame scratch parallel to `rects[]`.
 
 ## Deferred
 

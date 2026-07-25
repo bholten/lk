@@ -60,16 +60,16 @@ let ui [lk::window_ui $win]
 ;; Custom theme rules
 lk::theme_rule $ui "window" "" "" #{bg (25 25 35)}
 lk::theme_rule $ui "*" "" "" #{fg (200 200 220)}
-lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12}
-lk::theme_rule $ui "button" "" "hovered" #{bg (70 70 85)}
-lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255)}
-lk::theme_rule $ui "button" "primary" "hovered" #{bg (65 120 210)}
+lk::theme_rule $ui "button" "" "" #{bg (50 50 65) padding 12 border_width 1 border_color (80 80 100)}
+lk::theme_rule $ui "button" "" "hovered" #{bg (70 70 85) border_color (120 120 150)}
+lk::theme_rule $ui "button" "primary" "" #{bg (45 90 180) fg (255 255 255) border_color (70 130 220)}
+lk::theme_rule $ui "button" "primary" "hovered" #{bg (65 120 210) border_color (100 160 240)}
 lk::theme_rule $ui "text_input" "" "" #{bg (40 40 55) padding 8}
 lk::theme_rule $ui "text_input" "" "focused" #{border_width 2 border_color (80 140 220)}
-lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4}
+lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4 border_width 1 border_color (55 55 70)}
 
 ;; Translator: pointer_down on any "action" presentation -> "ButtonClick" command
-lk::add_translator $ui "pointer_down" "action" "" "ButtonClick"
+lk::add_translator $ui "pointer_down" "action" "" "" "" "ButtonClick"
 
 ;; Command handler: receives a dict with {name, args, source_node_id, ...}
 lk::set_command_handler $ui [lambda {cmd} {

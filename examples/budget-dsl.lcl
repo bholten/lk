@@ -1,0 +1,119 @@
+;; budget-dsl.lcl — Row-based budget tracker using the Lcl DSL.
+;;
+;; Demonstrates:
+;;   - Dynamic add/remove of rows (text_input, dropdown, button per row)
+;;   - Event-driven model sync via LK_EVENT_VALUE_CHANGED
+;;   - Multi-arg presentations / commands (row id + field name)
+;;   - Running total that updates as cells are edited
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+var rows ( #{id 1 name "Coffee" amount "4.50" category "Food"} #{id 2 name "Bus" amount "2.75" category "Transport"} )
+var next_id 3
+
+proc total {} {
+    var sum 0.0
+    foreach row $rows {
+        let amt [get $row amount]
+        set! sum [+ $sum [float $amt]]
+    }
+    return $sum
+}
+
+proc update_row {rid field value} {
+    var out ()
+    foreach row $rows {
+        if [== [get $row id] $rid] {
+            set! row [put $row $field $value]
+        }
+        set! out [List::push $out $row]
+    }
+    set! rows $out
+}
+
+proc remove_row_by_id {rid} {
+    var out ()
+    foreach row $rows {
+        if [!= [get $row id] $rid] {
+            set! out [List::push $out $row]
+        }
+    }
+    set! rows $out
+}
+
+app "Budget" -font $font -font_size 16 -width 720 -height 500 {
+
+    theme {
+        rule window #{bg (22 25 32)}
+        rule * #{fg (210 215 225)}
+        rule column #{padding 24 gap 12}
+        rule row #{gap 8}
+        rule button #{bg (50 55 70) padding 8 border_width 1 border_color (80 85 100)}
+        rule button -state hovered #{bg (70 75 90) border_color (120 125 150)}
+        rule button -tag danger #{bg (120 40 40) border_color (160 70 70)}
+        rule button -tag primary #{bg (45 90 180) border_color (70 130 220)}
+        rule text_input #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
+        rule text_input -state focused #{border_color (80 140 220)}
+        rule dropdown #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
+        rule dropdown -state hovered #{border_color (120 125 150)}
+        rule dropdown -state focused #{border_color (80 140 220)}
+        rule option #{bg (35 40 50) padding 4}
+    }
+
+    translator value_changed field_edit FieldEdit
+    translator pointer_down action Action
+
+    on FieldEdit [lambda {cmd} {
+        let args [get $cmd args]
+        let rid [get $args 0]
+        let col [get $args 1]
+        let val [get $cmd source_value]
+        update_row $rid $col $val
+    }]
+
+    on Action [lambda {cmd} {
+        let args [get $cmd args]
+        let verb [get $args 0]
+        if [== $verb add_row] {
+            set! rows [List::push $rows #{id $next_id name "" amount "0.00" category "Food"}]
+            set! next_id [+ $next_id 1]
+        }
+        if [== $verb remove_row] {
+            let target [get $args 1]
+            remove_row_by_id $target
+        }
+    }]
+
+    view {
+        column "main" {
+            label "title" -text "Budget Tracker"
+            label "total" -text "Total: $[total]"
+
+            row "header" -gap 8 {
+                label "h_name" -text "Item" -w 180
+                label "h_amt" -text "Amount" -w 100
+                label "h_cat" -text "Category" -w 140
+                label "h_rm" -text "" -w 40
+            }
+
+            foreach r $rows {
+                let rid [get $r id]
+                row "r_$rid" -gap 8 {
+                    text_input "name_$rid" -text [get $r name] -w 180 -focusable 1 -present (field_edit ($rid name))
+                    text_input "amt_$rid" -text [get $r amount] -w 100 -focusable 1 -present (field_edit ($rid amount))
+                    dropdown "cat_$rid" -w 140 -focusable 1 -present (field_edit ($rid category)) {
+                        option "opt_food_$rid" -text "Food"
+                        option "opt_transport_$rid" -text "Transport"
+                        option "opt_rent_$rid" -text "Rent"
+                        option "opt_other_$rid" -text "Other"
+                    }
+                    button "rm_$rid" -text "X" -w 40 -tag danger -present (action (remove_row $rid))
+                }
+            }
+
+            row "controls" -gap 12 {
+                button "add" -text "+ Add Row" -tag primary -present (action (add_row))
+            }
+        }
+    }
+}

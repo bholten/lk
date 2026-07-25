@@ -26,6 +26,7 @@ set(LK_SOURCES
   src/core/lk-widget.c
   src/core/lk-text-input.c
   src/core/lk-scroll.c
+  src/core/lk-dropdown.c
   src/core/lk-command.c
   src/core/lk-api.c
 )

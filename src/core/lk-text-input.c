@@ -112,6 +112,26 @@ static lk_i32 get_sel_end(const lk_state *state, lk_node_id nid,
   return 0;
 }
 
+/* Emit a synthetic VALUE_CHANGED event carrying the current buffer contents.
+ * Called at every buffer-mutation site so user handlers/translators can
+ * react without polling state. */
+static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n) {
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id nid = t->nodes[n].id;
+  lk_value v = lk_state_get(st, nid, LKS_TEXT_BUF);
+  lk_event ev;
+
+  if (v.tag != UIV_STR) {
+    return;
+  }
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = n;
+  ev.data.value_changed.str_id = v.as.str_id;
+  lk_event_route(ui, &ev);
+}
+
 /* Ensure LKS_TEXT_BUF is initialized from UIP_TEXT on first interaction. */
 static void ensure_text_buf(lk_ui *ui, const lk_tree *t, lk_ix n) {
   lk_node_id nid = t->nodes[n].id;
@@ -157,12 +177,16 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 tw = 0;
   lk_i32 th = 0;
   lk_i32 pad;
+  lk_i32 bw;
+  lk_i32 inset;
   lk_node_id nid;
 
   (void)sizes;
 
   pad = cfg->styles ? cfg->styles[n].padding
                     : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  bw = cfg->styles ? cfg->styles[n].border_width : 0;
+  inset = pad + bw;
 
   text = get_text(t, n, cfg->state, NULL);
   cfg->measure_text(cfg->measure_ud, text, &tw, &th);
@@ -172,8 +196,8 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
     tw = 100;
   }
 
-  *out_w = tw + pad * 2;
-  *out_h = th + pad * 2;
+  *out_w = tw + inset * 2;
+  *out_h = th + inset * 2;
 
   /* Compute cursor pixel offset and store in state */
   if (cfg->state) {
@@ -197,6 +221,8 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
                               const lk_style *style, const lk_state *state,
                               lk_render_list *out) {
   lk_i32 pad = style->padding;
+  lk_i32 bw = style->border_width;
+  lk_i32 inset = pad + bw;
   lk_u32 sid = 0;
   lk_str text;
   lk_render_cmd cmd;
@@ -219,10 +245,6 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
     if (sel_s != sel_e) {
       lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
       lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
-      /* Use cursor_x approach: approximate pixel positions.
-       * For proper rendering, the host should provide measured offsets.
-       * Here we use a simple 8px/char estimate as the stub measurer does.
-       */
       lk_i32 char_w = 8;
 
       if (text.len > 0) {
@@ -240,10 +262,10 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect.x = rect->x + pad + lo * char_w;
-      cmd.rect.y = rect->y + pad;
+      cmd.rect.x = rect->x + inset + lo * char_w;
+      cmd.rect.y = rect->y + inset;
       cmd.rect.w = (hi - lo) * char_w;
-      cmd.rect.h = rect->h - pad * 2;
+      cmd.rect.h = rect->h - inset * 2;
       cmd.color.r = 80;
       cmd.color.g = 120;
       cmd.color.b = 200;
@@ -256,10 +278,10 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
   if (sid != 0) {
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_DRAW_TEXT;
-    cmd.rect.x = rect->x + pad;
-    cmd.rect.y = rect->y + pad;
-    cmd.rect.w = rect->w - pad * 2;
-    cmd.rect.h = rect->h - pad * 2;
+    cmd.rect.x = rect->x + inset;
+    cmd.rect.y = rect->y + inset;
+    cmd.rect.w = rect->w - inset * 2;
+    cmd.rect.h = rect->h - inset * 2;
     cmd.color = style->fg;
     cmd.str_id = sid;
     lk_render_list_push(out, cmd);
@@ -272,10 +294,10 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
     if (cx_v.tag == UIV_I32) {
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect.x = rect->x + pad + (lk_i32)cx_v.as.i;
-      cmd.rect.y = rect->y + pad;
+      cmd.rect.x = rect->x + inset + (lk_i32)cx_v.as.i;
+      cmd.rect.y = rect->y + inset;
       cmd.rect.w = 1;
-      cmd.rect.h = rect->h - pad * 2;
+      cmd.rect.h = rect->h - inset * 2;
       cmd.color = style->fg;
       lk_render_list_push(out, cmd);
     }
@@ -401,6 +423,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
     lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
     lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
 
+    emit_value_changed(ui, t, n);
     return 1;
   }
 
@@ -414,6 +437,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
       lk_i32 sel_cursor = delete_selection(ui, t, n, text.ptr, text_len);
 
       if (sel_cursor >= 0) {
+        emit_value_changed(ui, t, n);
         return 1;
       }
 
@@ -432,6 +456,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         v.as.str_id = lk_intern_id(t->intern, s);
         lk_state_set(st, nid, LKS_TEXT_BUF, v);
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(cursor - 1));
+        emit_value_changed(ui, t, n);
       }
 
       return 1;
@@ -440,6 +465,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
     case LKK_DELETE: {
       lk_i32 sel_cursor = delete_selection(ui, t, n, text.ptr, text_len);
       if (sel_cursor >= 0) {
+        emit_value_changed(ui, t, n);
         return 1;
       }
       if (cursor < text_len) {
@@ -457,6 +483,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         v.as.str_id = lk_intern_id(t->intern, s);
         lk_state_set(st, nid, LKS_TEXT_BUF, v);
         /* cursor stays at same position */
+        emit_value_changed(ui, t, n);
       }
       return 1;
     }
@@ -550,6 +577,109 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
         lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(text_len));
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(text_len));
+        return 1;
+      }
+
+      return 0;
+
+    case LKK_C:
+      if (ctrl && ui->clipboard_set) {
+        lk_i32 sel_s = get_sel_start(st, nid, text_len);
+        lk_i32 sel_e = get_sel_end(st, nid, text_len);
+
+        if (sel_s != sel_e) {
+          lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
+          lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
+          char buf[LK_TEXT_INPUT_MAX];
+          lk_i32 copy_len = hi - lo;
+
+          if (copy_len > LK_TEXT_INPUT_MAX - 1) {
+            copy_len = LK_TEXT_INPUT_MAX - 1;
+          }
+
+          memcpy(buf, text.ptr + lo, (size_t)copy_len);
+          buf[copy_len] = '\0';
+          ui->clipboard_set(ui->clipboard_ud, buf);
+        }
+
+        return 1;
+      }
+
+      return 0;
+
+    case LKK_X:
+      if (ctrl && ui->clipboard_set) {
+        lk_i32 sel_s = get_sel_start(st, nid, text_len);
+        lk_i32 sel_e = get_sel_end(st, nid, text_len);
+
+        if (sel_s != sel_e) {
+          lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
+          lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
+          char buf[LK_TEXT_INPUT_MAX];
+          lk_i32 copy_len = hi - lo;
+
+          if (copy_len > LK_TEXT_INPUT_MAX - 1) {
+            copy_len = LK_TEXT_INPUT_MAX - 1;
+          }
+
+          memcpy(buf, text.ptr + lo, (size_t)copy_len);
+          buf[copy_len] = '\0';
+          ui->clipboard_set(ui->clipboard_ud, buf);
+          delete_selection(ui, t, n, text.ptr, text_len);
+          emit_value_changed(ui, t, n);
+        }
+
+        return 1;
+      }
+
+      return 0;
+
+    case LKK_V:
+      if (ctrl && ui->clipboard_get) {
+        const char *clip = ui->clipboard_get(ui->clipboard_ud);
+
+        if (clip && clip[0] != '\0') {
+          lk_i32 ins_len = (lk_i32)strlen(clip);
+          lk_i32 sel_cursor;
+          char buf[LK_TEXT_INPUT_MAX];
+          lk_i32 new_len;
+          lk_value v;
+          lk_str s;
+
+          /* Delete selection first */
+          sel_cursor = delete_selection(ui, t, n, text.ptr, text_len);
+
+          if (sel_cursor >= 0) {
+            text = get_text(t, n, st, NULL);
+            text_len = (lk_i32)text.len;
+            cursor = sel_cursor;
+          }
+
+          if (text_len + ins_len >= LK_TEXT_INPUT_MAX) {
+            ins_len = LK_TEXT_INPUT_MAX - 1 - text_len;
+          }
+
+          if (ins_len > 0) {
+            memcpy(buf, text.ptr, (size_t)cursor);
+            memcpy(buf + cursor, clip, (size_t)ins_len);
+            memcpy(buf + cursor + ins_len, text.ptr + cursor,
+                   (size_t)(text_len - cursor));
+            new_len = text_len + ins_len;
+            buf[new_len] = '\0';
+
+            s.ptr = buf;
+            s.len = (lk_u32)new_len;
+            v.tag = UIV_STR;
+            v.as.str_id = lk_intern_id(t->intern, s);
+            lk_state_set(st, nid, LKS_TEXT_BUF, v);
+            lk_state_set(st, nid, LKS_CURSOR_POS,
+                         lk_v_i32(cursor + ins_len));
+            lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
+            lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
+            emit_value_changed(ui, t, n);
+          }
+        }
+
         return 1;
       }
 

@@ -186,8 +186,18 @@ static int pres_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
       return 0;
     }
 
-    if (!value_equal(&prev->pres[pi].pvalue, &next->pres[ni].pvalue)) {
+    if (prev->pres[pi].pvalue_count != next->pres[ni].pvalue_count) {
       return 0;
+    }
+
+    {
+      lk_u8 ai;
+      for (ai = 0; ai < prev->pres[pi].pvalue_count; ai++) {
+        if (!value_equal(&prev->pres[pi].pvalues[ai],
+                         &next->pres[ni].pvalues[ai])) {
+          return 0;
+        }
+      }
     }
 
     pi++;
@@ -548,6 +558,17 @@ lk_theme *lk_ui_theme(lk_ui *ui) {
 
 const lk_style *lk_ui_styles(const lk_ui *ui) {
   return ui ? ui->styles : NULL;
+}
+
+void lk_ui_set_clipboard(lk_ui *ui, lk_clipboard_get_fn get_fn,
+                         lk_clipboard_set_fn set_fn, void *ud) {
+  if (!ui) {
+    return;
+  }
+
+  ui->clipboard_get = get_fn;
+  ui->clipboard_set = set_fn;
+  ui->clipboard_ud = ud;
 }
 
 void lk_ui_resolve_styles(lk_ui *ui) {

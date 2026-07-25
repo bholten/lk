@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <lcl.h>
+#include <lk.h>
 #include "lcl-lk.h"
 
 /* ---- minimal test harness ---- */
@@ -428,7 +429,7 @@ static void test_add_translator(void) {
 
   eval_ok(interp,
     "let ui [lk::ui_create]\n"
-    "lk::add_translator $ui \"pointer_down\" \"item\" \"\" \"Select\"",
+    "lk::add_translator $ui \"pointer_down\" \"item\" \"\" \"\" \"\" \"Select\"",
     &r);
   if (r) lcl_ref_dec(r);
   CHECK(1);
@@ -716,16 +717,21 @@ static void test_add_translator_all_event_types(void) {
 
   eval_ok(interp,
     "let ui [lk::ui_create]\n"
-    "lk::add_translator $ui \"pointer_down\" \"\" \"\" \"cmd1\"\n"
-    "lk::add_translator $ui \"pointer_up\" \"\" \"\" \"cmd2\"\n"
-    "lk::add_translator $ui \"pointer_move\" \"\" \"\" \"cmd3\"\n"
-    "lk::add_translator $ui \"key_down\" \"\" \"\" \"cmd4\"\n"
-    "lk::add_translator $ui \"key_up\" \"\" \"\" \"cmd5\"\n"
-    "lk::add_translator $ui \"text\" \"\" \"\" \"cmd6\"\n"
-    "lk::add_translator $ui \"wheel\" \"\" \"\" \"cmd7\"\n"
-    "lk::add_translator $ui \"window_resize\" \"\" \"\" \"cmd8\"\n"
-    "lk::add_translator $ui \"window_close\" \"\" \"\" \"cmd9\"\n"
-    "lk::add_translator $ui \"\" \"\" \"\" \"cmd_any\"",
+    "lk::add_translator $ui \"pointer_down\" \"\" \"\" \"\" \"\" \"cmd1\"\n"
+    "lk::add_translator $ui \"pointer_up\" \"\" \"\" \"\" \"\" \"cmd2\"\n"
+    "lk::add_translator $ui \"pointer_move\" \"\" \"\" \"\" \"\" \"cmd3\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"\" \"\" \"cmd4\"\n"
+    "lk::add_translator $ui \"key_up\" \"\" \"\" \"\" \"\" \"cmd5\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  eval_ok(interp,
+    "lk::add_translator $ui \"text\" \"\" \"\" \"\" \"\" \"cmd6\"\n"
+    "lk::add_translator $ui \"wheel\" \"\" \"\" \"\" \"\" \"cmd7\"\n"
+    "lk::add_translator $ui \"window_resize\" \"\" \"\" \"\" \"\" \"cmd8\"\n"
+    "lk::add_translator $ui \"window_close\" \"\" \"\" \"\" \"\" \"cmd9\"\n"
+    "lk::add_translator $ui \"\" \"\" \"\" \"\" \"\" \"cmd_any\"",
     &r);
   if (r) lcl_ref_dec(r);
   CHECK(g_cur_ok);  /* no errors */
@@ -750,6 +756,59 @@ static void test_present_string_value(void) {
     "lk::set_root $t $w\n"
     "lk::append_child $t $w $btn\n"
     "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dropdown_kind(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("dropdown kind can be created via Lcl");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t main window]\n"
+    "let dd [lk::node $t cat dropdown]\n"
+    "let o1 [lk::node $t o1 option]\n"
+    "let o2 [lk::node $t o2 option]\n"
+    "lk::prop $t $o1 text Food\n"
+    "lk::prop $t $o2 text Transport\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $dd\n"
+    "lk::append_child $t $dd $o1\n"
+    "lk::append_child $t $dd $o2\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_present_list_value(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("present accepts list pvalue for multi-arg commands");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t main window]\n"
+    "let btn [lk::node $t btn button]\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $btn\n"
+    "lk::present $t $btn action (remove_row 5)\n"
+    "lk::end_frame $ui\n",
     &r);
   if (r) lcl_ref_dec(r);
   CHECK(g_cur_ok);
@@ -840,7 +899,7 @@ static void test_set_command_handler_with_translator(void) {
     "lk::set_root $t $w\n"
     "lk::append_child $t $w $btn\n"
     "lk::end_frame $ui\n"
-    "lk::add_translator $ui \"pointer_down\" \"action\" \"\" \"DoIt\"\n"
+    "lk::add_translator $ui \"pointer_down\" \"action\" \"\" \"\" \"\" \"DoIt\"\n"
     "let got_cmd 0\n"
     "lk::set_command_handler $ui [lambda {cmd} {\n"
     "  set got_cmd 1\n"
@@ -848,6 +907,64 @@ static void test_set_command_handler_with_translator(void) {
     &r);
   if (r) lcl_ref_dec(r);
   CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_add_translator_with_keycode(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("add_translator with keycode+mods registers");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::add_translator $ui \"key_down\" \"doc\" \"\" \"s\" \"ctrl\" \"Save\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"f\" \"ctrl\" \"Find\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"z\" \"ctrl+shift\" \"Redo\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_add_translator_bad_keycode(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("add_translator rejects unknown keycode");
+  interp = make_interp();
+
+  rc = lcl_eval_string(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"not_a_key\" \"\" \"Cmd\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(rc != LCL_RC_OK);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_add_translator_bad_mods(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("add_translator rejects unknown modifier");
+  interp = make_interp();
+
+  rc = lcl_eval_string(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"s\" \"super\" \"Cmd\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -907,6 +1024,93 @@ static void test_scroll_kind(void) {
   END_TEST();
 }
 
+/* ---- clipboard mock + test ---- */
+
+static char g_lcl_mock_clipboard[1024];
+
+static const char *lcl_mock_clipboard_get(void *ud) {
+  (void)ud;
+  return g_lcl_mock_clipboard;
+}
+
+static void lcl_mock_clipboard_set(void *ud, const char *text) {
+  size_t len;
+  (void)ud;
+  len = strlen(text);
+  if (len >= sizeof(g_lcl_mock_clipboard)) {
+    len = sizeof(g_lcl_mock_clipboard) - 1;
+  }
+  memcpy(g_lcl_mock_clipboard, text, len);
+  g_lcl_mock_clipboard[len] = '\0';
+}
+
+static void test_clipboard_get_set(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("clipboard_get / clipboard_set round-trip");
+  interp = make_interp();
+
+  eval_ok(interp, "let ui [lk::ui_create]", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  /* Get the raw lk_ui* to install mock clipboard */
+  eval_ok(interp, "$ui", &r);
+  if (r) {
+    ui = NULL;
+    lcl_opaque_get(r, "lk_ui", (void **)&ui);
+    if (ui) {
+      lk_ui_set_clipboard(ui, lcl_mock_clipboard_get,
+                          lcl_mock_clipboard_set, NULL);
+    }
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  /* Set via binding */
+  eval_ok(interp, "lk::clipboard_set $ui \"hello clip\"", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  CHECK(strcmp(g_lcl_mock_clipboard, "hello clip") == 0);
+
+  /* Get via binding */
+  eval_ok(interp, "lk::clipboard_get $ui", &r);
+  if (r) {
+    const char *s = lcl_value_to_string(r);
+    CHECK(strcmp(s, "hello clip") == 0);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_clipboard_get_no_clipboard(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("clipboard_get returns empty without clipboard");
+  interp = make_interp();
+
+  eval_ok(interp, "let ui [lk::ui_create]", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  /* No clipboard installed */
+  eval_ok(interp, "lk::clipboard_get $ui", &r);
+  if (r) {
+    const char *s = lcl_value_to_string(r);
+    CHECK(strcmp(s, "") == 0);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -937,6 +1141,8 @@ int main(void) {
   test_all_kinds();
   test_add_translator_all_event_types();
   test_present_string_value();
+  test_present_list_value();
+  test_dropdown_kind();
 
   test_lcl_tag();
   test_lcl_theme_rule();
@@ -944,6 +1150,13 @@ int main(void) {
   test_set_command_handler_with_translator();
   test_text_input_kind();
   test_scroll_kind();
+
+  test_clipboard_get_set();
+  test_clipboard_get_no_clipboard();
+
+  test_add_translator_with_keycode();
+  test_add_translator_bad_keycode();
+  test_add_translator_bad_mods();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

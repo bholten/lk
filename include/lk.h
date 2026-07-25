@@ -61,6 +61,11 @@ typedef enum lk_kind {
   UIK_BUTTON,
   UIK_TEXT_INPUT,
   UIK_SCROLL,
+  UIK_DROPDOWN, /* selection list — trigger renders collapsed; options
+                   become a popup overlay when LKS_EXPANDED == 1. */
+  UIK_OPTION,   /* option inside a dropdown.  Not laid out by the main
+                   pass; rendered and hit-tested as part of the owning
+                   dropdown's overlay. */
   UIK__COUNT
 } lk_kind;
 
@@ -90,6 +95,8 @@ typedef enum lk_state_key {
   LKS_TEXT_BUF,
   LKS_CURSOR_X,
   LKS_SCROLL_MAX,
+  LKS_SELECTED_INDEX, /* dropdown: index of currently selected option */
+  LKS_HOVER_INDEX,    /* dropdown: index of option under cursor while open */
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -146,11 +153,19 @@ typedef struct lk_node {
 
 /**
  * Presentation — attaches semantic meaning to a node.
+ *
+ * A presentation carries up to LK_PRES_MAX_ARGS values.  When a translator
+ * matches, the presentation's pvalues are copied into the emitted command's
+ * args slot.  A single-value presentation (count=1) is the common case.
  **/
+
+#define LK_PRES_MAX_ARGS 4
+
 typedef struct lk_presentation {
-  lk_ix node;      /* which node this is attached to */
-  lk_u32 ptype;    /* interned presentation type */
-  lk_value pvalue; /* semantic value */
+  lk_ix node;                         /* which node this is attached to */
+  lk_u32 ptype;                       /* interned presentation type */
+  lk_u8 pvalue_count;                 /* number of valid slots in pvalues */
+  lk_value pvalues[LK_PRES_MAX_ARGS]; /* semantic value(s) */
 } lk_presentation;
 
 /**
@@ -221,11 +236,16 @@ void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child);
  */
 void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v);
 
-/* Presentations — attach semantic meaning to a node. */
+/* Presentations — attach semantic meaning to a node.  Single-value
+ * forms are convenience wrappers over the multi-value (_v) forms. */
 void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
                               lk_value pvalue);
 void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
                                 lk_value pvalue);
+void lk_tree_add_presentation_v(lk_tree *t, lk_ix node, lk_u32 ptype,
+                                const lk_value *pvalues, lk_u8 count);
+void lk_tree_add_presentation_sv(lk_tree *t, lk_ix node, const char *ptype,
+                                 const lk_value *pvalues, lk_u8 count);
 const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node);
 
 /* Tags — attach named tags to nodes for style matching. */
@@ -338,6 +358,10 @@ typedef enum lk_event_type {
   LK_EVENT_WHEEL,
   LK_EVENT_WINDOW_RESIZE,
   LK_EVENT_WINDOW_CLOSE,
+  /* Synthetic — emitted by widgets when their model value changes
+   * (text input buffer mutation, dropdown selection change, ...).
+   * data.value_changed.str_id carries the new value as an interned string. */
+  LK_EVENT_VALUE_CHANGED,
   LK_EVENT__COUNT
 } lk_event_type;
 
@@ -366,7 +390,9 @@ typedef enum lk_keycode {
   LKK_DOWN,
   LKK_HOME,
   LKK_END,
-  LKK_A,
+  LKK_A, LKK_B, LKK_C, LKK_D, LKK_E, LKK_F, LKK_G, LKK_H, LKK_I,
+  LKK_J, LKK_K, LKK_L, LKK_M, LKK_N, LKK_O, LKK_P, LKK_Q, LKK_R,
+  LKK_S, LKK_T, LKK_U, LKK_V, LKK_W, LKK_X, LKK_Y, LKK_Z,
   LKK__COUNT
 } lk_keycode;
 
@@ -395,10 +421,20 @@ typedef struct lk_event {
     struct {
       lk_i32 w, h;
     } window;
+    struct {
+      lk_u32 str_id; /* interned new value */
+    } value_changed;
   } data;
 } lk_event;
 
 typedef int (*lk_event_handler_fn)(lk_event *event, lk_ix node_ix, void *ud);
+
+/**
+ * Clipboard callbacks — optional, platform-specific.
+ * Widget code checks for NULL before calling.
+ **/
+typedef const char *(*lk_clipboard_get_fn)(void *ud);
+typedef void (*lk_clipboard_set_fn)(void *ud, const char *text);
 
 /**
  * Commands — named actions emitted by translators.
@@ -412,6 +448,9 @@ typedef struct lk_command {
   lk_u8 arg_count;
   lk_ix source_node;   /* node that triggered this */
   lk_u32 source_ptype; /* matched presentation type (0 if none) */
+  lk_value source_value; /* event-carried value (e.g. new text for
+                          * value_changed); UIV_NONE for events with
+                          * no intrinsic value. */
 } lk_command;
 
 typedef struct lk_command_queue {
@@ -423,13 +462,17 @@ typedef struct lk_command_queue {
 typedef void (*lk_command_handler_fn)(const lk_command *cmd, void *ud);
 
 /**
- * Translators — map (event_type, ptype?, node_kind?) to command name.
+ * Translators — map (event_type, ptype?, node_kind?, keycode?, mods?) to
+ * command name.  When keycode != 0, the translator only matches key events
+ * with that exact keycode and modifier combination.
  **/
 
 typedef struct lk_translator {
   lk_u8 event_type;    /* lk_event_type to match (0 = any) */
   lk_u32 ptype;        /* presentation type to match (0 = any) */
   lk_u16 node_kind;    /* lk_kind to match (0 = any) */
+  lk_u16 keycode;      /* lk_keycode to match (0 = any) */
+  lk_u8 mods;          /* LK_MOD_* bits; exact match when keycode != 0 */
   lk_u32 command_name; /* interned command name to emit */
 } lk_translator;
 
@@ -494,6 +537,11 @@ typedef struct lk_ui {
   lk_u32 styles_cap;
   lk_u8 *node_states;
   lk_u32 nstates_cap;
+
+  /* Clipboard (optional, platform-specific) */
+  lk_clipboard_get_fn clipboard_get;
+  lk_clipboard_set_fn clipboard_set;
+  void *clipboard_ud;
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -588,6 +636,7 @@ lk_i32 lk_command_arg_i32(const lk_command *cmd, lk_u8 idx);
 lk_u32 lk_command_arg_str_id(const lk_command *cmd, lk_u8 idx);
 lk_ix lk_command_source_node(const lk_command *cmd);
 lk_u32 lk_command_source_ptype(const lk_command *cmd);
+lk_value lk_command_source_value(const lk_command *cmd);
 
 /**
  * Layout
@@ -721,6 +770,14 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     const lk_style *styles, const lk_state *state,
                     lk_render_list *out);
 
+/* Append overlay render commands (currently: expanded dropdowns) to
+ * an existing render list.  Call after lk_render_build so overlays
+ * draw on top of the main tree.  See docs/overlays.md for the design
+ * roadmap toward a general overlay system. */
+int lk_render_build_overlays(const lk_tree *t, const lk_rect *rects,
+                             const lk_style *styles, const lk_state *state,
+                             const lk_layout_cfg *cfg, lk_render_list *out);
+
 /* Push a command to the render list (grows as needed). Returns 1 on
  * success, 0 on allocation failure. */
 int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd);
@@ -766,6 +823,23 @@ const lk_widget_def *lk_widget_get(lk_kind kind);
 
 lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y);
 
+/* Overlay-aware hit-test: checks any active overlays (e.g. expanded
+ * dropdown popups) before falling back to the main tree.  Returns the
+ * option/overlay-content node when a popup is hit, or the normal
+ * hit-test result otherwise.  Pass state so the hit-tester knows which
+ * overlays are open; pass cfg so it knows how to measure option heights.
+ */
+lk_ix lk_hit_test_overlay(const lk_tree *t, const lk_rect *rects,
+                          const lk_style *styles, const lk_state *state,
+                          const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y);
+
+/* Close any expanded overlay whose popup does NOT contain (x,y).
+ * Call before routing a pointer-down event so clicks outside an open
+ * dropdown dismiss it.  Returns 1 if any overlay was dismissed. */
+int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
+                                const lk_style *styles,
+                                const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y);
+
 void lk_event_init_pointer(lk_event *ev, lk_u8 type, lk_i32 x, lk_i32 y,
                            lk_u8 button);
 void lk_event_init_key(lk_event *ev, lk_u8 type, lk_u16 keycode, lk_u8 mods);
@@ -773,6 +847,10 @@ void lk_event_init_key(lk_event *ev, lk_u8 type, lk_u16 keycode, lk_u8 mods);
 void lk_event_route(lk_ui *ui, lk_event *event);
 
 void lk_ui_set_event_handler(lk_ui *ui, lk_event_handler_fn fn, void *ud);
+
+/* Install clipboard callbacks (e.g. from SDL backend). */
+void lk_ui_set_clipboard(lk_ui *ui, lk_clipboard_get_fn get_fn,
+                         lk_clipboard_set_fn set_fn, void *ud);
 
 int lk_focus_set(lk_ui *ui, const lk_tree *t, lk_node_id id);
 void lk_focus_clear(lk_ui *ui);
@@ -788,9 +866,11 @@ void lk_hover_clear(lk_ui *ui);
  **/
 
 void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
-                          lk_u16 node_kind, lk_u32 command_name);
+                          lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
+                          lk_u32 command_name);
 void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
-                            lk_u16 node_kind, const char *command_name);
+                            lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
+                            const char *command_name);
 void lk_ui_clear_translators(lk_ui *ui);
 
 void lk_ui_set_command_handler(lk_ui *ui, lk_command_handler_fn fn, void *ud);

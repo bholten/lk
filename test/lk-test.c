@@ -2807,8 +2807,9 @@ static void test_pres_add_and_get(void) {
   CHECK(p != NULL);
   if (p) {
     CHECK_EQ(p->ptype, lk_intern_id(t->intern, lk_str_c("item")));
-    CHECK_EQ(p->pvalue.tag, UIV_I32);
-    CHECK_EQ(p->pvalue.as.i, 42);
+    CHECK_EQ(p->pvalue_count, 1);
+    CHECK_EQ(p->pvalues[0].tag, UIV_I32);
+    CHECK_EQ(p->pvalues[0].as.i, 42);
     CHECK_EQ(p->node, btn);
   }
 
@@ -2903,6 +2904,122 @@ static void test_pres_change_triggers_updated(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_pres_multi_arg(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, btn;
+  const lk_presentation *p;
+  lk_value args[3];
+
+  BEGIN_TEST("pres: multi-arg presentation stored and retrieved");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  args[0] = lk_v_cstr(t->intern, "remove_row");
+  args[1] = lk_v_i32(5);
+  args[2] = lk_v_cstr(t->intern, "force");
+  lk_tree_add_presentation_sv(t, btn, "action", args, 3);
+
+  p = lk_tree_get_presentation(t, btn);
+  CHECK(p != NULL);
+  if (p) {
+    CHECK_EQ(p->pvalue_count, 3);
+    CHECK_EQ(p->pvalues[0].tag, UIV_STR);
+    CHECK_EQ(p->pvalues[1].tag, UIV_I32);
+    CHECK_EQ(p->pvalues[1].as.i, 5);
+    CHECK_EQ(p->pvalues[2].tag, UIV_STR);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_pres_multi_arg_cmd(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+  lk_value args[2];
+
+  BEGIN_TEST("pres: multi-arg pres emits multi-arg command");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "action", 0, 0, 0, "DoIt");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+
+    args[0] = lk_v_cstr(t->intern, "remove_row");
+    args[1] = lk_v_i32(5);
+    lk_tree_add_presentation_sv(t, btn, "action", args, 2);
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+                                  lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].arg_count, 2);
+    CHECK_EQ(q->cmds[0].args[0].tag, UIV_STR);
+    CHECK_EQ(q->cmds[0].args[1].tag, UIV_I32);
+    CHECK_EQ(q->cmds[0].args[1].as.i, 5);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_pres_multi_arg_change_detected(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  const lk_changeset *cs;
+  lk_value args[2];
+
+  BEGIN_TEST("pres: changed arg in multi-arg pres triggers UPDATED");
+
+  /* Frame 1: two args (remove_row, 5) */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    args[0] = lk_v_cstr(t->intern, "remove_row");
+    args[1] = lk_v_i32(5);
+    lk_tree_add_presentation_sv(t, btn, "action", args, 2);
+  }
+  lk_ui_end_frame(ui);
+
+  /* Frame 2: second arg changed */
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    args[0] = lk_v_cstr(t->intern, "remove_row");
+    args[1] = lk_v_i32(7);
+    lk_tree_add_presentation_sv(t, btn, "action", args, 2);
+  }
+  cs = lk_ui_end_frame(ui);
+
+  CHECK(cs_has(cs, ui, LK_CHANGE_UPDATED, "btn"));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 /* ================================================================
  * Command / Translator tests
  * ================================================================ */
@@ -2917,7 +3034,7 @@ static void test_translator_fires_command(void) {
   BEGIN_TEST("translator: fires command on match");
 
   /* Register translator: POINTER_DOWN + ptype "item" -> "Select" */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
 
   /* Build tree with presented button */
   t = lk_ui_begin_frame(ui);
@@ -2965,7 +3082,7 @@ static void test_translator_no_match(void) {
   BEGIN_TEST("translator: no match = empty queue");
 
   /* Translator for KEY_DOWN, but we'll send POINTER_DOWN */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3001,7 +3118,7 @@ static void test_translator_walks_ancestors(void) {
 
   BEGIN_TEST("translator: walks ancestors for pres");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, "ListClick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, 0, 0, "ListClick");
 
   /* Presentation is on parent column, event targets child button */
   t = lk_ui_begin_frame(ui);
@@ -3045,7 +3162,7 @@ static void test_translator_ptype_and_kind(void) {
   BEGIN_TEST("translator: match ptype + node_kind");
 
   /* Only match BUTTON nodes with ptype "action" */
-  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, "DoAction");
+  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, 0, 0, "DoAction");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3075,6 +3192,265 @@ static void test_translator_ptype_and_kind(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_translator_keycode_match(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode+mods match Ctrl+S");
+
+  /* Ctrl+S -> "Save" */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    lk_tree_add_presentation_s(t, lbl, "doc", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_S;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name,
+             lk_intern_id(ui->intern, lk_str_c("Save")));
+  }
+  CHECK_EQ(ev.handled, 1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_wrong_key(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode mismatch = no command");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    lk_tree_add_presentation_s(t, lbl, "doc", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Send Ctrl+F instead of Ctrl+S */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_F;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_wrong_mods(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: wrong mods = no command");
+
+  /* Ctrl+S translator */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    lk_tree_add_presentation_s(t, lbl, "doc", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Send Ctrl+Shift+S — should NOT match Ctrl+S */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_S;
+  ev.mods = LK_MOD_CTRL | LK_MOD_SHIFT;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_no_pres_required(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode+mods with ptype=0 needs pres");
+
+  /* Ctrl+F -> "Find", ptype=0 (match any presentation) */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0,
+                          (lk_u16)LKK_F, LK_MOD_CTRL, "Find");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, lbl);
+    /* Node has a presentation (any type) */
+    lk_tree_add_presentation_s(t, w, "app", lk_v_i32(0));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_F;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("lbl")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name,
+             lk_intern_id(ui->intern, lk_str_c("Find")));
+  }
+  CHECK_EQ(ev.handled, 1);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_on_pointer_event(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode filter skips non-key events");
+
+  /* Translator with keycode set — should not match pointer events */
+  lk_ui_add_translator_s(ui, 0, "item", 0,
+                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "item", lk_v_i32(5));
+  }
+  lk_ui_end_frame(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_translator_keycode_zero_mods(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_event ev;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("translator: keycode with zero mods matches bare key");
+
+  /* Return key with no modifiers -> "Confirm" */
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "form", 0,
+                          (lk_u16)LKK_RETURN, 0, "Confirm");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, btn);
+    lk_tree_add_presentation_s(t, btn, "form", lk_v_i32(1));
+  }
+  lk_ui_end_frame(ui);
+
+  /* Send Return with no mods */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_RETURN;
+  ev.mods = 0;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  CHECK_EQ(ev.handled, 1);
+
+  /* Return+Ctrl should NOT match (mods=0 means exact: no mods) */
+  lk_ui_clear_commands(ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.data.key.keycode = LKK_RETURN;
+  ev.mods = LK_MOD_CTRL;
+  ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
+               lk_intern_id(ui->intern, lk_str_c("btn")));
+
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 0);
+  CHECK_EQ(ev.handled, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static int g_handler_called = 0;
 static lk_u32 g_handler_cmd_name = 0;
 
@@ -3095,7 +3471,7 @@ static void test_command_handler_fires(void) {
   g_handler_cmd_name = 0;
 
   lk_ui_set_command_handler(ui, test_cmd_handler_cb, NULL);
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Pick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Pick");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3135,7 +3511,7 @@ static void test_command_log_accumulates(void) {
 
   BEGIN_TEST("introspect: command log accumulates");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3204,8 +3580,8 @@ static void test_dump_commands_output(void) {
 
   BEGIN_TEST("introspect: dump_commands output");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, "Activate");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, 0, 0, "Activate");
 
   memset(&buf, 0, sizeof(buf));
   lk_ui_dump_commands(ui, test_buf_write, &buf);
@@ -3334,7 +3710,7 @@ static void test_accessor_command_fields(void) {
 
   BEGIN_TEST("accessor: command name/arg_count/arg/source");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
   select_id = lk_intern_id(ui->intern, lk_str_c("Select"));
   item_id = lk_intern_id(ui->intern, lk_str_c("item"));
 
@@ -3475,7 +3851,7 @@ static void test_command_arg_typed(void) {
 
   BEGIN_TEST("command: typed arg accessors");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -5213,6 +5589,143 @@ static void test_text_input_insert(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_text_input_emits_value_changed(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("text_input: insert emits VALUE_CHANGED + command");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Translator: value_changed + ptype "field" -> "FieldEdit" */
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0,
+                          "FieldEdit");
+
+  /* Attach presentation (arg = the field id) to text_input */
+  {
+    lk_value pvs[1];
+    pvs[0] = lk_v_cstr(ui->intern, "amount");
+    lk_tree_add_presentation_sv(ui->next, ti, "field", pvs, 1);
+    /* The presentation must be on current tree — we added after end_frame,
+     * so re-run a frame to carry it through. */
+  }
+
+  /* Rebuild the tree to carry the presentation through the diff. */
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix ti2 = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_value pvs[1];
+    lk_tree_add_prop(t, ti2, UIP_TEXT, lk_v_cstr(t->intern, "ab"));
+    lk_tree_add_prop(t, ti2, UIP_FOCUSABLE, lk_v_bool(1));
+    pvs[0] = lk_v_cstr(t->intern, "amount");
+    lk_tree_add_presentation_sv(t, ti2, "field", pvs, 1);
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, ti2);
+    lk_ui_end_frame(ui);
+  }
+  ti = lk_tree_find_by_id(lk_ui_tree(ui),
+                           lk_intern_id(ui->intern, lk_str_c("ti")));
+
+  /* Re-set cursor (state is preserved but rebuild can reset it) */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  /* Send TEXT event "x" */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  /* Buffer should be "axb" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+
+  /* Command queue should contain FieldEdit with args=["amount"] and
+   * source_value = the new buffer "axb". */
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    const lk_command *cmd = &q->cmds[0];
+    CHECK_EQ(cmd->name, lk_intern_id(ui->intern, lk_str_c("FieldEdit")));
+    CHECK_EQ(cmd->arg_count, 1);
+    CHECK_EQ(cmd->args[0].tag, UIV_STR);
+    CHECK_EQ(cmd->source_value.tag, UIV_STR);
+    {
+      lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+      CHECK_EQ(sv.len, 3u);
+      CHECK(memcmp(sv.ptr, "axb", 3) == 0);
+    }
+    {
+      lk_str av = lk_intern_str(ui->intern, cmd->args[0].as.str_id);
+      CHECK(av.len == 6 && memcmp(av.ptr, "amount", 6) == 0);
+    }
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_backspace_emits_value_changed(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("text_input: backspace emits VALUE_CHANGED");
+
+  ui = make_text_input_ui("hi", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "", 0, 0, 0, "Edited");
+
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix ti2 = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+    lk_tree_add_prop(t, ti2, UIP_TEXT, lk_v_cstr(t->intern, "hi"));
+    lk_tree_add_prop(t, ti2, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_add_presentation_s(t, ti2, "whatever", lk_v_i32(0));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, ti2);
+    lk_ui_end_frame(ui);
+  }
+  ti = lk_tree_find_by_id(lk_ui_tree(ui),
+                           lk_intern_id(ui->intern, lk_str_c("ti")));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(2));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_BACKSPACE;
+  lk_event_route(ui, &ev);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1);
+  if (q->count >= 1) {
+    const lk_command *cmd = &q->cmds[0];
+    CHECK_EQ(cmd->source_value.tag, UIV_STR);
+    {
+      lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+      CHECK(sv.len == 1 && sv.ptr[0] == 'h');
+    }
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static void test_text_input_backspace(void) {
   lk_ui *ui;
   lk_ix ti;
@@ -5977,6 +6490,794 @@ static void test_widget_bubble_no_break_text_input(void) {
 }
 
 /* ================================================================
+ * Border rendering tests
+ * ================================================================ */
+
+static void test_border_render_four_fill_rects(void) {
+  /* Node with border_width=2 via styles -> 4 extra FILL_RECTs */
+  lk_tree *t;
+  lk_style *styles;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_ix w, btn;
+  lk_u32 i;
+  int border_count;
+
+  BEGIN_TEST("border: emits 4 fill rects");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    memset(styles, 0, sizeof(lk_style) * t->node_count);
+    /* window style */
+    styles[w].bg.a = 255;
+    /* button style with border */
+    styles[btn].bg.r = 60; styles[btn].bg.g = 60; styles[btn].bg.b = 60;
+    styles[btn].bg.a = 255;
+    styles[btn].fg.r = 255; styles[btn].fg.g = 255; styles[btn].fg.b = 255;
+    styles[btn].fg.a = 255;
+    styles[btn].padding = 4;
+    styles[btn].border_width = 2;
+    styles[btn].border_color.r = 100;
+    styles[btn].border_color.g = 150;
+    styles[btn].border_color.b = 200;
+    styles[btn].border_color.a = 255;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, &rl);
+
+    /* Count FILL_RECTs with border color */
+    border_count = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
+          rl.cmds[i].color.r == 100 &&
+          rl.cmds[i].color.g == 150 &&
+          rl.cmds[i].color.b == 200) {
+        border_count++;
+      }
+    }
+    CHECK_EQ((unsigned)border_count, 4u);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  free(styles);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_border_inset_layout(void) {
+  /* border_width + padding insets the content rect */
+  lk_tree *t;
+  lk_style *styles;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, lbl;
+
+  BEGIN_TEST("border: insets layout content rect");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lbl = lk_tree_add_node_s(t, lk_str_c("lbl"), UIK_LABEL);
+  lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, lbl);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    memset(styles, 0, sizeof(lk_style) * t->node_count);
+    /* column: padding=5, border_width=3 -> inset=8 */
+    styles[col].padding = 5;
+    styles[col].border_width = 3;
+    styles[col].align = LK_ALIGN_STRETCH;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 400;
+    cfg.viewport_h = 300;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    /* Column fills viewport (from window layout).
+     * Label should be inset by 5+3=8 from column origin.
+     */
+    CHECK_EQ((unsigned)rects[lbl].x, 8u);
+    CHECK_EQ((unsigned)rects[lbl].y, 8u);
+    /* Width should be 400 - 8*2 = 384 (stretch) */
+    CHECK_EQ((unsigned)rects[lbl].w, 384u);
+  }
+
+  free(rects);
+  free(styles);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_border_zero_no_extra_commands(void) {
+  /* border_width=0 should not emit extra FILL_RECTs */
+  lk_tree *t;
+  lk_style *styles;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_render_list rl2;
+  lk_ix w, btn;
+
+  BEGIN_TEST("border: zero width = no extra commands");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "X"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (styles && rects) {
+    memset(styles, 0, sizeof(lk_style) * t->node_count);
+    styles[btn].bg.a = 255;
+    styles[btn].fg.a = 255;
+    styles[btn].padding = 4;
+    styles[btn].border_width = 0;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    /* Render with border_width=0 */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, &rl);
+
+    /* Render without styles (fallback, also no border) */
+    memset(&rl2, 0, sizeof(rl2));
+    lk_render_build(t, rects, NULL, NULL, &rl2);
+
+    /* Same number of commands — no border extras */
+    CHECK_EQ(rl.count, rl2.count);
+
+    lk_render_list_destroy(&rl);
+    lk_render_list_destroy(&rl2);
+  }
+
+  free(rects);
+  free(styles);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_border_theme_integration(void) {
+  /* Theme rule with border -> resolve -> render -> border commands present */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_render_list rl;
+  lk_ix w, btn;
+  lk_u32 i;
+  int border_count;
+
+  BEGIN_TEST("border: theme rule integration");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  btn = lk_tree_add_node_s(t, lk_str_c("btn"), UIK_BUTTON);
+  lk_tree_add_prop(t, btn, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, btn);
+
+  th = lk_theme_new(NULL, NULL, NULL);
+  memset(&s, 0, sizeof(s));
+  s.border_width = 1;
+  s.border_color.r = 80;
+  s.border_color.g = 140;
+  s.border_color.b = 220;
+  s.border_color.a = 255;
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s,
+                    LK_SF_BORDER_WIDTH | LK_SF_BORDER_COLOR);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (th && styles && rects) {
+    lk_style_resolve(th, t, NULL, styles);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.measure_text = lk_measure_text_stub;
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+    lk_layout(t, &cfg, rects);
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, rects, styles, NULL, &rl);
+
+    /* Should find 4 FILL_RECTs with the theme border color */
+    border_count = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
+          rl.cmds[i].color.r == 80 &&
+          rl.cmds[i].color.g == 140 &&
+          rl.cmds[i].color.b == 220) {
+        border_count++;
+      }
+    }
+    CHECK_EQ((unsigned)border_count, 4u);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ---- clipboard mock + tests ---- */
+
+static char g_mock_clipboard[1024];
+
+static const char *mock_clipboard_get(void *ud) {
+  (void)ud;
+  return g_mock_clipboard;
+}
+
+static void mock_clipboard_set(void *ud, const char *text) {
+  size_t len;
+  (void)ud;
+  len = strlen(text);
+  if (len >= sizeof(g_mock_clipboard)) {
+    len = sizeof(g_mock_clipboard) - 1;
+  }
+  memcpy(g_mock_clipboard, text, len);
+  g_mock_clipboard[len] = '\0';
+}
+
+static void test_text_input_ctrl_c(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+
+  BEGIN_TEST("text_input: Ctrl+C copies selection to clipboard");
+
+  ui = make_text_input_ui("hello world", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+  g_mock_clipboard[0] = '\0';
+
+  /* Select "llo w" (positions 2..7) */
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(2));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(7));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(7));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_C;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK(strcmp(g_mock_clipboard, "llo w") == 0);
+
+  /* Text should be unchanged */
+  {
+    lk_value v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+    lk_str text = lk_intern_str(ui->intern, v.as.str_id);
+    CHECK_EQ(text.len, 11u);
+    CHECK(memcmp(text.ptr, "hello world", 11) == 0);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_ctrl_v(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: Ctrl+V pastes from clipboard");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+  strcpy(g_mock_clipboard, "XY");
+
+  /* Cursor at position 1 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_V;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  /* Text should be "aXYb" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "aXYb", 4) == 0);
+
+  /* Cursor at 3 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_ctrl_x(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: Ctrl+X cuts selection");
+
+  ui = make_text_input_ui("abcde", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+  g_mock_clipboard[0] = '\0';
+
+  /* Select "bcd" (positions 1..4) */
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(4));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(4));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_X;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK(strcmp(g_mock_clipboard, "bcd") == 0);
+
+  /* Text should be "ae" */
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 2u);
+  CHECK(memcmp(text.ptr, "ae", 2) == 0);
+
+  /* Cursor at 1 */
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_ctrl_v_no_clipboard(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+
+  BEGIN_TEST("text_input: Ctrl+V no-op without clipboard");
+
+  ui = make_text_input_ui("ab", &ti);
+  /* No clipboard installed */
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_V;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  /* Should not be handled (bubbles up) */
+  CHECK_EQ((unsigned)ev.handled, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Dropdown widget tests
+ * ================================================================ */
+
+static lk_ui *make_dropdown_ui(lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd, o1, o2, o3;
+  const lk_tree *cur;
+  lk_node_id dd_id;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  *out_dd = lk_tree_find_by_id(cur, dd_id);
+  return ui;
+}
+
+static void test_dropdown_pointer_down_toggles(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: pointer_down toggles expanded");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  /* Initially not expanded — tag is UIV_NONE when unset */
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).tag,
+           (unsigned)UIV_NONE);
+
+  /* Click */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1u);
+
+  /* Click again — closes */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_arrow_keys_navigate(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: arrow keys move hover index");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  /* Open via Down */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_DOWN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1u);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 0);
+
+  /* Down -> 1 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_DOWN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 1);
+
+  /* Up -> 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_UP;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 0);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Build a dropdown UI whose tree structure will stay stable across
+ * frames (window > col > dd > options).  With an attached presentation
+ * on the dropdown so translators can match.  Returns dd index. */
+static lk_ui *make_dropdown_ui_with_pres(lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd, o1, o2, o3;
+  lk_node_id dd_id;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  lk_tree_add_presentation_s(t, dd, "picker", lk_v_i32(0));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  *out_dd = lk_tree_find_by_id(lk_ui_tree(ui), dd_id);
+  return ui;
+}
+
+static void test_dropdown_return_commits(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: RETURN commits hover to selection and closes");
+
+  ui = make_dropdown_ui_with_pres(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  /* Register translator so commit emits a command we can inspect */
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "picker", 0, 0, 0,
+                          "Selected");
+
+  /* Open + navigate to index 1 */
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+  lk_state_set(st, dd_id, LKS_HOVER_INDEX, lk_v_i32(1));
+
+  /* Commit */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_RETURN;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_SELECTED_INDEX).as.i, 1);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+
+  /* Verify value_changed command was dispatched with source_value="Banana" */
+  {
+    const lk_command_queue *q = lk_ui_commands(ui);
+    CHECK_EQ(q->count, 1);
+    if (q->count >= 1) {
+      const lk_command *cmd = &q->cmds[0];
+      CHECK_EQ(cmd->source_value.tag, UIV_STR);
+      {
+        lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+        CHECK(sv.len == 6 && memcmp(sv.ptr, "Banana", 6) == 0);
+      }
+    }
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_escape_closes(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: ESCAPE closes expanded popup");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_ESCAPE;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_overlay_hit_test(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_ix hit;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("dropdown: overlay hit-test returns option under cursor");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  /* Popup starts below trigger. Click on row 1 (second option). */
+  {
+    lk_rect tr = rects[dd];
+    lk_i32 row_h = 20 + 4 * 2; /* DROPDOWN_MIN_OPTION_H is 20, pad 4 each side */
+    lk_i32 click_y = tr.y + tr.h + 7 + row_h + row_h / 2; /* inset + 1 row + middle */
+    lk_i32 click_x = tr.x + tr.w / 2;
+
+    hit = lk_hit_test_overlay(lk_ui_tree(ui), rects, cfg.styles, st, &cfg,
+                               click_x, click_y);
+    /* Expect an option node ix (one of o1/o2/o3). */
+    CHECK(hit > 0);
+    if (hit > 0) {
+      CHECK_EQ((unsigned)lk_ui_tree(ui)->nodes[hit].kind,
+               (unsigned)UIK_OPTION);
+    }
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_click_outside_closes(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+  int dismissed;
+
+  BEGIN_TEST("dropdown: click outside dismisses popup");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  /* Far-away click (outside both trigger and popup) */
+  dismissed = lk_overlay_dismiss_outside(ui, rects, cfg.styles, &cfg,
+                                          700, 500);
+  CHECK_EQ(dismissed, 1);
+  CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).tag,
+           (unsigned)UIV_I32);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_overlay_render_when_expanded(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id dd_id;
+  lk_render_list rl;
+  lk_u32 cmds_collapsed, cmds_expanded;
+
+  BEGIN_TEST("dropdown: overlay render emits commands only when expanded");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.measure_text = lk_measure_text_stub;
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = st;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  /* Collapsed: no overlay commands */
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build_overlays(lk_ui_tree(ui), rects, cfg.styles, st, &cfg, &rl);
+  cmds_collapsed = rl.count;
+  CHECK_EQ(cmds_collapsed, 0u);
+
+  /* Expand, re-run */
+  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+  rl.count = 0;
+  lk_render_build_overlays(lk_ui_tree(ui), rects, cfg.styles, st, &cfg, &rl);
+  cmds_expanded = rl.count;
+  CHECK(cmds_expanded > 0u);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 
@@ -6105,6 +7406,9 @@ int main(void) {
   test_pres_none_returns_null();
   test_pres_survives_frame();
   test_pres_change_triggers_updated();
+  test_pres_multi_arg();
+  test_pres_multi_arg_cmd();
+  test_pres_multi_arg_change_detected();
 
   /* command / translator */
   printf("\nlk command/translator tests:\n");
@@ -6112,6 +7416,12 @@ int main(void) {
   test_translator_no_match();
   test_translator_walks_ancestors();
   test_translator_ptype_and_kind();
+  test_translator_keycode_match();
+  test_translator_keycode_wrong_key();
+  test_translator_keycode_wrong_mods();
+  test_translator_keycode_no_pres_required();
+  test_translator_keycode_on_pointer_event();
+  test_translator_keycode_zero_mods();
   test_command_handler_fires();
 
   /* introspection */
@@ -6185,6 +7495,13 @@ int main(void) {
   test_ui_set_theme_custom();
   test_ui_hover_state();
 
+  /* border rendering */
+  printf("\nlk border tests:\n");
+  test_border_render_four_fill_rects();
+  test_border_inset_layout();
+  test_border_zero_no_extra_commands();
+  test_border_theme_integration();
+
   /* deferred prop append */
   printf("\nlk deferred prop tests:\n");
   test_prop_deferred_all_nodes_first();
@@ -6196,6 +7513,8 @@ int main(void) {
   test_text_input_measure();
   test_text_input_render();
   test_text_input_insert();
+  test_text_input_emits_value_changed();
+  test_text_input_backspace_emits_value_changed();
   test_text_input_backspace();
   test_text_input_delete();
   test_text_input_cursor_movement();
@@ -6216,6 +7535,23 @@ int main(void) {
   test_scroll_empty();
   test_scroll_bar_rendered();
   test_widget_bubble_no_break_text_input();
+
+  /* clipboard */
+  printf("\nlk clipboard tests:\n");
+  test_text_input_ctrl_c();
+  test_text_input_ctrl_v();
+  test_text_input_ctrl_x();
+  test_text_input_ctrl_v_no_clipboard();
+
+  /* dropdown */
+  printf("\nlk dropdown tests:\n");
+  test_dropdown_pointer_down_toggles();
+  test_dropdown_arrow_keys_navigate();
+  test_dropdown_return_commits();
+  test_dropdown_escape_closes();
+  test_dropdown_overlay_hit_test();
+  test_dropdown_click_outside_closes();
+  test_dropdown_overlay_render_when_expanded();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

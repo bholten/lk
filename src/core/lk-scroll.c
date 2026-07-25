@@ -59,6 +59,8 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   const lk_node *nd = &t->nodes[n];
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 bw = cfg->styles ? cfg->styles[n].border_width : 0;
+  lk_i32 inset = pad + bw;
   lk_i32 gap =
       cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
@@ -80,8 +82,8 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     sum_h += gap * (count - 1);
   }
 
-  *out_w = max_w + pad * 2;
-  *out_h = sum_h + pad * 2;
+  *out_w = max_w + inset * 2;
+  *out_h = sum_h + inset * 2;
 }
 
 /* ---- Layout ---- */
@@ -178,7 +180,7 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
   scroll_max = get_scroll_max(state, nid);
   if (scroll_max > 0) {
     lk_i32 scroll_y = get_scroll_y(state, nid);
-    lk_i32 pad = style->padding;
+    lk_i32 pad = style->padding + style->border_width;
     lk_i32 track_h = rect->h - pad * 2;
     lk_i32 viewport_h = rect->h - pad * 2;
     lk_i32 total_h = viewport_h + scroll_max;
