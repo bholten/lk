@@ -1508,6 +1508,70 @@ static void test_tooltip_prop_binding(void) {
   END_TEST();
 }
 
+static void test_split_kinds(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("split_h/split_v kinds can be created via Lcl");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let sh [lk::node $t \"sh\" \"split_h\"]\n"
+    "let sv [lk::node $t \"sv\" \"split_v\"]\n"
+    "let c1 [lk::node $t \"c1\" \"column\"]\n"
+    "let c2 [lk::node $t \"c2\" \"column\"]\n"
+    "let c3 [lk::node $t \"c3\" \"column\"]\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $sh\n"
+    "lk::append_child $t $sh $c1\n"
+    "lk::append_child $t $sh $sv\n"
+    "lk::append_child $t $sv $c2\n"
+    "lk::append_child $t $sv $c3\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) {
+    /* changeset: window + split_h + split_v + 3 columns */
+    CHECK(lcl_list_len(r) >= 6);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_split_ratio_prop_lcl(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("split_ratio prop settable via lk::prop");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let sp [lk::node $t \"sp\" \"split_h\"]\n"
+    "lk::prop $t $sp \"split_ratio\" 300\n"
+    "let c1 [lk::node $t \"c1\" \"column\"]\n"
+    "let c2 [lk::node $t \"c2\" \"column\"]\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $sp\n"
+    "lk::append_child $t $sp $c1\n"
+    "lk::append_child $t $sp $c2\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) {
+    CHECK(lcl_list_len(r) >= 4);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -1569,6 +1633,9 @@ int main(void) {
   test_overlay_pop_proc();
   test_overlay_push_errors();
   test_tooltip_prop_binding();
+
+  test_split_kinds();
+  test_split_ratio_prop_lcl();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

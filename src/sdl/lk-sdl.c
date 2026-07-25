@@ -808,7 +808,30 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
           lk_ev.type == LK_EVENT_POINTER_DOWN ||
           lk_ev.type == LK_EVENT_POINTER_UP) {
-        if (have_rects) {
+        int captured = 0;
+
+        /* Pointer capture: while a node holds the capture (e.g. a
+         * split divider mid-drag), MOVE/UP events target it directly
+         * (bypassing hit-test) and hover updates are suppressed.
+         * Capture referencing a node that no longer resolves in the
+         * current tree is dropped. */
+        if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
+            lk_ev.type == LK_EVENT_POINTER_UP) {
+          lk_node_id cap = lk_capture_current(win->ui);
+
+          if (cap != 0) {
+            lk_ix cix = lk_tree_find_by_id(cur, cap);
+
+            if (cix != 0) {
+              lk_ev.target = cix;
+              captured = 1;
+            } else {
+              lk_capture_clear(win->ui);
+            }
+          }
+        }
+
+        if (!captured && have_rects) {
           /* Overlay hit-test first (popups draw on top of everything) */
           lk_ev.target = lk_hit_test_overlay(win->ui, win->rects, &lcfg,
                                              lk_ev.data.pointer.x,
@@ -834,11 +857,13 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           }
         }
 
-        /* Update hover state */
-        if (lk_ev.target != 0) {
-          lk_hover_set(win->ui, cur->nodes[lk_ev.target].id);
-        } else {
-          lk_hover_clear(win->ui);
+        /* Update hover state (suppressed while a capture is active) */
+        if (!captured) {
+          if (lk_ev.target != 0) {
+            lk_hover_set(win->ui, cur->nodes[lk_ev.target].id);
+          } else {
+            lk_hover_clear(win->ui);
+          }
         }
       } else if (lk_ev.type == LK_EVENT_WHEEL) {
         if (have_rects) {

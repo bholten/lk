@@ -389,11 +389,33 @@ decides **how it looks**.
 - Example: `examples/budget-dsl.lcl` — row-based budget tracker.
 - 7 new core tests, 2 new Lcl tests (178 core, 38 Lcl).
 
-### 5. Resizable split layout
+### ~~5. Resizable split layout~~ ✓
 
-New `SPLIT_H`/`SPLIT_V` widget kinds with draggable dividers and ratio stored
-in `lk_state`. Gateway to multi-panel applications (editor panes, inspector
-panels). See `docs/weft-gap-analysis.md` §4.
+- New kinds `UIK_SPLIT_H` / `UIK_SPLIT_V` (`src/core/lk-split.c`): two
+  panes with a draggable 5 px divider band owned by the split node
+  itself (no divider node — a band hit lands on the split because no
+  child covers it).  One child = plain container; zero = bg only;
+  extras beyond two ignored (zero rects).
+- Ratio is per-mille (0..1000).  Priority: `LKS_SPLIT_RATIO` state
+  (written by dragging) > `UIP_SPLIT_RATIO` prop > 500.  **Initial
+  values are props, not state pokes** — deliberate, learning from the
+  dropdown `-value` gap.  Layout clamps panes to >= 40 px (MIN_PANE).
+- New core facility: **pointer capture** — `captured_id` on `lk_ui`,
+  `lk_capture_set/clear/current`.  While set, the SDL loop targets
+  POINTER_MOVE/UP at the captured node (bypassing hit-test) and
+  suppresses hover; `lk_ui_end_frame` clears it via the same
+  removed-not-readded filter as focus.  This is what lets a divider
+  drag keep tracking after the cursor leaves the band.
+- Divider geometry always derives from the split's own laid-out rect
+  (render) or its stashed content rect (`LKS_SPLIT_C*`, events) —
+  never recomputed from ancestors (weft's nested-splits bug).
+- Bindings: kinds `split_h`/`split_v`, prop `split_ratio`; DSL procs +
+  whitelist + exports.  Example: `examples/split-dsl.lcl`.
+- Rider: `lk_tree_dump` kind-name table completed (text_input, scroll,
+  dropdown, option, split_h, split_v — previously "unknown").
+- 14 new core tests, 2 new Lcl tests (230 core, 52 Lcl).
+- Deferred (known issues below): resize-cursor feedback, keyboard
+  resize.
 
 ### 6. Per-character styled text
 
@@ -440,6 +462,13 @@ None block shipping the budget app; revisit as the app surfaces them.
   the diff emits REMOVED+ADDED for moves, `lk_state` entries keyed on
   that node_id get GC'd.  Documented behavior but worth flagging if
   anyone builds a reorder UI.
+- **Split divider has no cursor feedback.**  The pointer stays the
+  default arrow over the divider band; a resize cursor (SDL
+  `SDL_SetCursor`) needs a hover-over-band hook in the run loop.
+  Deferred from the split work.
+- **Split divider has no keyboard resize.**  The divider is not
+  focusable and arrow keys don't nudge the ratio.  Deferred from the
+  split work.
 
 
 ## Design-coherence items
@@ -468,8 +497,11 @@ shipping.
   extended the pattern rather than fixing it: `LKS_SEL_X0`/`X1` (selection
   endpoint x), `LKS_TEXT_ORIGIN_X`, `LKS_FONT_ID`/`LKS_FONT_SIZE`
   (stashed by `lk_text_input_store_geometry`, mirroring the dropdown
-  trigger-rect stash).  All of it belongs in per-frame scratch parallel
-  to `rects[]`.
+  trigger-rect stash).  The split work extended it again:
+  `LKS_SPLIT_CX`/`CY`/`CW`/`CH` (content rect stashed by
+  `lk_split_store_geometry` so the drag handler can map pointer
+  position to a ratio).  All of it belongs in per-frame scratch
+  parallel to `rects[]`.
 
 ## Deferred
 

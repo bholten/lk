@@ -551,6 +551,13 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
     ui->focused_id = 0;
   }
 
+  /* Same rule for pointer capture: a captured node that is truly gone
+   * releases the capture; a move (REMOVED+ADDED) keeps it. */
+  if (ui->captured_id != 0 &&
+      cs_id_removed_not_readded(&ui->changeset, ui->captured_id)) {
+    ui->captured_id = 0;
+  }
+
   /* Pop overlays whose owner node was removed (same move filter:
    * REMOVED + ADDED in one changeset is a reparent, overlay stays). */
   {

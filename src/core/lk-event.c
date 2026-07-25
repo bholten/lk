@@ -169,6 +169,24 @@ void lk_hover_clear(lk_ui *ui) {
   }
 }
 
+/* ---- Pointer capture (see lk.h for semantics) ---- */
+
+void lk_capture_set(lk_ui *ui, lk_node_id id) {
+  if (ui) {
+    ui->captured_id = id;
+  }
+}
+
+void lk_capture_clear(lk_ui *ui) {
+  if (ui) {
+    ui->captured_id = 0;
+  }
+}
+
+lk_node_id lk_capture_current(const lk_ui *ui) {
+  return ui ? ui->captured_id : 0;
+}
+
 lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t) {
   if (!ui || !t || ui->focused_id == 0) {
     return 0;

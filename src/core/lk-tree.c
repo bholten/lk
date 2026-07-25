@@ -742,6 +742,12 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
   case UIK_SPACER: wr_cstr(wr, ud, "spacer"); break;
   case UIK_LABEL: wr_cstr(wr, ud, "label"); break;
   case UIK_BUTTON: wr_cstr(wr, ud, "button"); break;
+  case UIK_TEXT_INPUT: wr_cstr(wr, ud, "text_input"); break;
+  case UIK_SCROLL: wr_cstr(wr, ud, "scroll"); break;
+  case UIK_DROPDOWN: wr_cstr(wr, ud, "dropdown"); break;
+  case UIK_OPTION: wr_cstr(wr, ud, "option"); break;
+  case UIK_SPLIT_H: wr_cstr(wr, ud, "split_h"); break;
+  case UIK_SPLIT_V: wr_cstr(wr, ud, "split_v"); break;
 
   default: wr_cstr(wr, ud, "unknown"); break;
   }
