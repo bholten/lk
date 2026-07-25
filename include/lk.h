@@ -99,6 +99,14 @@ typedef enum lk_prop_key {
                   their resolved anchor (see lk_layout_subtree and
                   docs/overlays.md). */
 
+  UIP_TOOLTIP, /* string (interned, like TEXT): hover help text.  When
+                  the pointer moves onto a node carrying this prop, the
+                  core pushes an LK_OVERLAY_TOOLTIP overlay anchored
+                  below it (hover-transition hook in lk_hover_set /
+                  lk_hover_clear; producer in lk-tooltip.c).  Tooltips
+                  are passive: never hit-testable, never consume
+                  clicks.  See docs/overlays.md. */
+
   UIP__COUNT
 } lk_prop_key;
 

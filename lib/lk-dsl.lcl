@@ -64,7 +64,7 @@ namespace lk_dsl {
 
     ;; ---- Prop application ----
     ;; Known prop keys that map to lk::prop
-    let _prop_keys #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1}
+    let _prop_keys #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1}
 
     proc _apply_flags {node flags} {
         let pk $_prop_keys

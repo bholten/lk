@@ -1,10 +1,11 @@
 /*
  * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
  *
- * Exposes 32 procs in the "lk" namespace (26 core + 6 SDL) for
+ * Exposes 35 procs in the "lk" namespace (29 core + 6 SDL) for
  * building UI trees, managing frames, commands, translators, state,
- * focus, interning, and windows/fonts.  SDL procs (window_* and
- * register_font) are conditionally compiled when LK_HAVE_SDL is set.
+ * focus, overlays, interning, and windows/fonts.  SDL procs (window_*
+ * and register_font) are conditionally compiled when LK_HAVE_SDL is
+ * set.
  *
  * C89 (matches lk + lcl).
  */
@@ -65,7 +66,24 @@ static const str_enum prop_table[] = {
     {"align",     UIP_ALIGN    },
     {"justify",   UIP_JUSTIFY  },
     {"hidden",    UIP_HIDDEN   },
+    {"tooltip",   UIP_TOOLTIP  },
     {NULL,        0            }
+};
+
+static const str_enum overlay_kind_table[] = {
+    {"dropdown_popup", LK_OVERLAY_DROPDOWN_POPUP},
+    {"tooltip",        LK_OVERLAY_TOOLTIP       },
+    {"context_menu",   LK_OVERLAY_CONTEXT_MENU  },
+    {"modal",          LK_OVERLAY_MODAL         },
+    {NULL,             0                        }
+};
+
+static const str_enum anchor_table[] = {
+    {"below",     LK_ANCHOR_BELOW          },
+    {"above",     LK_ANCHOR_ABOVE          },
+    {"at_cursor", LK_ANCHOR_AT_CURSOR      },
+    {"center",    LK_ANCHOR_CENTER_VIEWPORT},
+    {NULL,        0                        }
 };
 
 static const str_enum event_table[] = {
@@ -548,7 +566,10 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
 
   /* Value coercion based on prop key */
   switch (key_val) {
-  case UIP_TEXT: lv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3])); break;
+  case UIP_TEXT:
+  case UIP_TOOLTIP:
+    lv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3]));
+    break;
   case UIP_FOCUSABLE:
   case UIP_DISABLED:
   case UIP_HIDDEN: {
@@ -2086,6 +2107,137 @@ static int c_lk_overlay_count(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
+/* lk::overlay_push [ui dict] — push an overlay from app code.
+ *
+ * Dict keys:
+ *   kind               required: "dropdown_popup"|"tooltip"|
+ *                      "context_menu"|"modal"
+ *   anchor             optional: "below"|"above"|"at_cursor"|"center"
+ *                      (default: "center" for modal, else "below")
+ *   owner_id           optional node id string (interned)
+ *   content_root_id    optional node id string (interned) — a
+ *                      UIP_HIDDEN subtree laid out at the anchor
+ *   dismiss_on_outside optional bool (default: modal 0, else 1)
+ *   traps_focus        optional bool (default: modal 1, else 0)
+ */
+static int c_lk_overlay_push(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  lk_ui *ui = NULL;
+  lcl_value *dict;
+  lcl_value *v;
+  lk_overlay ov;
+  int kind_val;
+  int is_modal;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::overlay_push: expected 2 arguments (ui, dict)");
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::overlay_push: bad ui handle");
+    return LCL_RC_ERR;
+  }
+
+  dict = argv[1];
+
+  if (lcl_value_type_of(dict) != LCL_DICT) {
+    lcl_set_error(interp, "lk::overlay_push: expected dict");
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_dict_get(dict, "kind", &v) != LCL_OK) {
+    lcl_set_error(interp, "lk::overlay_push: missing kind");
+    return LCL_RC_ERR;
+  }
+
+  if (!lookup_enum(overlay_kind_table, lcl_value_to_string(v), &kind_val)) {
+    lcl_set_error(interp, "lk::overlay_push: unknown overlay kind");
+    return LCL_RC_ERR;
+  }
+
+  is_modal = (kind_val == LK_OVERLAY_MODAL);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = (lk_u8)kind_val;
+  ov.anchor_mode =
+      (lk_u8)(is_modal ? LK_ANCHOR_CENTER_VIEWPORT : LK_ANCHOR_BELOW);
+  ov.dismiss_on_outside = (lk_u8)(is_modal ? 0 : 1);
+  ov.traps_focus = (lk_u8)(is_modal ? 1 : 0);
+
+  if (lcl_dict_get(dict, "anchor", &v) == LCL_OK) {
+    int anchor_val;
+
+    if (!lookup_enum(anchor_table, lcl_value_to_string(v), &anchor_val)) {
+      lcl_set_error(interp, "lk::overlay_push: unknown anchor");
+      return LCL_RC_ERR;
+    }
+
+    ov.anchor_mode = (lk_u8)anchor_val;
+  }
+
+  if (lcl_dict_get(dict, "owner_id", &v) == LCL_OK) {
+    ov.owner_id = lk_intern_cid(ui->intern, lcl_value_to_string(v));
+  }
+
+  if (lcl_dict_get(dict, "content_root_id", &v) == LCL_OK) {
+    ov.content_root_id = lk_intern_cid(ui->intern, lcl_value_to_string(v));
+  }
+
+  if (lcl_dict_get(dict, "dismiss_on_outside", &v) == LCL_OK) {
+    long b;
+
+    if (lcl_value_to_int(v, &b) != LCL_OK) {
+      lcl_set_error(interp, "lk::overlay_push: dismiss_on_outside expects int");
+      return LCL_RC_ERR;
+    }
+
+    ov.dismiss_on_outside = (lk_u8)(b ? 1 : 0);
+  }
+
+  if (lcl_dict_get(dict, "traps_focus", &v) == LCL_OK) {
+    long b;
+
+    if (lcl_value_to_int(v, &b) != LCL_OK) {
+      lcl_set_error(interp, "lk::overlay_push: traps_focus expects int");
+      return LCL_RC_ERR;
+    }
+
+    ov.traps_focus = (lk_u8)(b ? 1 : 0);
+  }
+
+  if (!lk_overlay_push(ui, &ov)) {
+    lcl_set_error(interp, "lk::overlay_push: push failed");
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::overlay_pop [ui] — pop the topmost overlay (no-op when empty). */
+static int c_lk_overlay_pop(lcl_interp *interp, int argc, lcl_value **argv,
+                            lcl_value **out) {
+  lk_ui *ui = NULL;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::overlay_pop: expected 1 argument");
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::overlay_pop: bad ui handle");
+    return LCL_RC_ERR;
+  }
+
+  lk_overlay_pop(ui);
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
 /* ============================================================================
  * Clipboard
  * ============================================================================
@@ -2192,6 +2344,10 @@ void lcl_register_lk(lcl_interp *interp) {
   /* Overlays */
   lcl_ns_def(ns, "overlay_count",
              lcl_c_proc_new("lk::overlay_count", c_lk_overlay_count));
+  lcl_ns_def(ns, "overlay_push",
+             lcl_c_proc_new("lk::overlay_push", c_lk_overlay_push));
+  lcl_ns_def(ns, "overlay_pop",
+             lcl_c_proc_new("lk::overlay_pop", c_lk_overlay_pop));
 
   /* Tags & Style */
   lcl_ns_def(ns, "tag", lcl_c_proc_new("lk::tag", c_lk_tag));

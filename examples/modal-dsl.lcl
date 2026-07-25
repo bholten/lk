@@ -1,0 +1,58 @@
+;; modal-dsl.lcl — Confirm-dialog modal using the overlay stack.
+;;
+;; Demonstrates:
+;;   - lk::overlay_push / lk::overlay_pop driven from command handlers
+;;   - A hidden (-hidden 1) column as the modal's content subtree
+;;     (laid out centered by the overlay pass, skipped by the main pass)
+;;   - Focus trapped to the dialog while it is open (Tab cycles only
+;;     Confirm/Cancel); outside clicks are blocked
+;;   - Cancel handler and ESC (core overlay pre-step) both close it
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+var status "Nothing deleted yet."
+
+app "Modal Demo" -font $font -font_size 16 -width 520 -height 320 {
+
+    theme {
+        rule window #{bg (22 25 32)}
+        rule * #{fg (210 215 225)}
+        rule column #{padding 24 gap 12}
+        rule row #{gap 8}
+        rule button #{bg (50 55 70) padding 8 border_width 1 border_color (80 85 100)}
+        rule button -state hovered #{bg (70 75 90) border_color (120 125 150)}
+        rule button -tag danger #{bg (120 40 40) border_color (160 70 70)}
+        rule column -tag dialog #{bg (40 45 58) padding 16 gap 12 border_width 1 border_color (90 95 115)}
+    }
+
+    translator pointer_down action Action
+
+    on Action [lambda {cmd} {
+        let verb [get [get $cmd args] 0]
+        if [== $verb open_confirm] {
+            lk::overlay_push $lk_dsl::_ui #{kind modal anchor center owner_id delete content_root_id confirm_box}
+        }
+        if [== $verb do_delete] {
+            set! status "Deleted!"
+            lk::overlay_pop $lk_dsl::_ui
+        }
+        if [== $verb cancel] {
+            lk::overlay_pop $lk_dsl::_ui
+        }
+    }]
+
+    view {
+        column "main" {
+            label "title" -text "Overlay modal demo"
+            label "status" -text $status
+            button "delete" -text "Delete…" -tag danger -focusable 1 -tooltip "Opens a confirmation dialog" -present (action (open_confirm))
+            column "confirm_box" -hidden 1 -tag dialog {
+                label "confirm_msg" -text "Really delete? This cannot be undone."
+                row "confirm_row" {
+                    button "confirm" -text "Delete" -tag danger -focusable 1 -present (action (do_delete))
+                    button "cancel" -text "Cancel" -focusable 1 -present (action (cancel))
+                }
+            }
+        }
+    }
+}

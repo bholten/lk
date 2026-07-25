@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-tooltip.h"
 #include <lk.h>
 
 static int node_is_focusable(const lk_tree *t, lk_ix n) {
@@ -150,12 +151,20 @@ void lk_focus_clear(lk_ui *ui) {
 
 void lk_hover_set(lk_ui *ui, lk_node_id id) {
   if (ui) {
+    if (ui->hovered_id != id) {
+      lk_tooltip_hover_changed(ui, id); /* hover-transition hook */
+    }
+
     ui->hovered_id = id;
   }
 }
 
 void lk_hover_clear(lk_ui *ui) {
   if (ui) {
+    if (ui->hovered_id != 0) {
+      lk_tooltip_hover_changed(ui, 0);
+    }
+
     ui->hovered_id = 0;
   }
 }
