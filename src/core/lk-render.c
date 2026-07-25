@@ -162,6 +162,43 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
       def->render(t, n, &rects[n], node_style, state, out);
     }
 
+    /* Emit border edges as 4 FILL_RECTs */
+    if (node_style->border_width > 0) {
+      lk_i32 bw = node_style->border_width;
+      lk_render_cmd bcmd;
+
+      /* Top */
+      memset(&bcmd, 0, sizeof(bcmd));
+      bcmd.op = LK_ROP_FILL_RECT;
+      bcmd.color = node_style->border_color;
+      bcmd.rect.x = rects[n].x;
+      bcmd.rect.y = rects[n].y;
+      bcmd.rect.w = rects[n].w;
+      bcmd.rect.h = bw;
+      lk_render_list_push(out, bcmd);
+
+      /* Bottom */
+      bcmd.rect.x = rects[n].x;
+      bcmd.rect.y = rects[n].y + rects[n].h - bw;
+      bcmd.rect.w = rects[n].w;
+      bcmd.rect.h = bw;
+      lk_render_list_push(out, bcmd);
+
+      /* Left */
+      bcmd.rect.x = rects[n].x;
+      bcmd.rect.y = rects[n].y + bw;
+      bcmd.rect.w = bw;
+      bcmd.rect.h = rects[n].h - bw * 2;
+      lk_render_list_push(out, bcmd);
+
+      /* Right */
+      bcmd.rect.x = rects[n].x + rects[n].w - bw;
+      bcmd.rect.y = rects[n].y + bw;
+      bcmd.rect.w = bw;
+      bcmd.rect.h = rects[n].h - bw * 2;
+      lk_render_list_push(out, bcmd);
+    }
+
     /* Emit CLIP_BEGIN after own render commands, before children */
     if (clips) {
       lk_render_cmd cmd;

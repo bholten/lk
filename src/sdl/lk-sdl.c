@@ -240,6 +240,38 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
   }
 }
 
+/* ---- Clipboard callbacks ---- */
+
+static const char *sdl_clipboard_get(void *ud) {
+  static char clip_buf[4096];
+  char *sdl_text;
+  size_t len;
+
+  (void)ud;
+
+  sdl_text = SDL_GetClipboardText();
+  if (!sdl_text) {
+    clip_buf[0] = '\0';
+    return clip_buf;
+  }
+
+  len = strlen(sdl_text);
+  if (len >= sizeof(clip_buf)) {
+    len = sizeof(clip_buf) - 1;
+  }
+
+  memcpy(clip_buf, sdl_text, len);
+  clip_buf[len] = '\0';
+  SDL_free(sdl_text);
+
+  return clip_buf;
+}
+
+static void sdl_clipboard_set(void *ud, const char *text) {
+  (void)ud;
+  SDL_SetClipboardText(text);
+}
+
 lk_window *lk_window_create(const lk_window_cfg *cfg) {
   lk_window *win;
   const char *title;
@@ -345,6 +377,8 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
     return NULL;
   }
 
+  lk_ui_set_clipboard(win->ui, sdl_clipboard_get, sdl_clipboard_set, NULL);
+
   return win;
 }
 
@@ -413,6 +447,31 @@ static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
   case SDLK_HOME: return LKK_HOME;
   case SDLK_END: return LKK_END;
   case SDLK_A: return LKK_A;
+  case SDLK_B: return LKK_B;
+  case SDLK_C: return LKK_C;
+  case SDLK_D: return LKK_D;
+  case SDLK_E: return LKK_E;
+  case SDLK_F: return LKK_F;
+  case SDLK_G: return LKK_G;
+  case SDLK_H: return LKK_H;
+  case SDLK_I: return LKK_I;
+  case SDLK_J: return LKK_J;
+  case SDLK_K: return LKK_K;
+  case SDLK_L: return LKK_L;
+  case SDLK_M: return LKK_M;
+  case SDLK_N: return LKK_N;
+  case SDLK_O: return LKK_O;
+  case SDLK_P: return LKK_P;
+  case SDLK_Q: return LKK_Q;
+  case SDLK_R: return LKK_R;
+  case SDLK_S: return LKK_S;
+  case SDLK_T: return LKK_T;
+  case SDLK_U: return LKK_U;
+  case SDLK_V: return LKK_V;
+  case SDLK_W: return LKK_W;
+  case SDLK_X: return LKK_X;
+  case SDLK_Y: return LKK_Y;
+  case SDLK_Z: return LKK_Z;
   default: return LKK_UNKNOWN;
   }
 }
@@ -596,8 +655,28 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           lk_ev.type == LK_EVENT_POINTER_DOWN ||
           lk_ev.type == LK_EVENT_POINTER_UP) {
         if (have_rects) {
-          lk_ev.target = lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
-                                     lk_ev.data.pointer.y);
+          /* Overlay hit-test first (popups draw on top of everything) */
+          const lk_style *styles = lk_ui_styles(win->ui);
+          const lk_state *state = lk_ui_state(win->ui);
+
+          lk_ev.target = lk_hit_test_overlay(cur, win->rects, styles, state,
+                                              &lcfg, lk_ev.data.pointer.x,
+                                              lk_ev.data.pointer.y);
+
+          if (lk_ev.target == 0) {
+            lk_ev.target =
+                lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
+                            lk_ev.data.pointer.y);
+          }
+
+          /* Pointer-down outside any open overlay closes it.
+           * Call before routing so the click still fires on whatever
+           * the user clicked. */
+          if (lk_ev.type == LK_EVENT_POINTER_DOWN) {
+            lk_overlay_dismiss_outside(win->ui, win->rects, styles, &lcfg,
+                                        lk_ev.data.pointer.x,
+                                        lk_ev.data.pointer.y);
+          }
         }
 
         /* Update hover state */
@@ -658,6 +737,11 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     /* 5. Render */
     lk_render_build(cur, win->rects, lk_ui_styles(win->ui),
                     lk_ui_state(win->ui), &win->rl);
+
+    /* 5b. Overlays (dropdown popups) draw on top of the main tree.
+     * See docs/overlays.md for the roadmap to a generalized system. */
+    lk_render_build_overlays(cur, win->rects, lk_ui_styles(win->ui),
+                              lk_ui_state(win->ui), &lcfg, &win->rl);
 
     SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
     SDL_RenderClear(win->sdl_ren);

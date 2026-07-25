@@ -351,12 +351,17 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
 
 /* ---- Presentation API ---- */
 
-void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
-                              lk_value pvalue) {
+void lk_tree_add_presentation_v(lk_tree *t, lk_ix node, lk_u32 ptype,
+                                const lk_value *pvalues, lk_u8 count) {
   lk_presentation *p;
+  lk_u8 i;
 
   if (!t || node == 0 || node >= t->node_count) {
     return;
+  }
+
+  if (count > LK_PRES_MAX_ARGS) {
+    count = LK_PRES_MAX_ARGS;
   }
 
   if (!lk_tree_reserve_pres(t, t->pres_count + 1)) {
@@ -364,19 +369,34 @@ void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
   }
 
   p = &t->pres[t->pres_count++];
+  memset(p, 0, sizeof(*p));
   p->node = node;
   p->ptype = ptype;
-  p->pvalue = pvalue;
+  p->pvalue_count = count;
+
+  for (i = 0; i < count && pvalues; i++) {
+    p->pvalues[i] = pvalues[i];
+  }
 }
 
-void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
-                                lk_value pvalue) {
+void lk_tree_add_presentation_sv(lk_tree *t, lk_ix node, const char *ptype,
+                                 const lk_value *pvalues, lk_u8 count) {
   if (!t || !t->intern || !ptype) {
     return;
   }
 
-  lk_tree_add_presentation(t, node, lk_intern_id(t->intern, lk_str_c(ptype)),
-                           pvalue);
+  lk_tree_add_presentation_v(t, node, lk_intern_id(t->intern, lk_str_c(ptype)),
+                             pvalues, count);
+}
+
+void lk_tree_add_presentation(lk_tree *t, lk_ix node, lk_u32 ptype,
+                              lk_value pvalue) {
+  lk_tree_add_presentation_v(t, node, ptype, &pvalue, 1);
+}
+
+void lk_tree_add_presentation_s(lk_tree *t, lk_ix node, const char *ptype,
+                                lk_value pvalue) {
+  lk_tree_add_presentation_sv(t, node, ptype, &pvalue, 1);
 }
 
 const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node) {
@@ -797,25 +817,42 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
 
         wr_cstr(wr, ud, "=");
 
-        switch (t->pres[pi].pvalue.tag) {
-        case UIV_BOOL:
-          wr_cstr(wr, ud, t->pres[pi].pvalue.as.b ? "true" : "false");
-          break;
-        case UIV_I32: wr_u32(wr, ud, (lk_u32)t->pres[pi].pvalue.as.i); break;
-        case UIV_STR:
-          wr_cstr(wr, ud, "\"");
+        if (t->pres[pi].pvalue_count > 1) {
+          wr_cstr(wr, ud, "(");
+        }
 
-          if (t->intern && t->pres[pi].pvalue.as.str_id) {
-            lk_str sv = lk_intern_str(t->intern, t->pres[pi].pvalue.as.str_id);
+        {
+          lk_u8 ai;
+          for (ai = 0; ai < t->pres[pi].pvalue_count; ai++) {
+            const lk_value *pv = &t->pres[pi].pvalues[ai];
 
-            if (sv.ptr && sv.len) {
-              wr(ud, sv.ptr, sv.len);
+            if (ai > 0) {
+              wr_cstr(wr, ud, " ");
+            }
+
+            switch (pv->tag) {
+            case UIV_BOOL: wr_cstr(wr, ud, pv->as.b ? "true" : "false"); break;
+            case UIV_I32: wr_u32(wr, ud, (lk_u32)pv->as.i); break;
+            case UIV_STR:
+              wr_cstr(wr, ud, "\"");
+
+              if (t->intern && pv->as.str_id) {
+                lk_str sv = lk_intern_str(t->intern, pv->as.str_id);
+
+                if (sv.ptr && sv.len) {
+                  wr(ud, sv.ptr, sv.len);
+                }
+              }
+
+              wr_cstr(wr, ud, "\"");
+              break;
+            default: wr_cstr(wr, ud, "null"); break;
             }
           }
+        }
 
-          wr_cstr(wr, ud, "\"");
-          break;
-        default: wr_cstr(wr, ud, "null"); break;
+        if (t->pres[pi].pvalue_count > 1) {
+          wr_cstr(wr, ud, ")");
         }
       }
     }

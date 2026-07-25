@@ -62,7 +62,8 @@ static int log_push(lk_ui *ui, const lk_command *cmd) {
 /* ---- Translator management ---- */
 
 void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
-                          lk_u16 node_kind, lk_u32 command_name) {
+                          lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
+                          lk_u32 command_name) {
   lk_translator *tr;
 
   if (!ui) {
@@ -94,11 +95,14 @@ void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
   tr->event_type = event_type;
   tr->ptype = ptype;
   tr->node_kind = node_kind;
+  tr->keycode = keycode;
+  tr->mods = mods;
   tr->command_name = command_name;
 }
 
 void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
-                            lk_u16 node_kind, const char *command_name) {
+                            lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
+                            const char *command_name) {
   lk_u32 pt;
   lk_u32 cn;
 
@@ -106,10 +110,14 @@ void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
     return;
   }
 
-  pt = ptype ? lk_intern_id(ui->intern, lk_str_c(ptype)) : 0;
+  /* Treat NULL or empty-string ptype as "any" (matches Lcl-binding
+   * convention, so both layers agree). */
+  pt = (ptype && ptype[0] != '\0')
+           ? lk_intern_id(ui->intern, lk_str_c(ptype))
+           : 0;
   cn = lk_intern_id(ui->intern, lk_str_c(command_name));
 
-  lk_ui_add_translator(ui, event_type, pt, node_kind, cn);
+  lk_ui_add_translator(ui, event_type, pt, node_kind, keycode, mods, cn);
 }
 
 void lk_ui_clear_translators(lk_ui *ui) {
@@ -201,6 +209,10 @@ void lk_ui_dump_commands(const lk_ui *ui, lk_write_fn wr, void *wr_ud) {
     wr_u32(wr, wr_ud, tr->ptype);
     wr_cstr(wr, wr_ud, " :kind ");
     wr_u32(wr, wr_ud, (lk_u32)tr->node_kind);
+    wr_cstr(wr, wr_ud, " :key ");
+    wr_u32(wr, wr_ud, (lk_u32)tr->keycode);
+    wr_cstr(wr, wr_ud, " :mods ");
+    wr_u32(wr, wr_ud, (lk_u32)tr->mods);
     wr_cstr(wr, wr_ud, " :cmd ");
 
     if (ui->intern && tr->command_name) {
@@ -292,16 +304,42 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
             continue;
           }
 
+          /* Key+mods matching: when keycode is set, require exact match */
+          if (tr->keycode != 0) {
+            if (event->type != LK_EVENT_KEY_DOWN &&
+                event->type != LK_EVENT_KEY_UP) {
+              continue;
+            }
+
+            if (event->data.key.keycode != tr->keycode ||
+                event->mods != tr->mods) {
+              continue;
+            }
+          }
+
           /* Match found — build and push command */
           {
             lk_command cmd;
+            lk_u8 ai;
 
             memset(&cmd, 0, sizeof(cmd));
             cmd.name = tr->command_name;
-            cmd.args[0] = pres->pvalue;
-            cmd.arg_count = 1;
+            cmd.arg_count = pres->pvalue_count;
+            if (cmd.arg_count > LK_CMD_MAX_ARGS) {
+              cmd.arg_count = LK_CMD_MAX_ARGS;
+            }
+            for (ai = 0; ai < cmd.arg_count; ai++) {
+              cmd.args[ai] = pres->pvalues[ai];
+            }
             cmd.source_node = node;
             cmd.source_ptype = pres->ptype;
+
+            /* Carry the event-intrinsic value onto the command so handlers
+             * get (presentation args) + (new value) in one delivery. */
+            if (event->type == LK_EVENT_VALUE_CHANGED) {
+              cmd.source_value.tag = UIV_STR;
+              cmd.source_value.as.str_id = event->data.value_changed.str_id;
+            }
 
             cmd_queue_push(&ui->cmd_queue, ui->alloc, ui->alloc_ud, ui->dealloc,
                            &cmd);

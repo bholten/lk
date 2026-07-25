@@ -48,6 +48,8 @@ static const str_enum kind_table[] = {
     {"button",     UIK_BUTTON    },
     {"text_input", UIK_TEXT_INPUT},
     {"scroll",     UIK_SCROLL    },
+    {"dropdown",   UIK_DROPDOWN  },
+    {"option",     UIK_OPTION    },
     {NULL,         0             }
 };
 
@@ -74,6 +76,7 @@ static const str_enum event_table[] = {
     {"wheel",         LK_EVENT_WHEEL        },
     {"window_resize", LK_EVENT_WINDOW_RESIZE},
     {"window_close",  LK_EVENT_WINDOW_CLOSE },
+    {"value_changed", LK_EVENT_VALUE_CHANGED},
     {NULL,            0                     }
 };
 
@@ -92,6 +95,37 @@ static const str_enum state_table[] = {
     {NULL,       0                 }
 };
 
+static const str_enum keycode_table[] = {
+    {"tab",       LKK_TAB      },
+    {"return",    LKK_RETURN   },
+    {"escape",    LKK_ESCAPE   },
+    {"backspace", LKK_BACKSPACE},
+    {"delete",    LKK_DELETE   },
+    {"space",     LKK_SPACE    },
+    {"left",      LKK_LEFT     },
+    {"right",     LKK_RIGHT    },
+    {"up",        LKK_UP       },
+    {"down",      LKK_DOWN     },
+    {"home",      LKK_HOME     },
+    {"end",       LKK_END      },
+    {"a", LKK_A}, {"b", LKK_B}, {"c", LKK_C}, {"d", LKK_D},
+    {"e", LKK_E}, {"f", LKK_F}, {"g", LKK_G}, {"h", LKK_H},
+    {"i", LKK_I}, {"j", LKK_J}, {"k", LKK_K}, {"l", LKK_L},
+    {"m", LKK_M}, {"n", LKK_N}, {"o", LKK_O}, {"p", LKK_P},
+    {"q", LKK_Q}, {"r", LKK_R}, {"s", LKK_S}, {"t", LKK_T},
+    {"u", LKK_U}, {"v", LKK_V}, {"w", LKK_W}, {"x", LKK_X},
+    {"y", LKK_Y}, {"z", LKK_Z},
+    {NULL,        0            }
+};
+
+static const str_enum mod_table[] = {
+    {"shift", LK_MOD_SHIFT},
+    {"ctrl",  LK_MOD_CTRL },
+    {"alt",   LK_MOD_ALT  },
+    {"gui",   LK_MOD_GUI  },
+    {NULL,    0            }
+};
+
 static int lookup_enum(const str_enum *table, const char *name, int *out) {
   const str_enum *e;
 
@@ -103,6 +137,51 @@ static int lookup_enum(const str_enum *table, const char *name, int *out) {
     }
   }
 
+  return 0;
+}
+
+/* Parse a mods string like "ctrl", "ctrl+shift", etc. into a bitmask.
+ * Returns 0 for "" (any). Returns -1 on error. */
+static int parse_mods(const char *s, lk_u8 *out) {
+  char buf[64];
+  char *p;
+  char *tok;
+  lk_u8 mods = 0;
+
+  if (s[0] == '\0') {
+    *out = 0;
+    return 0;
+  }
+
+  if (strlen(s) >= sizeof(buf)) {
+    return -1;
+  }
+
+  strcpy(buf, s);
+  p = buf;
+
+  while (*p) {
+    int val;
+
+    tok = p;
+
+    while (*p && *p != '+') {
+      p++;
+    }
+
+    if (*p == '+') {
+      *p = '\0';
+      p++;
+    }
+
+    if (!lookup_enum(mod_table, tok, &val)) {
+      return -1;
+    }
+
+    mods |= (lk_u8)val;
+  }
+
+  *out = mods;
   return 0;
 }
 
@@ -504,13 +583,30 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
-/* lk::present [tree, node_ix, ptype_str, pvalue] -> "" */
+/* Coerce one Lcl value into an lk_value (int first, fall back to string). */
+static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
+  long iv;
+
+  if (lcl_value_to_int(v, &iv) == LCL_OK) {
+    return lk_v_i32((lk_i32)iv);
+  }
+
+  return lk_v_cstr(t->intern, lcl_value_to_string(v));
+}
+
+/* lk::present [tree, node_ix, ptype_str, pvalue]
+ *
+ * pvalue may be a scalar (int/string) or a list; list elements become
+ * the presentation's args, one-to-one with the emitted command's args.
+ * Lists longer than LK_PRES_MAX_ARGS are truncated.
+ */
 static int c_lk_present(lcl_interp *interp, int argc, lcl_value **argv,
                         lcl_value **out) {
   lk_tree *t;
   long node_ix;
   const char *ptype_str;
-  lk_value pv;
+  lk_value pvs[LK_PRES_MAX_ARGS];
+  lk_u8 count = 0;
 
   if (argc != 4) {
     lcl_set_error(interp, "lk::present: expected 4 arguments");
@@ -532,17 +628,26 @@ static int c_lk_present(lcl_interp *interp, int argc, lcl_value **argv,
 
   ptype_str = lcl_value_to_string(argv[2]);
 
-  /* pvalue: try int first, fall back to string */
-  {
-    long iv;
-    if (lcl_value_to_int(argv[3], &iv) == LCL_OK) {
-      pv = lk_v_i32((lk_i32)iv);
-    } else {
-      pv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3]));
+  if (lcl_value_type_of(argv[3]) == LCL_LIST) {
+    size_t n = lcl_list_len(argv[3]);
+    size_t i;
+
+    if (n > LK_PRES_MAX_ARGS) {
+      n = LK_PRES_MAX_ARGS;
     }
+
+    for (i = 0; i < n; i++) {
+      lcl_value *elem = NULL;
+
+      if (lcl_list_get(argv[3], i, &elem) == LCL_OK && elem) {
+        pvs[count++] = coerce_lk_value(t, elem);
+      }
+    }
+  } else {
+    pvs[count++] = coerce_lk_value(t, argv[3]);
   }
 
-  lk_tree_add_presentation_s(t, (lk_ix)node_ix, ptype_str, pv);
+  lk_tree_add_presentation_sv(t, (lk_ix)node_ix, ptype_str, pvs, count);
   *out = lcl_string_new("");
 
   return LCL_RC_OK;
@@ -553,21 +658,28 @@ static int c_lk_present(lcl_interp *interp, int argc, lcl_value **argv,
  * ============================================================================
  */
 
-/* lk::add_translator [ui, event_type_str, ptype_str, kind_str, cmd_name_str] */
+/* lk::add_translator [ui event_type ptype kind keycode mods cmd_name]
+ * All string fields: "" means any/wildcard.
+ * keycode: "" or letter/name (e.g. "s", "f", "return").
+ * mods: "" or "+"-joined modifiers (e.g. "ctrl", "ctrl+shift"). */
 static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
                                lcl_value **out) {
   lk_ui *ui;
   const char *ev_str;
   const char *pt_str;
   const char *kn_str;
+  const char *kc_str;
+  const char *mod_str;
   const char *cmd_str;
   lk_u8 ev_type = 0;
   lk_u16 node_kind = 0;
+  lk_u16 keycode = 0;
+  lk_u8 mods = 0;
   lk_u32 ptype = 0;
   lk_u32 cmd_name;
 
-  if (argc != 5) {
-    lcl_set_error(interp, "lk::add_translator: expected 5 arguments");
+  if (argc != 7) {
+    lcl_set_error(interp, "lk::add_translator: expected 7 arguments");
 
     return LCL_RC_ERR;
   }
@@ -581,7 +693,9 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
   ev_str = lcl_value_to_string(argv[1]);
   pt_str = lcl_value_to_string(argv[2]);
   kn_str = lcl_value_to_string(argv[3]);
-  cmd_str = lcl_value_to_string(argv[4]);
+  kc_str = lcl_value_to_string(argv[4]);
+  mod_str = lcl_value_to_string(argv[5]);
+  cmd_str = lcl_value_to_string(argv[6]);
 
   /* event_type: "" means 0 (any) */
   if (ev_str[0] != '\0') {
@@ -610,8 +724,26 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
     node_kind = (lk_u16)kn_val;
   }
 
+  /* keycode: "" means 0 (any) */
+  if (kc_str[0] != '\0') {
+    int kc_val;
+    if (!lookup_enum(keycode_table, kc_str, &kc_val)) {
+      lcl_set_error(interp, "lk::add_translator: unknown keycode");
+      return LCL_RC_ERR;
+    }
+    keycode = (lk_u16)kc_val;
+  }
+
+  /* mods: "" means 0 (any), or "ctrl+shift" etc. */
+  if (mod_str[0] != '\0') {
+    if (parse_mods(mod_str, &mods) != 0) {
+      lcl_set_error(interp, "lk::add_translator: unknown modifier");
+      return LCL_RC_ERR;
+    }
+  }
+
   cmd_name = lk_intern_cid(ui->intern, cmd_str);
-  lk_ui_add_translator(ui, ev_type, ptype, node_kind, cmd_name);
+  lk_ui_add_translator(ui, ev_type, ptype, node_kind, keycode, mods, cmd_name);
 
   *out = lcl_string_new("");
 
@@ -619,6 +751,20 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
 }
 
 /* Helper: convert lk_command to lcl dict */
+/* ---- Marshal lk_value to Lcl value (caller owns ref) ---- */
+
+static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
+  switch (v->tag) {
+  case UIV_I32: return lcl_int_new((long)v->as.i);
+  case UIV_BOOL: return lcl_int_new((long)v->as.b);
+  case UIV_STR: {
+    const char *s = lk_intern_cstr(intern, v->as.str_id);
+    return lcl_string_new(s ? s : "");
+  }
+  default: return lcl_string_new("");
+  }
+}
+
 static lcl_value *command_to_dict(const lk_command *cmd,
                                   const lk_intern *intern) {
   lcl_value *dict = lcl_dict_new();
@@ -669,6 +815,13 @@ static lcl_value *command_to_dict(const lk_command *cmd,
     lcl_dict_put(&dict, "source_ptype", v);
     lcl_ref_dec(v);
   }
+
+  /* source_value — the event-intrinsic value (e.g. new buffer for
+   * value_changed commands).  Always present; empty string when the
+   * event carried no value. */
+  v = lk_value_to_lcl(&cmd->source_value, intern);
+  lcl_dict_put(&dict, "source_value", v);
+  lcl_ref_dec(v);
 
   return dict;
 }
@@ -1403,6 +1556,7 @@ static const char *event_type_str(lk_u8 t) {
   case LK_EVENT_WHEEL: return "wheel";
   case LK_EVENT_WINDOW_RESIZE: return "window_resize";
   case LK_EVENT_WINDOW_CLOSE: return "window_close";
+  case LK_EVENT_VALUE_CHANGED: return "value_changed";
   default: return "unknown";
   }
 }
@@ -1418,7 +1572,7 @@ static const char *event_phase_str(lk_u8 p) {
 
 /* ---- Marshal lk_event to Lcl dict ---- */
 
-static lcl_value *event_to_dict(const lk_event *ev) {
+static lcl_value *event_to_dict(const lk_event *ev, const lk_intern *intern) {
   lcl_value *dict = lcl_dict_new();
   lcl_value *v;
 
@@ -1497,6 +1651,14 @@ static lcl_value *event_to_dict(const lk_event *ev) {
     lcl_ref_dec(v);
     break;
 
+  case LK_EVENT_VALUE_CHANGED: {
+    const char *s = lk_intern_cstr(intern, ev->data.value_changed.str_id);
+    v = lcl_string_new(s ? s : "");
+    lcl_dict_put(&dict, "value", v);
+    lcl_ref_dec(v);
+    break;
+  }
+
   default: break;
   }
 
@@ -1517,7 +1679,7 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
     return 0;
   }
 
-  ev_dict = event_to_dict(event);
+  ev_dict = event_to_dict(event, lk_ui_intern(lk_window_ui(lw->win)));
 
   /* Add target_id and node_id string fields so scripts can identify nodes */
   cur = lk_ui_tree(lk_window_ui(lw->win));
@@ -1577,7 +1739,15 @@ static void lcl_lk_frame(lk_tree *t, void *ud) {
   lcl_value *args[1];
   lcl_value *result = NULL;
   args[0] = tree_val;
-  lcl_call_proc(ctx->interp, ctx->view_fn, 1, args, &result);
+  if (lcl_call_proc(ctx->interp, ctx->view_fn, 1, args, &result) != LCL_RC_OK) {
+    const char *file = lcl_interp_error_file(ctx->interp);
+    int line = lcl_interp_error_line(ctx->interp);
+    const char *msg = lcl_interp_error_msg(ctx->interp);
+    fprintf(stderr, "Frame error");
+    if (file) fprintf(stderr, " in %s", file);
+    if (line > 0) fprintf(stderr, ":%d", line);
+    fprintf(stderr, ": %s\n", msg ? msg : "(unknown)");
+  }
 
   if (result) {
     lcl_ref_dec(result);
@@ -1832,6 +2002,60 @@ static int c_lk_window_set_event_handler(lcl_interp *interp, int argc,
 #endif /* LK_HAVE_SDL */
 
 /* ============================================================================
+ * Clipboard
+ * ============================================================================
+ */
+
+static int c_lk_clipboard_get(lcl_interp *interp, int argc,
+                               lcl_value **argv, lcl_value **out) {
+  lk_ui *ui = NULL;
+
+  if (argc < 1) {
+    lcl_set_error(interp, "lk::clipboard_get: expected ui");
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::clipboard_get: bad ui handle");
+    return LCL_RC_ERR;
+  }
+
+  if (ui->clipboard_get) {
+    const char *text = ui->clipboard_get(ui->clipboard_ud);
+    *out = lcl_string_new(text ? text : "");
+  } else {
+    *out = lcl_string_new("");
+  }
+
+  return LCL_RC_OK;
+}
+
+static int c_lk_clipboard_set(lcl_interp *interp, int argc,
+                               lcl_value **argv, lcl_value **out) {
+  lk_ui *ui = NULL;
+  const char *text;
+
+  if (argc < 2) {
+    lcl_set_error(interp, "lk::clipboard_set: expected ui text");
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::clipboard_set: bad ui handle");
+    return LCL_RC_ERR;
+  }
+
+  text = lcl_value_to_string(argv[1]);
+
+  if (ui->clipboard_set) {
+    ui->clipboard_set(ui->clipboard_ud, text);
+  }
+
+  *out = lcl_string_new("");
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
  * Registration
  * ============================================================================
  */
@@ -1889,6 +2113,12 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def(ns, "intern_str",
              lcl_c_proc_new("lk::intern_str", c_lk_intern_str));
   lcl_ns_def(ns, "intern_id", lcl_c_proc_new("lk::intern_id", c_lk_intern_id));
+
+  /* Clipboard */
+  lcl_ns_def(ns, "clipboard_get",
+             lcl_c_proc_new("lk::clipboard_get", c_lk_clipboard_get));
+  lcl_ns_def(ns, "clipboard_set",
+             lcl_c_proc_new("lk::clipboard_set", c_lk_clipboard_set));
 
 #ifdef LK_HAVE_SDL
   /* SDL Window */

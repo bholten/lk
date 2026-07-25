@@ -99,6 +99,8 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
     lk_kind kind = (lk_kind)nd->kind;
     const lk_widget_def *def = lk_widget_get(kind);
     lk_i32 pad;
+    lk_i32 bw;
+    lk_i32 inset;
     lk_rect content;
     lk_ix child;
     int child_count;
@@ -109,11 +111,13 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
 
     pad = cfg->styles ? cfg->styles[n].padding
                       : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+    bw = cfg->styles ? cfg->styles[n].border_width : 0;
+    inset = pad + bw;
 
-    content.x = rects[n].x + pad;
-    content.y = rects[n].y + pad;
-    content.w = rects[n].w - pad * 2;
-    content.h = rects[n].h - pad * 2;
+    content.x = rects[n].x + inset;
+    content.y = rects[n].y + inset;
+    content.w = rects[n].w - inset * 2;
+    content.h = rects[n].h - inset * 2;
 
     def->layout(t, n, sizes, &content, cfg, rects);
 

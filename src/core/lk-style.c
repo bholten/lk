@@ -195,6 +195,34 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_TEXT_INPUT, 0, LK_NSTATE_FOCUSED, &s,
                     LK_SF_BORDER_WIDTH | LK_SF_BORDER_COLOR);
 
+  /* DROPDOWN */
+  memset(&s, 0, sizeof(s));
+  s.bg = mk_color(45, 45, 45, 255);
+  s.padding = 6;
+  s.border_width = 1;
+  s.border_color = mk_color(80, 80, 100, 255);
+  lk_theme_add_rule(th, UIK_DROPDOWN, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING | LK_SF_BORDER_WIDTH |
+                        LK_SF_BORDER_COLOR);
+
+  /* DROPDOWN hovered */
+  memset(&s, 0, sizeof(s));
+  s.border_color = mk_color(120, 120, 150, 255);
+  lk_theme_add_rule(th, UIK_DROPDOWN, 0, LK_NSTATE_HOVERED, &s,
+                    LK_SF_BORDER_COLOR);
+
+  /* DROPDOWN focused */
+  memset(&s, 0, sizeof(s));
+  s.border_color = mk_color(80, 140, 220, 255);
+  lk_theme_add_rule(th, UIK_DROPDOWN, 0, LK_NSTATE_FOCUSED, &s,
+                    LK_SF_BORDER_COLOR);
+
+  /* OPTION */
+  memset(&s, 0, sizeof(s));
+  s.bg = mk_color(45, 45, 45, 255);
+  s.padding = 4;
+  lk_theme_add_rule(th, UIK_OPTION, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
+
   return th;
 }
 

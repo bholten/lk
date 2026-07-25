@@ -192,6 +192,14 @@ lk_u32 lk_command_source_ptype(const lk_command *cmd) {
   return cmd->source_ptype;
 }
 
+lk_value lk_command_source_value(const lk_command *cmd) {
+  if (!cmd) {
+    return lk_v_none();
+  }
+
+  return cmd->source_value;
+}
+
 /* ---- UI accessors ---- */
 
 lk_intern *lk_ui_intern(const lk_ui *ui) {

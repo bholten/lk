@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include "lk-dropdown.h"
 #include "lk-memory.h"
 #include "lk-scroll.h"
 #include "lk-text-input.h"
@@ -55,6 +56,8 @@ static void measure_column(const lk_tree *t, lk_ix n, const lk_size *sizes,
   const lk_node *nd = &t->nodes[n];
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 bw = cfg->styles ? cfg->styles[n].border_width : 0;
+  lk_i32 inset = pad + bw;
   lk_i32 gap =
       cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
@@ -76,8 +79,8 @@ static void measure_column(const lk_tree *t, lk_ix n, const lk_size *sizes,
     sum_h += gap * (count - 1);
   }
 
-  *out_w = max_w + pad * 2;
-  *out_h = sum_h + pad * 2;
+  *out_w = max_w + inset * 2;
+  *out_h = sum_h + inset * 2;
 }
 
 static void measure_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
@@ -86,6 +89,8 @@ static void measure_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
   const lk_node *nd = &t->nodes[n];
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 bw = cfg->styles ? cfg->styles[n].border_width : 0;
+  lk_i32 inset = pad + bw;
   lk_i32 gap =
       cfg->styles ? cfg->styles[n].gap : lk_node_prop_i32(t, n, UIP_GAP, 0);
   lk_ix ch = nd->first_child;
@@ -108,8 +113,8 @@ static void measure_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
     sum_w += gap * (count - 1);
   }
 
-  *out_w = sum_w + pad * 2;
-  *out_h = max_h + pad * 2;
+  *out_w = sum_w + inset * 2;
+  *out_h = max_h + inset * 2;
 }
 
 static void measure_spacer(const lk_tree *t, lk_ix n, const lk_size *sizes,
@@ -140,13 +145,15 @@ static void measure_button(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_str text = lk_node_text(t, n);
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+  lk_i32 bw = cfg->styles ? cfg->styles[n].border_width : 0;
+  lk_i32 inset = pad + bw;
   lk_i32 tw = 0;
   lk_i32 th = 0;
 
   (void)sizes;
   cfg->measure_text(cfg->measure_ud, text, &tw, &th);
-  *out_w = tw + pad * 2;
-  *out_h = th + pad * 2;
+  *out_w = tw + inset * 2;
+  *out_h = th + inset * 2;
 }
 
 /* ---- Layout functions ---- */
@@ -358,6 +365,8 @@ static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
                           lk_render_list *out) {
   lk_i32 pad = style->padding;
+  lk_i32 bw = style->border_width;
+  lk_i32 inset = pad + bw;
   lk_u32 sid = lk_node_text_id(t, n);
   lk_render_cmd cmd;
   (void)state;
@@ -371,10 +380,10 @@ static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
   if (sid != 0) {
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_DRAW_TEXT;
-    cmd.rect.x = rect->x + pad;
-    cmd.rect.y = rect->y + pad;
-    cmd.rect.w = rect->w - pad * 2;
-    cmd.rect.h = rect->h - pad * 2;
+    cmd.rect.x = rect->x + inset;
+    cmd.rect.y = rect->y + inset;
+    cmd.rect.w = rect->w - inset * 2;
+    cmd.rect.h = rect->h - inset * 2;
     cmd.color = style->fg;
     cmd.str_id = sid;
     lk_render_list_push(out, cmd);
@@ -446,4 +455,10 @@ static void init_defaults(void) {
 
   /* SCROLL */
   g_widgets[UIK_SCROLL] = lk_scroll_widget_def();
+
+  /* DROPDOWN */
+  g_widgets[UIK_DROPDOWN] = lk_dropdown_widget_def();
+
+  /* OPTION */
+  g_widgets[UIK_OPTION] = lk_option_widget_def();
 }

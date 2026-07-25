@@ -9,13 +9,13 @@ app "Hello Lcl" -font $font -font_size 16 {
     theme {
         rule window #{bg (25 25 35)}
         rule * #{fg (200 200 220)}
-        rule button #{bg (50 50 65) padding 12}
-        rule button -state hovered #{bg (70 70 85)}
-        rule button -tag primary #{bg (45 90 180) fg (255 255 255)}
-        rule button -tag primary -state hovered #{bg (65 120 210)}
+        rule button #{bg (50 50 65) padding 12 border_width 1 border_color (80 80 100)}
+        rule button -state hovered #{bg (70 70 85) border_color (120 120 150)}
+        rule button -tag primary #{bg (45 90 180) fg (255 255 255) border_color (70 130 220)}
+        rule button -tag primary -state hovered #{bg (65 120 210) border_color (100 160 240)}
         rule text_input #{bg (40 40 55) padding 8}
         rule text_input -state focused #{border_width 2 border_color (80 140 220)}
-        rule scroll #{bg (30 30 45) padding 8 gap 4}
+        rule scroll #{bg (30 30 45) padding 8 gap 4 border_width 1 border_color (55 55 70)}
     }
 
     translator pointer_down action ButtonClick
