@@ -126,6 +126,26 @@ static void measure_spacer(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = lk_node_prop_i32(t, n, UIP_H, 0);
 }
 
+/* Measure a text run through cfg->text with the node's resolved font
+ * (0/0 defaults when no styles).  Zero metrics when no backend. */
+static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
+                        lk_i32 *out_w, lk_i32 *out_h) {
+  lk_text_metrics m;
+
+  m.w = 0;
+  m.h = 0;
+  m.baseline = 0;
+
+  if (cfg->text) {
+    lk_u16 font_id = cfg->styles ? (lk_u16)cfg->styles[n].font_id : 0;
+    lk_u16 font_size = cfg->styles ? (lk_u16)cfg->styles[n].font_size : 0;
+    cfg->text->measure(cfg->text->ud, run, font_id, font_size, &m);
+  }
+
+  *out_w = m.w;
+  *out_h = m.h;
+}
+
 static void measure_label(const lk_tree *t, lk_ix n, const lk_size *sizes,
                           const lk_layout_cfg *cfg, lk_i32 *out_w,
                           lk_i32 *out_h) {
@@ -134,7 +154,7 @@ static void measure_label(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 th = 0;
 
   (void)sizes;
-  cfg->measure_text(cfg->measure_ud, text, &tw, &th);
+  measure_run(cfg, n, text, &tw, &th);
   *out_w = tw;
   *out_h = th;
 }
@@ -151,7 +171,7 @@ static void measure_button(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 th = 0;
 
   (void)sizes;
-  cfg->measure_text(cfg->measure_ud, text, &tw, &th);
+  measure_run(cfg, n, text, &tw, &th);
   *out_w = tw + inset * 2;
   *out_h = th + inset * 2;
 }
@@ -357,6 +377,8 @@ static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect = *rect;
     cmd.color = style->fg;
     cmd.str_id = sid;
+    cmd.font_id = (lk_u16)style->font_id;
+    cmd.font_size = (lk_u16)style->font_size;
     lk_render_list_push(out, cmd);
   }
 }
@@ -386,6 +408,8 @@ static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.rect.h = rect->h - inset * 2;
     cmd.color = style->fg;
     cmd.str_id = sid;
+    cmd.font_id = (lk_u16)style->font_id;
+    cmd.font_size = (lk_u16)style->font_size;
     lk_render_list_push(out, cmd);
   }
 }

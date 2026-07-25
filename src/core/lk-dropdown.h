@@ -16,8 +16,8 @@ void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
                                      lk_state *state);
 
 /* Internal: compute the popup rect for an expanded dropdown at index n.
- * Uses the trigger rect in rects[n] as the anchor.  cfg->measure_text
- * is used to measure option heights. */
+ * Uses the trigger rect in rects[n] as the anchor.  cfg->text is
+ * used to measure option heights. */
 lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
                                const lk_rect *rects,
                                const lk_style *styles,
