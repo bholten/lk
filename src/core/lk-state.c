@@ -217,7 +217,7 @@ void lk_state_remove_node(lk_state *st, lk_node_id node) {
 }
 
 void lk_state_gc(lk_state *st, const lk_changeset *cs) {
-  lk_u32 ci, i;
+  lk_u32 ci, ai, i;
   int any_removed = 0;
 
   if (!st || !cs || st->tab_len == 0) {
@@ -225,7 +225,27 @@ void lk_state_gc(lk_state *st, const lk_changeset *cs) {
   }
 
   for (ci = 0; ci < cs->count; ci++) {
+    int readded;
+
     if (cs->changes[ci].kind != LK_CHANGE_REMOVED) {
+      continue;
+    }
+
+    /* A node id that is both REMOVED and ADDED in the same changeset
+     * moved to a different parent — its retained state must survive.
+     * The nested scan is O(removed * changes); changesets are
+     * typically small, so this beats building a side table. */
+    readded = 0;
+
+    for (ai = 0; ai < cs->count; ai++) {
+      if (cs->changes[ai].kind == LK_CHANGE_ADDED &&
+          cs->changes[ai].id == cs->changes[ci].id) {
+        readded = 1;
+        break;
+      }
+    }
+
+    if (readded) {
       continue;
     }
 

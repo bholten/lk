@@ -171,7 +171,7 @@ lk_tree *lk_tree_create(const lk_tree_cfg *cfg) {
     t->intern = cfg->intern;
     t->owns_intern = 0;
   } else {
-    t->intern = lk_intern_new(t->alloc, t->alloc_ud);
+    t->intern = lk_intern_new(t->alloc, t->dealloc, t->alloc_ud);
     t->owns_intern = 1;
 
     if (!t->intern) {
@@ -994,12 +994,6 @@ lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n) {
 }
 
 /* Schema (lots of TODOs) */
-/* TODO implement later for schema checks */
-lk_kind_schema *ui_default_schema(lk_u32 *out_count) {
-  (void)out_count;
-  return 0;
-}
-
 int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,
                             lk_u32 schema_count, lk_diag *diags,
                             lk_u32 diags_cap, lk_u32 *out_diags_len) {

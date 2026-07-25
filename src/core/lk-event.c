@@ -11,6 +11,30 @@ static int node_is_disabled(const lk_tree *t, lk_ix n) {
   return lk_node_prop_bool(t, n, UIP_DISABLED);
 }
 
+/* Keep the retained-state LKS_FOCUSED flag in sync with ui->focused_id
+ * so widget render functions (which only see lk_state) can tell if
+ * their node is focused.  Call BEFORE assigning the new focused_id.
+ */
+static void focus_flag_sync(lk_ui *ui, lk_node_id new_id) {
+  lk_state *st = ui->state;
+
+  if (!st) {
+    return;
+  }
+
+  if (ui->focused_id != 0 && ui->focused_id != new_id) {
+    /* Only clear an existing flag; never create an entry for a node
+     * that may already be gone (would leak past state GC). */
+    if (lk_state_get(st, ui->focused_id, LKS_FOCUSED).tag != UIV_NONE) {
+      lk_state_set(st, ui->focused_id, LKS_FOCUSED, lk_v_i32(0));
+    }
+  }
+
+  if (new_id != 0) {
+    lk_state_set(st, new_id, LKS_FOCUSED, lk_v_i32(1));
+  }
+}
+
 /* ---- Hit testing ---- */
 
 static int rect_contains(const lk_rect *r, lk_i32 x, lk_i32 y) {
@@ -106,12 +130,14 @@ int lk_focus_set(lk_ui *ui, const lk_tree *t, lk_node_id id) {
     return 0;
   }
 
+  focus_flag_sync(ui, id);
   ui->focused_id = id;
   return 1;
 }
 
 void lk_focus_clear(lk_ui *ui) {
   if (ui) {
+    focus_flag_sync(ui, 0);
     ui->focused_id = 0;
   }
 }
@@ -218,6 +244,7 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
   if (ui->focused_id == 0) {
     /* No current focus: pick the first */
     result = t->nodes[buf[0]].id;
+    focus_flag_sync(ui, result);
     ui->focused_id = result;
     lk_sys_dealloc(NULL, buf);
     return result;
@@ -228,6 +255,7 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
     if (t->nodes[buf[i]].id == ui->focused_id) {
       lk_u32 next_i = (i + 1) % count;
       result = t->nodes[buf[next_i]].id;
+      focus_flag_sync(ui, result);
       ui->focused_id = result;
       lk_sys_dealloc(NULL, buf);
       return result;
@@ -236,6 +264,7 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
 
   /* Current focused not found; pick first */
   result = t->nodes[buf[0]].id;
+  focus_flag_sync(ui, result);
   ui->focused_id = result;
   lk_sys_dealloc(NULL, buf);
   return result;
@@ -266,6 +295,7 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
   if (ui->focused_id == 0) {
     /* No current focus: pick the last */
     result = t->nodes[buf[count - 1]].id;
+    focus_flag_sync(ui, result);
     ui->focused_id = result;
     lk_sys_dealloc(NULL, buf);
     return result;
@@ -276,6 +306,7 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
     if (t->nodes[buf[i]].id == ui->focused_id) {
       lk_u32 prev_i = (i == 0) ? count - 1 : i - 1;
       result = t->nodes[buf[prev_i]].id;
+      focus_flag_sync(ui, result);
       ui->focused_id = result;
       lk_sys_dealloc(NULL, buf);
       return result;
@@ -284,6 +315,7 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
 
   /* Current focused not found; pick last */
   result = t->nodes[buf[count - 1]].id;
+  focus_flag_sync(ui, result);
   ui->focused_id = result;
   lk_sys_dealloc(NULL, buf);
 

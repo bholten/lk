@@ -1,5 +1,6 @@
 #include <string.h>
 
+#include "lk-dropdown.h"
 #include "lk-memory.h"
 #include <lk.h>
 
@@ -188,6 +189,13 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
   rects[t->root].h = cfg->viewport_h;
 
   layout_pass(t, cfg, sizes, rects);
+
+  /* Lean overlay support: stash dropdown trigger rects in retained
+   * state so dropdown event handling can reason about geometry.
+   * See docs/overlays.md. */
+  if (cfg->state) {
+    lk_dropdown_store_trigger_rects(t, rects, cfg->state);
+  }
 
   lk_sys_dealloc(NULL, sizes);
   return 1;

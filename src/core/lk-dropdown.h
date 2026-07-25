@@ -8,6 +8,13 @@
 lk_widget_def lk_dropdown_widget_def(void);
 lk_widget_def lk_option_widget_def(void);
 
+/* Internal: stash each dropdown's trigger rect in retained state
+ * (LKS_TRIGGER_*).  Called by lk_layout after rects are final so the
+ * dropdown event handler can distinguish trigger clicks from clicks in
+ * the popup's padding zone. */
+void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
+                                     lk_state *state);
+
 /* Internal: compute the popup rect for an expanded dropdown at index n.
  * Uses the trigger rect in rects[n] as the anchor.  cfg->measure_text
  * is used to measure option heights. */

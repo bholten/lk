@@ -133,12 +133,8 @@ lk_u8 lk_command_arg_count(const lk_command *cmd) {
 }
 
 lk_value lk_command_arg(const lk_command *cmd, lk_u8 idx) {
-  lk_value none;
-  none.tag = UIV_NONE;
-  none.as.i = 0;
-
   if (!cmd || idx >= cmd->arg_count || idx >= LK_CMD_MAX_ARGS) {
-    return none;
+    return lk_v_none();
   }
 
   return cmd->args[idx];

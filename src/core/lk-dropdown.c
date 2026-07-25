@@ -51,6 +51,10 @@ static int is_expanded(const lk_state *state, lk_node_id nid) {
   return get_i32(state, nid, LKS_EXPANDED) ? 1 : 0;
 }
 
+static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
+  return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
+}
+
 /* Count options under a dropdown node (children with kind UIK_OPTION). */
 static lk_u32 count_options(const lk_tree *t, lk_ix n) {
   lk_ix ch = t->nodes[n].first_child;
@@ -281,6 +285,28 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     }
 
     if (is_expanded(st, nid)) {
+      /* While expanded, a POINTER_DOWN targeting this node is either a
+       * trigger click (toggle closed) or a click in the popup's padding
+       * zone (the overlay hit-test resolves those to the dropdown too).
+       * The trigger rect is stashed in state by the layout pass; when
+       * absent (host never ran layout with state) fall back to the old
+       * always-toggle behavior. */
+      lk_value tw = lk_state_get(st, nid, LKS_TRIGGER_W);
+
+      if (tw.tag == UIV_I32 && (lk_i32)tw.as.i > 0) {
+        lk_rect tr;
+
+        tr.x = get_i32(st, nid, LKS_TRIGGER_X);
+        tr.y = get_i32(st, nid, LKS_TRIGGER_Y);
+        tr.w = (lk_i32)tw.as.i;
+        tr.h = get_i32(st, nid, LKS_TRIGGER_H);
+
+        if (!point_in(&tr, ev->data.pointer.x, ev->data.pointer.y)) {
+          /* Popup-padding click: consume without closing. */
+          return 1;
+        }
+      }
+
       lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
     } else {
       lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(1));
@@ -350,9 +376,9 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   return 0;
 }
 
-/* An OPTION node can receive POINTER_DOWN from the overlay hit-test.
- * Its widget event handler commits the selection on its parent
- * dropdown. */
+/* An OPTION node can receive POINTER_DOWN and POINTER_MOVE from the
+ * overlay hit-test.  Its widget event handler commits the selection
+ * (down) or updates the hover highlight (move) on its parent dropdown. */
 static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   lk_ix parent;
   lk_state *st;
@@ -360,7 +386,12 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   lk_u32 i = 0;
   lk_ix ch;
 
-  if (ev->type != LK_EVENT_POINTER_DOWN || ev->target != n) {
+  if (ev->target != n) {
+    return 0;
+  }
+
+  if (ev->type != LK_EVENT_POINTER_DOWN &&
+      ev->type != LK_EVENT_POINTER_MOVE) {
     return 0;
   }
 
@@ -383,6 +414,13 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
   st = lk_ui_state(ui);
   nid = t->nodes[parent].id;
+
+  if (ev->type == LK_EVENT_POINTER_MOVE) {
+    /* Hover highlight follows the mouse while the popup is open. */
+    lk_state_set(st, nid, LKS_HOVER_INDEX, lk_v_i32((lk_i32)i));
+    return 1;
+  }
+
   lk_state_set(st, nid, LKS_SELECTED_INDEX, lk_v_i32((lk_i32)i));
   lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
   emit_value_changed(ui, t, parent, lk_node_text_id(t, n));
@@ -391,6 +429,34 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 }
 
 /* ---- Overlay geometry ---- */
+
+/* Stash each dropdown's trigger rect in retained state.  Called by
+ * lk_layout after rects are final so event handling (which has no
+ * access to layout rects) can distinguish trigger clicks from
+ * popup-padding clicks.  Lean overlay scaffolding — see
+ * docs/overlays.md. */
+void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
+                                     lk_state *state) {
+  lk_ix n;
+
+  if (!t || !rects || !state) {
+    return;
+  }
+
+  for (n = 1; n < (lk_ix)t->node_count; n++) {
+    lk_node_id nid;
+
+    if (t->nodes[n].kind != UIK_DROPDOWN) {
+      continue;
+    }
+
+    nid = t->nodes[n].id;
+    lk_state_set(state, nid, LKS_TRIGGER_X, lk_v_i32(rects[n].x));
+    lk_state_set(state, nid, LKS_TRIGGER_Y, lk_v_i32(rects[n].y));
+    lk_state_set(state, nid, LKS_TRIGGER_W, lk_v_i32(rects[n].w));
+    lk_state_set(state, nid, LKS_TRIGGER_H, lk_v_i32(rects[n].h));
+  }
+}
 
 lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
                                 const lk_rect *rects,
@@ -576,10 +642,6 @@ int lk_render_build_overlays(const lk_tree *t, const lk_rect *rects,
 }
 
 /* ---- Overlay hit-test ---- */
-
-static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
-  return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
-}
 
 lk_ix lk_hit_test_overlay(const lk_tree *t, const lk_rect *rects,
                            const lk_style *styles, const lk_state *state,
