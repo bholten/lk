@@ -3,6 +3,7 @@
 #include "lk-dropdown.h"
 #include "lk-memory.h"
 #include "lk-scroll.h"
+#include "lk-split.h"
 #include "lk-text-input.h"
 #include <lk.h>
 
@@ -505,4 +506,8 @@ static void init_defaults(void) {
 
   /* OPTION */
   g_widgets[UIK_OPTION] = lk_option_widget_def();
+
+  /* SPLIT_H / SPLIT_V */
+  g_widgets[UIK_SPLIT_H] = lk_split_h_widget_def();
+  g_widgets[UIK_SPLIT_V] = lk_split_v_widget_def();
 }

@@ -52,7 +52,7 @@ The diff matches children by `lk_node_id` (interned, so comparison is a u32 chec
 - **`lk_node`** — Has `id` (interned u32), `kind` (enum), `parent`/`first_child`/`next_sibling` (index-based adjacency), and a props slice.
 - **`lk_intern`** — String interning table (FNV-1a hash, open addressing, string pool). Maps strings to stable `lk_node_id` (u32, starting at 1). Supports reverse lookup via `by_id` array.
 - **`lk_value`** — Tagged union: `NONE`, `BOOL`, `I32`, `STR` (where STR stores an interned `lk_u32` string ID, not a raw pointer).
-- **`lk_kind`** — Node kinds: `WINDOW`, `ROW`, `COLUMN`, `SPACER`, `LABEL`, `BUTTON`, `TEXT_INPUT`, `SCROLL`, `DROPDOWN`, `OPTION`.
+- **`lk_kind`** — Node kinds: `WINDOW`, `ROW`, `COLUMN`, `SPACER`, `LABEL`, `BUTTON`, `TEXT_INPUT`, `SCROLL`, `DROPDOWN`, `OPTION`, `SPLIT_H`, `SPLIT_V`.
 - **`lk_prop_key`** — Property keys: `TEXT`, `FOCUSABLE`, `DISABLED`, `W`, `H`, `PADDING`, `GAP`, `ALIGN`, `JUSTIFY`, `HIDDEN` (bool — subtree skipped by main measure/layout/render/hit-test/focus passes; used for overlay content subtrees), `TOOLTIP` (string, interned like TEXT — hover help text; hover transitions push/pop an `LK_OVERLAY_TOOLTIP` overlay, see `lk-tooltip.c`).
 
 ### Style and Theme System (`lk-style.c`)
@@ -98,6 +98,16 @@ Scroll container that clips children and scrolls vertically via wheel events. Ch
 - **Rendering**: Background FILL_RECT, scroll bar track + thumb (colors from `style->scrollbar_track` / `style->scrollbar_thumb`) when content overflows, CLIP_BEGIN/CLIP_END for child clipping.
 - **Layout**: Scroll bar reduces available width by `SCROLL_BAR_W` (6px) when content exceeds viewport.
 
+### Split Panes (`lk-split.c`)
+
+Resizable two-pane containers with a draggable divider. `UIK_SPLIT_H` places two children side-by-side (vertical divider); `UIK_SPLIT_V` stacks them (horizontal divider).
+
+- **Ratio**: per-mille `lk_i32` (0..1000; `lk_value` has no float). Priority: `LKS_SPLIT_RATIO` state (written by dragging) > `UIP_SPLIT_RATIO` prop (host-set initial value — initial values are props, not state pokes) > default 500. Layout clamps so each pane keeps >= `SPLIT_MIN_PANE` (40 px) when the axis is big enough; the divider band is `SPLIT_DIVIDER_W` (5 px).
+- **Divider band**: owned by the split node itself, NOT a separate node — hit-testing a point in the band lands on the split since no child covers it. Render derives band geometry from the node's own laid-out rect (never from ancestors); events use the content rect stashed in state by `lk_layout` (`LKS_SPLIT_CX/CY/CW/CH`, same coherence-debt pattern as `LKS_TRIGGER_*`).
+- **Degradation**: one visible (non-`UIP_HIDDEN`) child fills the whole content rect; zero children renders bg only; children beyond the first two are ignored (zero rects).
+- **Dragging**: POINTER_DOWN in the band → `lk_capture_set` + `LKS_SPLIT_DRAGGING=1`; POINTER_MOVE while dragging maps pointer position within the stashed content rect to a clamped per-mille ratio (divider center anchored under the cursor); POINTER_UP releases. Non-drag pointer events pass through so pane clicks are unaffected.
+- **Theme**: near-transparent bg; `style->border_color` doubles as the divider color.
+
 ### Overlay System (`lk-overlay.c`), Dropdown Widget (`lk-dropdown.c`), Tooltips (`lk-tooltip.c`)
 
 Generalized overlay machinery (docs/overlays.md steps 1–6, "Proper"). An overlay draws after the main tree, is hit-tested before it, and belongs to an owner node.
@@ -124,7 +134,9 @@ Two-tier event dispatch model. Widget handlers get first-right-of-refusal; user 
 
 An overlay pre-step runs before all tiers: ESC pops the topmost overlay and consumes the event (see Overlay System above). `lk_hit_test` and focus collection skip `UIP_HIDDEN` subtrees.
 
-Key functions: `lk_event_route(ui, event)`, `lk_hit_test(tree, rects, x, y)`, `lk_hit_test_overlay(ui, rects, cfg, x, y)`, `lk_focus_set/clear/next/prev`, `lk_hover_set/clear`.
+**Pointer capture**: `lk_capture_set/clear/current` on `lk_ui` (stable `lk_node_id`, like focus). While set, the host event loop targets POINTER_MOVE/UP at the captured node (bypassing hit-test) and suppresses hover updates — used by split-divider drags. `lk_ui_end_frame` clears the capture when the node is REMOVED and not re-ADDED (same move filter as focus).
+
+Key functions: `lk_event_route(ui, event)`, `lk_hit_test(tree, rects, x, y)`, `lk_hit_test_overlay(ui, rects, cfg, x, y)`, `lk_focus_set/clear/next/prev`, `lk_hover_set/clear`, `lk_capture_set/clear/current`.
 
 ### Node Prop Helpers (`lk-tree.c`)
 
@@ -151,7 +163,7 @@ Optional platform backend. Conditional on `find_package(SDL3)` and `find_package
 - **lk-sdl.h** — Public API: `lk_window_create/destroy/run`, `lk_window_ui`, `lk_window_set_event_handler`. The `lk_frame_fn` callback receives a mutable `lk_tree*`; the run loop handles begin/end frame, layout, event polling, and rendering.
 - **lk-sdl.c** — SDL3 integration: event translation (`sdl_to_lk_event`; `sdl_to_lk_keycode` covers TAB/RETURN/ESCAPE/BACKSPACE/DELETE/SPACE/arrows/HOME/END, A–Z, 0–9, PageUp/PageDown, and F1–F12), render list consumption, and the real `lk_text_backend` implementation (text-contract stage B). Text renders through one `TTF_TextEngine` per window (`TTF_CreateRendererTextEngine`; internal glyph atlas does the caching — the old per-string texture cache is gone) with a single reusable scratch `TTF_Text`. Fonts: a face registry (`face_paths[]`; face 0 = `lk_window_cfg.font_path`, may be absent) plus a lazily-populated `(face_id, size)` → `TTF_Font*` instance cache (linear-scan array, size 0 resolves to the window default size, fallback 16; all instances closed on window destroy). `lk_window_register_font(win, path)` (lk-sdl.h) registers a new face and returns its `font_id` (>= 1; 0 on failure — paths are verified by opening at the default size at registration). Vtable: measure via `TTF_GetStringSize`/`TTF_GetFontAscent`; `x_from_index`/`index_from_x` via `TTF_GetTextSubString`/`TTF_GetTextSubStringForPoint` on the scratch text (nearest-boundary snapping, clamped); `line_height` via `TTF_GetFontHeight`. The run loop uses the stub text backend when no face is available. Gotcha: `TTF_SetTextString` treats length 0 as "null-terminated" — empty runs must pass a literal `""`.
 - **demo.c** — Fruit selector demo exercising presentations, commands, focus, and event handling.
-- Run loop order: clear commands → begin_frame → frame callback → end_frame → resolve styles → layout (with state) → poll events (hit-test targeting for pointer events, focus targeting for key/text events; two-tier event routing via `lk_event_route`; hover state updated on pointer move; click-to-focus and tab-cycling as built-in behaviors) → render (with state). Key/text events fall back to root when nothing is focused.
+- Run loop order: clear commands → begin_frame → frame callback → end_frame → resolve styles → layout (with state) → poll events (hit-test targeting for pointer events — unless a pointer capture is active, in which case MOVE/UP target the captured node and hover updates are suppressed; focus targeting for key/text events; two-tier event routing via `lk_event_route`; hover state updated on pointer move; click-to-focus and tab-cycling as built-in behaviors) → render (with state). Key/text events fall back to root when nothing is focused.
 
 ### Lcl Scripting Bindings (`src/lcl/`)
 
@@ -161,7 +173,7 @@ Layer 1 bindings exposing lk to the Lcl scripting language (submodule at `submod
 - **lcl-lk.c** (`src/lcl/lcl-lk.c`) — 35 procs in the `lk` namespace (29 core + 6 SDL-conditional). `lk::register_font [win path]` returns the new `font_id` (int; 0 = failure, mirroring C — an unreadable path is not an Lcl error). Theme rules take `font_id`/`font_size` int keys in the style dict (bad values are errors). There is deliberately no DSL wrapper for `register_font` — apps call `lk::register_font` directly on the window. C89. Opaque types: `lk_ui` (with finalizer), `lk_tree` (borrowed, no finalizer), `lk_window` (wrapped in `struct lcl_lk_window` for event handler lifetime). Static string-to-enum lookup tables for kinds, prop keys, event types, align values, node states, overlay kinds, and anchors. Prop value coercion dispatches on key (text/tooltip→string, focusable/disabled/hidden→bool, w/h/padding/gap→i32, align/justify→enum lookup). Overlay procs: `lk::overlay_count`, `lk::overlay_push` (dict-driven, per-kind defaults — see Overlay System above), `lk::overlay_pop`. Event handler bridge marshals `lk_event` fields into an Lcl dict (including `target_id` and `node_id` string fields resolved from the intern table) and calls the user's proc. Command handler bridge converts `lk_command` to an Lcl dict (via `command_to_dict`, plus `source_node_id`) and calls the user's command handler proc.
 - **lcl-lk-main.c** (`src/lcl/lcl-lk-main.c`) — Standalone binary. C11 (SDL headers). Creates interp, registers core + lk, evals a `.lcl` file.
 - **lcl-lk-test.c** (`test/lcl-lk-test.c`) — 50 headless tests via `lcl_eval_string`. Covers all non-SDL procs including text_input kind and overlay push/pop (modal defaults, focus trap, routed ESC), plus SDL-gated error-path tests (`lk::register_font` arity/type) that don't need a display.
-- **Examples** (`examples/`) — `hello.lcl` (Layer 1 bindings), `hello-dsl.lcl` (Layer 2 DSL rewrite), `budget-dsl.lcl` (row editor: dynamic rows, dropdowns, value-changed sync), `modal-dsl.lcl` (confirm dialog: `lk::overlay_push`/`pop`, hidden content subtree, focus trap, ESC). DSL note: generic `-flag value` prop flags pass through only for keys in `lib/lk-dsl.lcl`'s `_prop_keys` whitelist (includes `hidden` and `tooltip`).
+- **Examples** (`examples/`) — `hello.lcl` (Layer 1 bindings), `hello-dsl.lcl` (Layer 2 DSL rewrite), `budget-dsl.lcl` (row editor: dynamic rows, dropdowns, value-changed sync), `modal-dsl.lcl` (confirm dialog: `lk::overlay_push`/`pop`, hidden content subtree, focus trap, ESC), `split-dsl.lcl` (resizable two-pane layout: `split_h`, `-split_ratio`, divider drag). DSL note: generic `-flag value` prop flags pass through only for keys in `lib/lk-dsl.lcl`'s `_prop_keys` whitelist (includes `hidden`, `tooltip`, and `split_ratio`).
 
 ## Code Conventions
 

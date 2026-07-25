@@ -9228,6 +9228,545 @@ static void test_text_input_click_to_position(void) {
   lk_ui_destroy(ui);
 }
 
+/* ================================================================
+ * Tests: split panes (UIK_SPLIT_H / UIK_SPLIT_V) + pointer capture
+ * ================================================================ */
+
+/* Build a plain tree: window "w" > split "sp" > column "c1", column
+ * "c2".  Caller owns the tree. */
+static lk_tree *make_split_tree(lk_kind kind, lk_ix *out_sp, lk_ix *out_c1,
+                                lk_ix *out_c2) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sp = lk_tree_add_node_s(t, lk_str_c("sp"), kind);
+  lk_ix c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
+  lk_ix c2 = lk_tree_add_node_s(t, lk_str_c("c2"), UIK_COLUMN);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+  lk_tree_append_child(t, sp, c1);
+  lk_tree_append_child(t, sp, c2);
+
+  *out_sp = sp;
+  *out_c1 = c1;
+  *out_c2 = c2;
+  return t;
+}
+
+/* Same shape via lk_ui (retained state + stashed geometry). */
+static lk_ui *make_split_ui(lk_kind kind, lk_i32 ratio_prop, lk_ix *out_sp,
+                            lk_ix *out_c1, lk_ix *out_c2) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, sp, c1, c2;
+  const lk_tree *cur;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), kind);
+
+  if (ratio_prop >= 0) {
+    lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(ratio_prop));
+  }
+
+  c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
+  c2 = lk_tree_add_node_s(t, lk_str_c("c2"), UIK_COLUMN);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+  lk_tree_append_child(t, sp, c1);
+  lk_tree_append_child(t, sp, c2);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  *out_sp = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("sp")));
+  *out_c1 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("c1")));
+  *out_c2 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("c2")));
+  return ui;
+}
+
+static void test_split_h_layout_default_ratio(void) {
+  /* Viewport 400x300, padding 0.  avail = 400 - 5 = 395.
+   * first = 395*500/1000 = 197; divider at x=197..202; second = 198. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split_h: default ratio halves minus divider");
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 197, 300);
+    CHECK_RECT(r[c2], 202, 0, 198, 300);
+
+    /* Divider band renders in the gap (from the split's own rect) */
+    {
+      lk_render_list rl;
+      int found_band = 0;
+      lk_u32 i;
+
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build(t, r, NULL, NULL, &rl);
+
+      for (i = 0; i < rl.count; i++) {
+        if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.x == 197 &&
+            rl.cmds[i].rect.y == 0 && rl.cmds[i].rect.w == 5 &&
+            rl.cmds[i].rect.h == 300) {
+          found_band = 1;
+        }
+      }
+
+      CHECK(found_band);
+      lk_render_list_destroy(&rl);
+    }
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_v_layout_default_ratio(void) {
+  /* avail = 300 - 5 = 295; first = 147; second = 148. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_V, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split_v: default ratio stacks minus divider");
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 400, 147);
+    CHECK_RECT(r[c2], 0, 152, 400, 148);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_ratio_prop_initial(void) {
+  /* UIP_SPLIT_RATIO=250: first = 395*250/1000 = 98. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: UIP_SPLIT_RATIO sets initial position");
+
+  lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(250));
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 98, 300);
+    CHECK_RECT(r[c2], 103, 0, 297, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_state_overrides_prop(void) {
+  /* Prop says 250 but LKS_SPLIT_RATIO=750 (a drag happened):
+   * first = 395*750/1000 = 296. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui(UIK_SPLIT_H, 250, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_rect *r;
+
+  BEGIN_TEST("split: state ratio overrides prop");
+
+  lk_state_set(st, cur->nodes[sp].id, LKS_SPLIT_RATIO, lk_v_i32(750));
+
+  r = run_layout_with_state((lk_tree *)cur, 400, 300, st);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 296, 300);
+    CHECK_RECT(r[c2], 301, 0, 99, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_split_ratio_clamped_min_pane(void) {
+  /* Extreme ratios clamp so each pane keeps >= 40 px:
+   * ratio 10 -> first 40; ratio 990 -> first 355 (= 395 - 40). */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: ratio clamped to MIN_PANE");
+
+  lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(10));
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 40, 300);
+    CHECK_RECT(r[c2], 45, 0, 355, 300);
+    free(r);
+  }
+
+  lk_tree_destroy(t);
+
+  t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(990));
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 355, 300);
+    CHECK_RECT(r[c2], 360, 0, 40, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_single_child_fills(void) {
+  /* One child: plain container, child fills content rect. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPLIT_H);
+  lk_ix c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
+  lk_rect *r;
+
+  BEGIN_TEST("split: single child fills whole rect");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+  lk_tree_append_child(t, sp, c1);
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c1], 0, 0, 400, 300);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_zero_children_bg_only(void) {
+  /* Zero children: background fill only, no divider. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPLIT_V);
+  lk_rect *r;
+
+  BEGIN_TEST("split: zero children renders bg only");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sp);
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    lk_render_list rl;
+    lk_u32 i;
+    lk_u32 fills = 0;
+
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(t, r, NULL, NULL, &rl);
+
+    /* window bg + split bg, nothing else */
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT) {
+        fills++;
+      }
+    }
+
+    CHECK_EQ(fills, 2u);
+    lk_render_list_destroy(&rl);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_hidden_child_full_fill(void) {
+  /* One of two children hidden: the visible one fills everything. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: hidden child leaves full fill");
+
+  lk_tree_add_prop(t, c1, UIP_HIDDEN, lk_v_bool(1));
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[c2], 0, 0, 400, 300);
+    /* Hidden child never laid out */
+    CHECK_RECT(r[c1], 0, 0, 0, 0);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_nested_exact_rects(void) {
+  /* split_h "outer" > column "left", split_v "inner" > "top","bottom".
+   * Outer: left (0,0,197,300), inner (202,0,198,300).
+   * Inner: avail = 300-5 = 295; top h=147, bottom y=152 h=148.
+   * Divider geometry must come from the inner split's own rect. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix outer = lk_tree_add_node_s(t, lk_str_c("outer"), UIK_SPLIT_H);
+  lk_ix left = lk_tree_add_node_s(t, lk_str_c("left"), UIK_COLUMN);
+  lk_ix inner = lk_tree_add_node_s(t, lk_str_c("inner"), UIK_SPLIT_V);
+  lk_ix top = lk_tree_add_node_s(t, lk_str_c("top"), UIK_COLUMN);
+  lk_ix bottom = lk_tree_add_node_s(t, lk_str_c("bottom"), UIK_COLUMN);
+  lk_rect *r;
+
+  BEGIN_TEST("split: nested split_v in split_h exact rects");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, outer);
+  lk_tree_append_child(t, outer, left);
+  lk_tree_append_child(t, outer, inner);
+  lk_tree_append_child(t, inner, top);
+  lk_tree_append_child(t, inner, bottom);
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[left], 0, 0, 197, 300);
+    CHECK_RECT(r[inner], 202, 0, 198, 300);
+    CHECK_RECT(r[top], 202, 0, 198, 147);
+    CHECK_RECT(r[bottom], 202, 152, 198, 148);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_hit_test_divider_band(void) {
+  /* A point in the divider band (197..202) hits the split node itself
+   * — the band is owned by the split, not a child. */
+  lk_ix sp, c1, c2;
+  lk_tree *t = make_split_tree(UIK_SPLIT_H, &sp, &c1, &c2);
+  lk_rect *r;
+
+  BEGIN_TEST("split: hit-test in divider band returns split");
+
+  r = run_layout(t, 400, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_EQ(lk_hit_test(t, r, 199, 150), sp);
+    CHECK_EQ(lk_hit_test(t, r, 100, 150), c1);
+    CHECK_EQ(lk_hit_test(t, r, 300, 150), c2);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_split_drag_sequence(void) {
+  /* Full drag through routed events.  Content rect (0,0,400,300)
+   * stashed by layout; avail = 395; MOVE maps pointer x to per-mille
+   * via rel = (x - 2), ratio = rel*1000/395 (divider centered under
+   * the cursor), clamped to [ceil(40000/395), 355000/395] = [102,898]. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui(UIK_SPLIT_H, -1, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sp_id = cur->nodes[sp].id;
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("split: drag sequence updates ratio via capture");
+
+  r = run_layout_with_state((lk_tree *)cur, 400, 300, st);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* Pane click bubbling through the split is NOT consumed */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 50, 150);
+    ev.data.pointer.x = 50;
+    ev.data.pointer.y = 150;
+    CHECK_EQ(ev.target, c1);
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 0u);
+    CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+
+    /* DOWN in the band starts the drag and takes the capture */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 199, 150);
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    CHECK_EQ(ev.target, sp);
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 1u);
+    CHECK_EQ(lk_capture_current(ui), sp_id);
+
+    /* MOVE to x=100: ratio = (100-2)*1000/395 = 248 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp; /* capture targets the split (see lk-sdl.c) */
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 248);
+
+    /* MOVE far outside the band (and the content rect) still updates
+     * — that is what the capture is for: (350-2)*1000/395 = 881 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 350;
+    ev.data.pointer.y = 400;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 881);
+
+    /* MOVE to the far left clamps at MIN_PANE: ratio 102 -> 40 px */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 5;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 102);
+
+    free(r);
+    r = run_layout_with_state((lk_tree *)cur, 400, 300, st);
+    CHECK(r != NULL);
+    if (r) {
+      CHECK_EQ((unsigned)r[c1].w, 40u);
+      free(r);
+    }
+
+    /* UP ends the drag and releases the capture */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_UP;
+    ev.target = sp;
+    ev.data.pointer.x = 5;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 0u);
+    CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_capture_api(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_node_id id;
+
+  BEGIN_TEST("capture: set/current/clear");
+
+  prime_base(ui);
+  id = lk_intern_id(ui->intern, lk_str_c("inc"));
+
+  CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+  lk_capture_set(ui, id);
+  CHECK_EQ(lk_capture_current(ui), id);
+  lk_capture_clear(ui);
+  CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+
+  /* NULL-safe */
+  lk_capture_set(NULL, id);
+  lk_capture_clear(NULL);
+  CHECK_EQ((unsigned)lk_capture_current(NULL), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_capture_end_frame_gc(void) {
+  /* end_frame clears the capture when the node is removed, but a
+   * REMOVED+ADDED move keeps it (same filter as focus). */
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_node_id id;
+  lk_tree *t;
+  lk_ix w, col, btn;
+
+  BEGIN_TEST("capture: cleared on removal, survives move");
+
+  prime_base(ui);
+  id = lk_intern_id(ui->intern, lk_str_c("inc"));
+  lk_capture_set(ui, id);
+
+  /* Move "inc" from column "root" to window "main" — capture stays */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("main"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("root"), UIK_COLUMN);
+  btn = lk_tree_add_node_s(t, lk_str_c("inc"), UIK_BUTTON);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, w, btn);
+  lk_ui_end_frame(ui);
+  CHECK_EQ(lk_capture_current(ui), id);
+
+  /* Drop "inc" entirely — capture cleared */
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("main"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("root"), UIK_COLUMN);
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_ui_end_frame(ui);
+  CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dump_kind_names(void) {
+  /* lk_tree_dump prints real names for all registered kinds. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix sh = lk_tree_add_node_s(t, lk_str_c("sh"), UIK_SPLIT_H);
+  lk_ix sv = lk_tree_add_node_s(t, lk_str_c("sv"), UIK_SPLIT_V);
+  lk_ix ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_ix sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  lk_ix dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_ix op = lk_tree_add_node_s(t, lk_str_c("op"), UIK_OPTION);
+  test_buf buf;
+
+  BEGIN_TEST("dump: names for all widget kinds");
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, sh);
+  lk_tree_append_child(t, sh, sv);
+  lk_tree_append_child(t, sv, ti);
+  lk_tree_append_child(t, sv, sc);
+  lk_tree_append_child(t, sh, dd);
+  lk_tree_append_child(t, dd, op);
+
+  memset(&buf, 0, sizeof(buf));
+  lk_tree_dump(t, test_buf_write, &buf);
+
+  CHECK(strstr(buf.buf, "split_h") != NULL);
+  CHECK(strstr(buf.buf, "split_v") != NULL);
+  CHECK(strstr(buf.buf, "text_input") != NULL);
+  CHECK(strstr(buf.buf, "scroll") != NULL);
+  CHECK(strstr(buf.buf, "dropdown") != NULL);
+  CHECK(strstr(buf.buf, "option") != NULL);
+  CHECK(strstr(buf.buf, "unknown") == NULL);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
 int main(void) {
   printf("lk diff tests:\n");
 
@@ -9552,6 +10091,23 @@ int main(void) {
   test_text_input_cursor_only_when_focused();
   test_dropdown_padding_click_stays_open();
   test_dropdown_hover_follows_pointer();
+
+  /* split panes + pointer capture */
+  printf("\nlk split tests:\n");
+  test_split_h_layout_default_ratio();
+  test_split_v_layout_default_ratio();
+  test_split_ratio_prop_initial();
+  test_split_state_overrides_prop();
+  test_split_ratio_clamped_min_pane();
+  test_split_single_child_fills();
+  test_split_zero_children_bg_only();
+  test_split_hidden_child_full_fill();
+  test_split_nested_exact_rects();
+  test_split_hit_test_divider_band();
+  test_split_drag_sequence();
+  test_capture_api();
+  test_capture_end_frame_gc();
+  test_dump_kind_names();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

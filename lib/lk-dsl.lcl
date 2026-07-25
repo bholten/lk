@@ -64,7 +64,7 @@ namespace lk_dsl {
 
     ;; ---- Prop application ----
     ;; Known prop keys that map to lk::prop
-    let _prop_keys #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1}
+    let _prop_keys #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1 split_ratio 1}
 
     proc _apply_flags {node flags} {
         let pk $_prop_keys
@@ -151,6 +151,14 @@ namespace lk_dsl {
 
     proc option {id *args} {
         _make_node option [_parse_flags $id $args]
+    }
+
+    proc split_h {id *args} {
+        _make_node split_h [_parse_flags $id $args]
+    }
+
+    proc split_v {id *args} {
+        _make_node split_v [_parse_flags $id $args]
     }
 
     ;; ---- Theme ----
@@ -325,4 +333,4 @@ namespace lk_dsl {
 import lk_dsl app
 import lk_dsl view theme translator keybinding on event_handler
 import lk_dsl column row label button text_input spacer scroll
-import lk_dsl dropdown option
+import lk_dsl dropdown option split_h split_v

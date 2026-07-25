@@ -77,6 +77,14 @@ typedef enum lk_kind {
   UIK_OPTION,   /* option inside a dropdown.  Not laid out by the main
                    pass; rendered and hit-tested as part of the owning
                    dropdown's overlay. */
+  UIK_SPLIT_H,  /* two children side-by-side with a draggable vertical
+                   divider between them.  Ratio is per-mille (0..1000):
+                   LKS_SPLIT_RATIO state (set by dragging) overrides the
+                   UIP_SPLIT_RATIO prop (initial value), default 500.
+                   With one child it behaves as a plain container;
+                   children beyond the first two are ignored (zero
+                   rects). */
+  UIK_SPLIT_V,  /* same, stacked vertically (horizontal divider). */
   UIK__COUNT
 } lk_kind;
 
@@ -106,6 +114,11 @@ typedef enum lk_prop_key {
                   lk_hover_clear; producer in lk-tooltip.c).  Tooltips
                   are passive: never hit-testable, never consume
                   clicks.  See docs/overlays.md. */
+
+  UIP_SPLIT_RATIO, /* i32 per-mille (0..1000): initial divider position
+                      for UIK_SPLIT_H/V.  Host-settable initial value;
+                      once the user drags, LKS_SPLIT_RATIO state takes
+                      priority.  Default 500. */
 
   UIP__COUNT
 } lk_prop_key;
@@ -146,6 +159,19 @@ typedef enum lk_state_key {
   LKS_FONT_ID,        /* text_input: resolved font stashed by the layout
                          pass; event handlers have no styles */
   LKS_FONT_SIZE,
+  LKS_SPLIT_RATIO,    /* split: divider position in per-mille (0..1000),
+                         written by dragging.  Overrides UIP_SPLIT_RATIO. */
+  LKS_SPLIT_DRAGGING, /* split: 1 while the divider is being dragged
+                         (pointer captured by the split node) */
+  LKS_SPLIT_CX,       /* split: content rect stashed by the layout pass
+                         (same coherence-debt pattern as LKS_TRIGGER_* /
+                         LKS_TEXT_ORIGIN_X — derived geometry in retained
+                         state, see design-coherence list in docs/TODO.md).
+                         The event handler uses it to hit the divider
+                         band and map pointer position to a ratio. */
+  LKS_SPLIT_CY,
+  LKS_SPLIT_CW,
+  LKS_SPLIT_CH,
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -603,6 +629,7 @@ typedef struct lk_ui {
   void *event_ud;
   lk_node_id focused_id; /* 0 = no focus */
   lk_node_id hovered_id; /* 0 = nothing hovered */
+  lk_node_id captured_id; /* 0 = no pointer capture (see lk_capture_set) */
   lk_state *state;       /* retained per-node state */
 
   /* Translators */
@@ -1043,6 +1070,19 @@ lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t);
 
 void lk_hover_set(lk_ui *ui, lk_node_id id);
 void lk_hover_clear(lk_ui *ui);
+
+/* Pointer capture — while set, the host event loop targets
+ * POINTER_MOVE/UP events at the captured node (bypassing hit-test)
+ * and suppresses hover updates, so drag interactions (split dividers,
+ * future sliders) keep receiving pointer events after the cursor
+ * leaves the widget.  Tracked by stable lk_node_id like focus;
+ * lk_ui_end_frame clears it when the captured node is removed (a
+ * REMOVED+ADDED move in one changeset keeps the capture, mirroring
+ * focus).  The SDL run loop wires the targeting automatically; hosts
+ * that drive events themselves must honor lk_capture_current. */
+void lk_capture_set(lk_ui *ui, lk_node_id id);
+void lk_capture_clear(lk_ui *ui);
+lk_node_id lk_capture_current(const lk_ui *ui);
 
 /**
  * Translator + command API

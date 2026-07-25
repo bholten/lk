@@ -52,6 +52,8 @@ static const str_enum kind_table[] = {
     {"scroll",     UIK_SCROLL    },
     {"dropdown",   UIK_DROPDOWN  },
     {"option",     UIK_OPTION    },
+    {"split_h",    UIK_SPLIT_H   },
+    {"split_v",    UIK_SPLIT_V   },
     {NULL,         0             }
 };
 
@@ -65,9 +67,10 @@ static const str_enum prop_table[] = {
     {"gap",       UIP_GAP      },
     {"align",     UIP_ALIGN    },
     {"justify",   UIP_JUSTIFY  },
-    {"hidden",    UIP_HIDDEN   },
-    {"tooltip",   UIP_TOOLTIP  },
-    {NULL,        0            }
+    {"hidden",      UIP_HIDDEN     },
+    {"tooltip",     UIP_TOOLTIP    },
+    {"split_ratio", UIP_SPLIT_RATIO},
+    {NULL,          0              }
 };
 
 static const str_enum overlay_kind_table[] = {
@@ -584,7 +587,8 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   case UIP_W:
   case UIP_H:
   case UIP_PADDING:
-  case UIP_GAP: {
+  case UIP_GAP:
+  case UIP_SPLIT_RATIO: {
     long i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
       lcl_set_error(interp, "lk::prop: numeric prop expects integer");

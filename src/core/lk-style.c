@@ -223,6 +223,17 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   s.padding = 4;
   lk_theme_add_rule(th, UIK_OPTION, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
+  /* SPLIT_H / SPLIT_V — near-transparent bg (panes paint themselves);
+   * border_color doubles as the divider band color. */
+  memset(&s, 0, sizeof(s));
+  s.bg = mk_color(30, 30, 30, 0);
+  s.padding = 0;
+  s.border_color = mk_color(70, 70, 80, 255);
+  lk_theme_add_rule(th, UIK_SPLIT_H, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING | LK_SF_BORDER_COLOR);
+  lk_theme_add_rule(th, UIK_SPLIT_V, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING | LK_SF_BORDER_COLOR);
+
   return th;
 }
 
