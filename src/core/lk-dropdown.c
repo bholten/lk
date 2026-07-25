@@ -1,19 +1,18 @@
 /*
  * lk-dropdown.c — Selection dropdown (UIK_DROPDOWN) and option
- * (UIK_OPTION) widgets, plus the Lean overlay machinery.
+ * (UIK_OPTION) widgets.
  *
  * UIK_DROPDOWN is a leaf in the main layout pass: its children
  * (UIK_OPTIONs) are NOT laid out or rendered by the main pass.
- * Instead, when LKS_EXPANDED == 1, the overlay pass walks the tree,
- * positions each option in a popup below the trigger, and emits fill
- * + text commands on top of the main render list.
+ * Opening the dropdown pushes an LK_OVERLAY_DROPDOWN_POPUP overlay
+ * onto the ui's overlay stack (and sets LKS_EXPANDED — the two are
+ * kept in sync); the overlay pass in lk-overlay.c dispatches back
+ * here (lk_dropdown_render_popup / lk_dropdown_hit_popup) to draw and
+ * hit-test the popup procedurally.  Popup geometry goes through
+ * lk_anchor_resolve, so a dropdown near the bottom edge flips its
+ * popup above the trigger instead of clipping.
  *
- * Hit-test is similarly two-phase: lk_hit_test_overlay() first checks
- * any expanded dropdown's popup, then falls back to lk_hit_test().
- *
- * This is deliberately dropdown-specific Lean scaffolding.  The path
- * toward a generalized overlay system (tooltips, modals, menus) is
- * documented in docs/overlays.md.
+ * See docs/overlays.md.
  */
 
 #include <string.h>
@@ -49,6 +48,34 @@ static lk_i32 get_i32(const lk_state *state, lk_node_id nid, lk_u16 key) {
 
 static int is_expanded(const lk_state *state, lk_node_id nid) {
   return get_i32(state, nid, LKS_EXPANDED) ? 1 : 0;
+}
+
+/* Open/close keep LKS_EXPANDED (the public state-key invariant) and
+ * the ui overlay stack in sync. */
+static void dropdown_open(lk_ui *ui, lk_node_id nid, lk_i32 hover) {
+  lk_state *st = lk_ui_state(ui);
+  lk_overlay ov;
+
+  lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(1));
+  lk_state_set(st, nid, LKS_HOVER_INDEX, lk_v_i32(hover));
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  ov.dismiss_on_outside = 1;
+  ov.traps_focus = 0;
+  ov.owner_id = nid;
+  ov.content_root_id = 0;
+
+  lk_overlay_pop_owner(ui, nid); /* never stack two popups per owner */
+  lk_overlay_push(ui, &ov);
+}
+
+static void dropdown_close(lk_ui *ui, lk_node_id nid) {
+  lk_state *st = lk_ui_state(ui);
+
+  lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
+  lk_overlay_pop_owner(ui, nid);
 }
 
 static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
@@ -336,10 +363,9 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
         }
       }
 
-      lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
+      dropdown_close(ui, nid);
     } else {
-      lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(1));
-      lk_state_set(st, nid, LKS_HOVER_INDEX, lk_v_i32(sel));
+      dropdown_open(ui, nid, sel);
     }
 
     return 1;
@@ -360,8 +386,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
         }
       } else {
         /* Collapsed + Down opens and moves selection. */
-        lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(1));
-        lk_state_set(st, nid, LKS_HOVER_INDEX, lk_v_i32(sel));
+        dropdown_open(ui, nid, sel);
       }
       return 1;
 
@@ -379,21 +404,23 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
           lk_ix opt = nth_option(t, n, (lk_u32)hov);
 
           lk_state_set(st, nid, LKS_SELECTED_INDEX, lk_v_i32(hov));
-          lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
+          dropdown_close(ui, nid);
 
           if (opt) {
             emit_value_changed(ui, t, n, lk_node_text_id(t, opt));
           }
         }
       } else {
-        lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(1));
-        lk_state_set(st, nid, LKS_HOVER_INDEX, lk_v_i32(sel));
+        dropdown_open(ui, nid, sel);
       }
       return 1;
 
     case LKK_ESCAPE:
+      /* Normally consumed by the ESC pre-step in lk_event_route (which
+       * pops the topmost overlay); kept here as a fallback for hosts
+       * that dispatch widget events directly. */
       if (is_expanded(st, nid)) {
-        lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
+        dropdown_close(ui, nid);
         return 1;
       }
       return 0;
@@ -451,7 +478,7 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 
   lk_state_set(st, nid, LKS_SELECTED_INDEX, lk_v_i32((lk_i32)i));
-  lk_state_set(st, nid, LKS_EXPANDED, lk_v_i32(0));
+  dropdown_close(ui, nid);
   emit_value_changed(ui, t, parent, lk_node_text_id(t, n));
 
   return 1;
@@ -492,23 +519,26 @@ lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
                                 const lk_style *styles,
                                 const lk_layout_cfg *cfg) {
   lk_rect trigger = rects[n];
-  lk_rect out;
   lk_u32 count = count_options(t, n);
   lk_i32 row_h = option_row_height(cfg);
   lk_i32 pad = styles ? styles[n].padding : 0;
   lk_i32 bw = styles ? styles[n].border_width : 0;
   lk_i32 popup_h;
+  lk_overlay ov;
 
   popup_h = (lk_i32)count * row_h + (pad + bw) * 2;
   if (popup_h > DROPDOWN_POPUP_MAX_HEIGHT) {
     popup_h = DROPDOWN_POPUP_MAX_HEIGHT;
   }
 
-  out.x = trigger.x;
-  out.y = trigger.y + trigger.h;
-  out.w = trigger.w;
-  out.h = popup_h;
-  return out;
+  /* Anchor below the trigger, same width; flips above / clamps at the
+   * viewport edges (0/0 viewport skips clamping — old behavior). */
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+
+  return lk_anchor_resolve(&ov, trigger, cfg ? cfg->viewport_w : 0,
+                           cfg ? cfg->viewport_h : 0, trigger.w, popup_h);
 }
 
 lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n,
@@ -530,241 +560,182 @@ lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n,
   return out;
 }
 
-/* ---- Overlay render ---- */
+/* ---- Overlay render (dispatch target for lk-overlay.c) ---- */
 
-int lk_render_build_overlays(const lk_tree *t, const lk_rect *rects,
-                              const lk_style *styles, const lk_state *state,
+void lk_dropdown_render_popup(const lk_tree *t, lk_ix n,
+                              const lk_rect *rects, const lk_style *styles,
+                              const lk_state *state,
                               const lk_layout_cfg *cfg, lk_render_list *out) {
-  lk_ix n;
+  lk_node_id nid;
+  lk_u32 count;
+  lk_i32 hov;
+  lk_u32 i;
+  const lk_style *trig_style;
+  const lk_style *opt_style;
+  lk_rect popup;
+  lk_render_cmd cmd;
 
-  if (!t || !rects || !out) {
-    return 0;
+  if (!t || !rects || !out || n == 0 || n >= (lk_ix)t->node_count) {
+    return;
   }
 
-  for (n = 1; n < (lk_ix)t->node_count; n++) {
-    const lk_node *nd = &t->nodes[n];
-    lk_node_id nid;
-    lk_u32 count;
-    lk_i32 hov;
-    lk_u32 i;
-    const lk_style *trig_style;
-    const lk_style *opt_style;
-    lk_rect popup;
-    lk_render_cmd cmd;
+  if (t->nodes[n].kind != UIK_DROPDOWN) {
+    return;
+  }
 
-    if (nd->kind != UIK_DROPDOWN) {
-      continue;
-    }
+  nid = t->nodes[n].id;
+  if (!is_expanded(state, nid)) {
+    return;
+  }
 
-    nid = nd->id;
-    if (!is_expanded(state, nid)) {
-      continue;
-    }
+  count = count_options(t, n);
+  if (count == 0) {
+    return;
+  }
 
-    count = count_options(t, n);
-    if (count == 0) {
-      continue;
-    }
+  trig_style = styles ? &styles[n] : NULL;
+  popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
 
-    trig_style = styles ? &styles[n] : NULL;
-    popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
+  /* Popup background */
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.op = LK_ROP_FILL_RECT;
+  cmd.rect = popup;
+  if (trig_style) {
+    cmd.color = trig_style->bg;
+  } else {
+    cmd.color.r = 0;
+    cmd.color.g = 0;
+    cmd.color.b = 0;
+    cmd.color.a = 255;
+  }
+  lk_render_list_push(out, cmd);
 
-    /* Popup background */
+  /* Border (1px) */
+  if (trig_style && trig_style->border_width > 0) {
+    lk_color bc = trig_style->border_color;
+    lk_i32 bw = trig_style->border_width;
+
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_FILL_RECT;
-    cmd.rect = popup;
-    if (trig_style) {
-      cmd.color = trig_style->bg;
-    } else {
-      cmd.color.r = 0;
-      cmd.color.g = 0;
-      cmd.color.b = 0;
-      cmd.color.a = 255;
-    }
+    cmd.color = bc;
+    /* top */
+    cmd.rect.x = popup.x;
+    cmd.rect.y = popup.y;
+    cmd.rect.w = popup.w;
+    cmd.rect.h = bw;
     lk_render_list_push(out, cmd);
+    /* bottom */
+    cmd.rect.y = popup.y + popup.h - bw;
+    lk_render_list_push(out, cmd);
+    /* left */
+    cmd.rect.y = popup.y;
+    cmd.rect.w = bw;
+    cmd.rect.h = popup.h;
+    lk_render_list_push(out, cmd);
+    /* right */
+    cmd.rect.x = popup.x + popup.w - bw;
+    lk_render_list_push(out, cmd);
+  }
 
-    /* Border (1px) */
-    if (trig_style && trig_style->border_width > 0) {
-      lk_color bc = trig_style->border_color;
-      lk_i32 bw = trig_style->border_width;
+  hov = get_i32(state, nid, LKS_HOVER_INDEX);
 
+  /* Options */
+  for (i = 0; i < count; i++) {
+    lk_ix opt = nth_option(t, n, i);
+    lk_rect r;
+    lk_color hl;
+
+    if (!opt) {
+      continue;
+    }
+
+    r = lk_dropdown_option_rect(t, n, i, rects, styles, cfg);
+    opt_style = styles ? &styles[opt] : trig_style;
+
+    /* Hover highlight */
+    if ((lk_i32)i == hov) {
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
-      cmd.color = bc;
-      /* top */
-      cmd.rect.x = popup.x;
-      cmd.rect.y = popup.y;
-      cmd.rect.w = popup.w;
-      cmd.rect.h = bw;
-      lk_render_list_push(out, cmd);
-      /* bottom */
-      cmd.rect.y = popup.y + popup.h - bw;
-      lk_render_list_push(out, cmd);
-      /* left */
-      cmd.rect.y = popup.y;
-      cmd.rect.w = bw;
-      cmd.rect.h = popup.h;
-      lk_render_list_push(out, cmd);
-      /* right */
-      cmd.rect.x = popup.x + popup.w - bw;
+      cmd.rect = r;
+      if (trig_style) {
+        hl = trig_style->border_color;
+      } else {
+        hl.r = 80;
+        hl.g = 100;
+        hl.b = 160;
+        hl.a = 255;
+      }
+      cmd.color = hl;
       lk_render_list_push(out, cmd);
     }
 
-    hov = get_i32(state, nid, LKS_HOVER_INDEX);
-
-    /* Options */
-    for (i = 0; i < count; i++) {
-      lk_ix opt = nth_option(t, n, i);
-      lk_rect r;
-      lk_color hl;
-
-      if (!opt) {
-        continue;
-      }
-
-      r = lk_dropdown_option_rect(t, n, i, rects, styles, cfg);
-      opt_style = styles ? &styles[opt] : trig_style;
-
-      /* Hover highlight */
-      if ((lk_i32)i == hov) {
+    /* Option text */
+    {
+      lk_u32 sid = lk_node_text_id(t, opt);
+      if (sid != 0) {
         memset(&cmd, 0, sizeof(cmd));
-        cmd.op = LK_ROP_FILL_RECT;
-        cmd.rect = r;
-        if (trig_style) {
-          hl = trig_style->border_color;
+        cmd.op = LK_ROP_DRAW_TEXT;
+        cmd.rect.x = r.x + DROPDOWN_OPTION_PAD_Y;
+        cmd.rect.y = r.y + DROPDOWN_OPTION_PAD_Y;
+        cmd.rect.w = r.w - DROPDOWN_OPTION_PAD_Y * 2;
+        cmd.rect.h = r.h - DROPDOWN_OPTION_PAD_Y * 2;
+        if (opt_style) {
+          cmd.color = opt_style->fg;
+          cmd.font_id = (lk_u16)opt_style->font_id;
+          cmd.font_size = (lk_u16)opt_style->font_size;
         } else {
-          hl.r = 80;
-          hl.g = 100;
-          hl.b = 160;
-          hl.a = 255;
+          cmd.color.r = 220;
+          cmd.color.g = 220;
+          cmd.color.b = 220;
+          cmd.color.a = 255;
         }
-        cmd.color = hl;
+        cmd.str_id = sid;
         lk_render_list_push(out, cmd);
       }
-
-      /* Option text */
-      {
-        lk_u32 sid = lk_node_text_id(t, opt);
-        if (sid != 0) {
-          memset(&cmd, 0, sizeof(cmd));
-          cmd.op = LK_ROP_DRAW_TEXT;
-          cmd.rect.x = r.x + DROPDOWN_OPTION_PAD_Y;
-          cmd.rect.y = r.y + DROPDOWN_OPTION_PAD_Y;
-          cmd.rect.w = r.w - DROPDOWN_OPTION_PAD_Y * 2;
-          cmd.rect.h = r.h - DROPDOWN_OPTION_PAD_Y * 2;
-          if (opt_style) {
-            cmd.color = opt_style->fg;
-            cmd.font_id = (lk_u16)opt_style->font_id;
-            cmd.font_size = (lk_u16)opt_style->font_size;
-          } else {
-            cmd.color.r = 220;
-            cmd.color.g = 220;
-            cmd.color.b = 220;
-            cmd.color.a = 255;
-          }
-          cmd.str_id = sid;
-          lk_render_list_push(out, cmd);
-        }
-      }
     }
   }
-
-  return 1;
 }
 
-/* ---- Overlay hit-test ---- */
+/* ---- Overlay hit-test (dispatch target for lk-overlay.c) ---- */
 
-lk_ix lk_hit_test_overlay(const lk_tree *t, const lk_rect *rects,
-                           const lk_style *styles, const lk_state *state,
-                           const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y) {
-  lk_ix n;
+lk_ix lk_dropdown_hit_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
+                            const lk_style *styles, const lk_state *state,
+                            const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y) {
+  lk_rect popup;
+  lk_u32 count;
+  lk_u32 i;
 
-  if (!t || !rects) {
+  if (!t || !rects || n == 0 || n >= (lk_ix)t->node_count) {
     return 0;
   }
 
-  for (n = 1; n < (lk_ix)t->node_count; n++) {
-    const lk_node *nd = &t->nodes[n];
-    lk_rect popup;
-    lk_u32 count;
-    lk_u32 i;
-
-    if (nd->kind != UIK_DROPDOWN) {
-      continue;
-    }
-
-    if (!is_expanded(state, nd->id)) {
-      continue;
-    }
-
-    popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
-    if (!point_in(&popup, x, y)) {
-      continue;
-    }
-
-    count = count_options(t, n);
-    for (i = 0; i < count; i++) {
-      lk_ix opt = nth_option(t, n, i);
-      lk_rect r = lk_dropdown_option_rect(t, n, i, rects, styles, cfg);
-
-      if (opt && point_in(&r, x, y)) {
-        return opt;
-      }
-    }
-
-    /* Click inside popup but outside any option (padding zone) —
-     * consume as a hit on the dropdown itself so the click doesn't
-     * close the overlay. */
-    return n;
-  }
-
-  return 0;
-}
-
-/* ---- Overlay dismissal ---- */
-
-int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
-                                const lk_style *styles,
-                                const lk_layout_cfg *cfg,
-                                lk_i32 x, lk_i32 y) {
-  const lk_tree *t;
-  lk_state *st;
-  lk_ix n;
-  int dismissed = 0;
-
-  if (!ui) {
+  if (t->nodes[n].kind != UIK_DROPDOWN) {
     return 0;
   }
 
-  t = lk_ui_tree(ui);
-  st = lk_ui_state(ui);
-  if (!t || !st) {
+  if (!is_expanded(state, t->nodes[n].id)) {
     return 0;
   }
 
-  for (n = 1; n < (lk_ix)t->node_count; n++) {
-    const lk_node *nd = &t->nodes[n];
-    lk_rect popup;
-    lk_rect trigger;
+  popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
+  if (!point_in(&popup, x, y)) {
+    return 0;
+  }
 
-    if (nd->kind != UIK_DROPDOWN) {
-      continue;
-    }
+  count = count_options(t, n);
+  for (i = 0; i < count; i++) {
+    lk_ix opt = nth_option(t, n, i);
+    lk_rect r = lk_dropdown_option_rect(t, n, i, rects, styles, cfg);
 
-    if (!is_expanded(st, nd->id)) {
-      continue;
-    }
-
-    popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
-    trigger = rects[n];
-
-    if (!point_in(&popup, x, y) && !point_in(&trigger, x, y)) {
-      lk_state_set(st, nd->id, LKS_EXPANDED, lk_v_i32(0));
-      dismissed = 1;
+    if (opt && point_in(&r, x, y)) {
+      return opt;
     }
   }
 
-  return dismissed;
+  /* Click inside popup but outside any option (padding zone) —
+   * consume as a hit on the dropdown itself so the click doesn't
+   * close the overlay. */
+  return n;
 }
 
 /* ---- Registration ---- */

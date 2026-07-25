@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-overlay.h"
 #include <lk.h>
 
 int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
@@ -87,29 +88,21 @@ static void init_fallback_styles(void) {
   lk_theme_destroy(th);
 }
 
-int lk_render_build(const lk_tree *t, const lk_rect *rects,
-                    const lk_style *styles, const lk_state *state,
-                    lk_render_list *out) {
+/* Shared DFS emitter for lk_render_build / lk_render_build_from.
+ * Walks the subtree rooted at start and appends commands to out
+ * (count is NOT reset here).  Subtrees whose root carries UIP_HIDDEN
+ * are skipped, except start itself when ignore_start_hidden is set
+ * (overlay content subtrees are hidden from the main pass but must
+ * render in the overlay pass). */
+static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
+                       const lk_style *styles, const lk_state *state,
+                       lk_render_list *out, int ignore_start_hidden) {
   lk_ix *stack;
   lk_u32 sp;
   /* Stack needs room for each node plus a CLIP_END marker per clipping
    * node.  2x node_count is a safe upper bound.
    */
   lk_u32 stack_cap;
-
-  if (!t || !out) {
-    return 0;
-  }
-
-  out->count = 0;
-
-  if (t->root == 0 || t->root >= t->node_count) {
-    return 1;
-  }
-
-  if (!rects) {
-    return 0;
-  }
 
   if (!styles && !g_fallback_inited) {
     init_fallback_styles();
@@ -123,7 +116,7 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
   }
 
   sp = 0;
-  stack[sp++] = t->root;
+  stack[sp++] = start;
 
   while (sp > 0) {
     lk_ix raw = stack[--sp];
@@ -144,6 +137,13 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     }
 
     n = raw;
+
+    /* Hidden subtrees are skipped by the main render pass. */
+    if (lk_node_prop_bool(t, n, UIP_HIDDEN) &&
+        !(ignore_start_hidden && n == start)) {
+      continue;
+    }
+
     nd = &t->nodes[n];
     kind = (lk_kind)nd->kind;
     def = lk_widget_get(kind);
@@ -252,6 +252,42 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
 
   lk_sys_dealloc(NULL, stack);
   return 1;
+}
+
+int lk_render_build(const lk_tree *t, const lk_rect *rects,
+                    const lk_style *styles, const lk_state *state,
+                    lk_render_list *out) {
+  if (!t || !out) {
+    return 0;
+  }
+
+  out->count = 0;
+
+  if (t->root == 0 || t->root >= t->node_count) {
+    return 1;
+  }
+
+  if (!rects) {
+    return 0;
+  }
+
+  return render_walk(t, t->root, rects, styles, state, out, 0);
+}
+
+/* Internal (declared in lk-overlay.h): append the subtree rooted at
+ * start, ignoring UIP_HIDDEN on start itself. */
+int lk_render_build_from(const lk_tree *t, lk_ix start, const lk_rect *rects,
+                         const lk_style *styles, const lk_state *state,
+                         lk_render_list *out) {
+  if (!t || !out || !rects) {
+    return 0;
+  }
+
+  if (start == 0 || start >= t->node_count) {
+    return 0;
+  }
+
+  return render_walk(t, start, rects, styles, state, out, 1);
 }
 
 void lk_render_list_destroy(lk_render_list *rl) {

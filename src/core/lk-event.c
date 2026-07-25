@@ -67,6 +67,12 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
     lk_u32 sp_start;
     lk_u32 lo, hi;
 
+    /* Hidden subtrees are invisible to the main-pass hit-test
+     * (overlay content is hit-tested by lk_hit_test_overlay). */
+    if (lk_node_prop_bool(t, n, UIP_HIDDEN)) {
+      continue;
+    }
+
     if (!rect_contains(&rects[n], x, y)) {
       continue;
     }
@@ -161,14 +167,19 @@ lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t) {
   return lk_tree_find_by_id(t, ui->focused_id);
 }
 
-/* Collect all focusable+enabled nodes in DFS pre-order into buf.
- * Returns count of focusable nodes found.
+/* Collect focusable+enabled nodes in DFS pre-order into buf, scoped
+ * to the subtree rooted at start.  Hidden subtrees are skipped;
+ * ignore_start_hidden exempts start itself (a focus-trapping
+ * overlay's content root is UIP_HIDDEN but must stay collectable
+ * while it is the active trap).  Returns count of focusable nodes.
  */
-static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
+static lk_u32 collect_focusable(const lk_tree *t, lk_ix start,
+                                int ignore_start_hidden, lk_ix *buf,
+                                lk_u32 buf_cap) {
   lk_ix *stack;
   lk_u32 sp, count;
 
-  if (!t || t->root == 0 || !buf || buf_cap == 0) {
+  if (!t || start == 0 || !buf || buf_cap == 0) {
     return 0;
   }
 
@@ -180,13 +191,18 @@ static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
 
   sp = 0;
   count = 0;
-  stack[sp++] = t->root;
+  stack[sp++] = start;
 
   while (sp > 0 && count < buf_cap) {
     lk_ix n = stack[--sp];
     const lk_node *nd = &t->nodes[n];
     lk_ix child;
     lk_u32 sp_start, lo, hi;
+
+    if (lk_node_prop_bool(t, n, UIP_HIDDEN) &&
+        !(ignore_start_hidden && n == start)) {
+      continue;
+    }
 
     if (node_is_focusable(t, n) && !node_is_disabled(t, n)) {
       buf[count++] = n;
@@ -219,10 +235,47 @@ static lk_u32 collect_focusable(const lk_tree *t, lk_ix *buf, lk_u32 buf_cap) {
   return count;
 }
 
+/* Focus scope: when the topmost focus-trapping overlay has a content
+ * subtree, tab-cycling is confined to it (modal behavior).  Scans the
+ * overlay stack topmost-first for a trapping overlay whose content
+ * root resolves in the current tree; falls back to t->root. */
+static lk_ix focus_scope_root(const lk_ui *ui, const lk_tree *t,
+                              int *ignore_hidden) {
+  lk_u32 i;
+
+  *ignore_hidden = 0;
+
+  if (!ui) {
+    return t->root;
+  }
+
+  i = ui->overlay_count;
+
+  while (i > 0) {
+    const lk_overlay *ov;
+
+    i--;
+    ov = &ui->overlays[i];
+
+    if (ov->traps_focus && ov->content_root_id != 0) {
+      lk_ix c = lk_tree_find_by_id(t, ov->content_root_id);
+
+      if (c != 0) {
+        *ignore_hidden = 1;
+        return c;
+      }
+    }
+  }
+
+  return t->root;
+}
+
 lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
   lk_ix *buf;
   lk_u32 count, i;
   lk_node_id result;
+  lk_ix scope;
+  int ignore_hidden;
 
   if (!ui || !t || t->root == 0) {
     return 0;
@@ -234,7 +287,8 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
     return 0;
   }
 
-  count = collect_focusable(t, buf, t->node_count);
+  scope = focus_scope_root(ui, t, &ignore_hidden);
+  count = collect_focusable(t, scope, ignore_hidden, buf, t->node_count);
 
   if (count == 0) {
     lk_sys_dealloc(NULL, buf);
@@ -274,6 +328,8 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
   lk_ix *buf;
   lk_u32 count, i;
   lk_node_id result;
+  lk_ix scope;
+  int ignore_hidden;
 
   if (!ui || !t || t->root == 0) {
     return 0;
@@ -285,7 +341,8 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
     return 0;
   }
 
-  count = collect_focusable(t, buf, t->node_count);
+  scope = focus_scope_root(ui, t, &ignore_hidden);
+  count = collect_focusable(t, scope, ignore_hidden, buf, t->node_count);
 
   if (count == 0) {
     lk_sys_dealloc(NULL, buf);
@@ -331,6 +388,25 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   lk_ix n;
 
   if (!ui || !event) {
+    return;
+  }
+
+  /* Overlay pre-step: ESC pops the topmost overlay (dropdown popup,
+   * modal, ...) before any widget or user handler sees the key.  The
+   * owner's public state is kept in sync (dropdowns: LKS_EXPANDED). */
+  if (event->type == LK_EVENT_KEY_DOWN &&
+      event->data.key.keycode == LKK_ESCAPE && ui->overlay_count > 0) {
+    const lk_overlay *top = &ui->overlays[ui->overlay_count - 1];
+    lk_node_id owner = top->owner_id;
+    lk_u8 kind = top->kind;
+
+    lk_overlay_pop(ui);
+
+    if (kind == LK_OVERLAY_DROPDOWN_POPUP && ui->state) {
+      lk_state_set(ui->state, owner, LKS_EXPANDED, lk_v_i32(0));
+    }
+
+    event->handled = 1;
     return;
   }
 

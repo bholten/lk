@@ -66,12 +66,15 @@ static void measure_column(const lk_tree *t, lk_ix n, const lk_size *sizes,
   int count = 0;
 
   while (ch) {
-    if (sizes[ch].w > max_w) {
-      max_w = sizes[ch].w;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      if (sizes[ch].w > max_w) {
+        max_w = sizes[ch].w;
+      }
+
+      sum_h += sizes[ch].h;
+      count++;
     }
 
-    sum_h += sizes[ch].h;
-    count++;
     ch = t->nodes[ch].next_sibling;
   }
 
@@ -99,13 +102,16 @@ static void measure_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
   int count = 0;
 
   while (ch) {
-    sum_w += sizes[ch].w;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      sum_w += sizes[ch].w;
 
-    if (sizes[ch].h > max_h) {
-      max_h = sizes[ch].h;
+      if (sizes[ch].h > max_h) {
+        max_h = sizes[ch].h;
+      }
+
+      count++;
     }
 
-    count++;
     ch = t->nodes[ch].next_sibling;
   }
 
@@ -188,10 +194,13 @@ static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
   (void)cfg;
 
   while (child) {
-    rects[child].x = content->x;
-    rects[child].y = content->y;
-    rects[child].w = content->w;
-    rects[child].h = content->h;
+    if (!lk_node_prop_bool(t, child, UIP_HIDDEN)) {
+      rects[child].x = content->x;
+      rects[child].y = content->y;
+      rects[child].w = content->w;
+      rects[child].h = content->h;
+    }
+
     child = t->nodes[child].next_sibling;
   }
 
@@ -240,6 +249,12 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
     lk_kind ck = (lk_kind)t->nodes[child].kind;
     int is_flex_spacer =
         (ck == UIK_SPACER && !lk_node_has_prop(t, child, flex_key));
+
+    if (lk_node_prop_bool(t, child, UIP_HIDDEN)) {
+      child = t->nodes[child].next_sibling;
+      continue;
+    }
+
     child_count++;
 
     if (is_flex_spacer) {
@@ -287,6 +302,11 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
     lk_i32 child_main;
     lk_i32 child_cross;
     lk_i32 child_cross_pos;
+
+    if (lk_node_prop_bool(t, child, UIP_HIDDEN)) {
+      child = t->nodes[child].next_sibling;
+      continue;
+    }
 
     if (is_flex_spacer) {
       child_main = spacer_each + (spacer_idx < spacer_extra ? 1 : 0);

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <lk.h>
+#include "core/lk-dropdown.h" /* lk_dropdown_popup_rect (geometry tests) */
 #include "core/lk-memory.h"
 
 /* ---- minimal test harness ---- */
@@ -6955,6 +6956,18 @@ static lk_ui *make_dropdown_ui(lk_ix *out_dd) {
   return ui;
 }
 
+/* Open a dropdown by routing a trigger click — the real open path,
+ * which pushes the popup overlay AND sets LKS_EXPANDED (the two are
+ * kept in sync; the overlay stack drives the overlay passes). */
+static void open_dropdown(lk_ui *ui, lk_ix dd) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = dd;
+  lk_event_route(ui, &ev);
+}
+
 static void test_dropdown_pointer_down_toggles(void) {
   lk_ui *ui;
   lk_ix dd;
@@ -7158,7 +7171,6 @@ static void test_dropdown_overlay_hit_test(void) {
   ui = make_dropdown_ui(&dd);
   st = lk_ui_state(ui);
   dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
-  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
@@ -7170,6 +7182,10 @@ static void test_dropdown_overlay_hit_test(void) {
   cfg.state = st;
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
+  open_dropdown(ui, dd);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
   /* Popup starts below trigger. Click on row 1 (second option). */
   {
     lk_rect tr = rects[dd];
@@ -7177,8 +7193,7 @@ static void test_dropdown_overlay_hit_test(void) {
     lk_i32 click_y = tr.y + tr.h + 7 + row_h + row_h / 2; /* inset + 1 row + middle */
     lk_i32 click_x = tr.x + tr.w / 2;
 
-    hit = lk_hit_test_overlay(lk_ui_tree(ui), rects, cfg.styles, st, &cfg,
-                               click_x, click_y);
+    hit = lk_hit_test_overlay(ui, rects, &cfg, click_x, click_y);
     /* Expect an option node ix (one of o1/o2/o3). */
     CHECK(hit > 0);
     if (hit > 0) {
@@ -7206,7 +7221,6 @@ static void test_dropdown_click_outside_closes(void) {
   ui = make_dropdown_ui(&dd);
   st = lk_ui_state(ui);
   dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
-  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
@@ -7218,13 +7232,16 @@ static void test_dropdown_click_outside_closes(void) {
   cfg.state = st;
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
+  open_dropdown(ui, dd);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
   /* Far-away click (outside both trigger and popup) */
-  dismissed = lk_overlay_dismiss_outside(ui, rects, cfg.styles, &cfg,
-                                          700, 500);
-  CHECK_EQ(dismissed, 1);
+  dismissed = lk_overlay_dismiss_outside(ui, rects, &cfg, 700, 500);
+  CHECK_EQ(dismissed, LK_DISMISS_DISMISSED);
   CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).tag,
            (unsigned)UIV_I32);
   CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
 
   free(rects);
   END_TEST();
@@ -7257,21 +7274,712 @@ static void test_dropdown_overlay_render_when_expanded(void) {
   cfg.state = st;
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
-  /* Collapsed: no overlay commands */
+  /* Collapsed: no overlay on the stack, no overlay commands */
   memset(&rl, 0, sizeof(rl));
-  lk_render_build_overlays(lk_ui_tree(ui), rects, cfg.styles, st, &cfg, &rl);
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
   cmds_collapsed = rl.count;
   CHECK_EQ(cmds_collapsed, 0u);
 
-  /* Expand, re-run */
-  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
+  /* Expand (pushes the popup overlay), re-run */
+  open_dropdown(ui, dd);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
   rl.count = 0;
-  lk_render_build_overlays(lk_ui_tree(ui), rects, cfg.styles, st, &cfg, &rl);
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
   cmds_expanded = rl.count;
   CHECK(cmds_expanded > 0u);
 
   lk_render_list_destroy(&rl);
   free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Overlay generalization tests (lk-overlay.c, UIP_HIDDEN,
+ * lk_layout_subtree, ESC-in-core, focus traps)
+ * ================================================================ */
+
+static void test_anchor_below_fits(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: BELOW fits under owner");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  owner.x = 100;
+  owner.y = 100;
+  owner.w = 80;
+  owner.h = 30;
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 200);
+  CHECK_EQ(r.x, 100);
+  CHECK_EQ(r.y, 130);
+  CHECK_EQ(r.w, 120);
+  CHECK_EQ(r.h, 200);
+
+  END_TEST();
+}
+
+static void test_anchor_below_flips_above(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: BELOW flips above at bottom edge");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  owner.x = 100;
+  owner.y = 500;
+  owner.w = 80;
+  owner.h = 30;
+
+  /* Below would end at 530+200=730 > 600; room above (500-200 >= 0). */
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 200);
+  CHECK_EQ(r.x, 100);
+  CHECK_EQ(r.y, 300); /* owner.y - h */
+  CHECK_EQ(r.h, 200);
+
+  /* No room above either (owner near top of a short viewport):
+   * stays below but clamps to the viewport bottom. */
+  owner.y = 50;
+  r = lk_anchor_resolve(&ov, owner, 800, 200, 120, 180);
+  CHECK_EQ(r.y, 20); /* clamped: 200 - 180 */
+
+  END_TEST();
+}
+
+static void test_anchor_x_clamp(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: x clamped into viewport");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_BELOW;
+  owner.x = 750;
+  owner.y = 100;
+  owner.w = 80;
+  owner.h = 30;
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 50);
+  CHECK_EQ(r.x, 680); /* 800 - 120 */
+  CHECK_EQ(r.y, 130);
+
+  /* Left edge */
+  owner.x = -40;
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 120, 50);
+  CHECK_EQ(r.x, 0);
+
+  END_TEST();
+}
+
+static void test_anchor_center_viewport(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: CENTER_VIEWPORT centers");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  memset(&owner, 0, sizeof(owner));
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 200, 100);
+  CHECK_EQ(r.x, 300);
+  CHECK_EQ(r.y, 250);
+  CHECK_EQ(r.w, 200);
+  CHECK_EQ(r.h, 100);
+
+  END_TEST();
+}
+
+static void test_anchor_at_cursor(void) {
+  lk_overlay ov;
+  lk_rect owner;
+  lk_rect r;
+
+  BEGIN_TEST("anchor: AT_CURSOR uses offset point + clamps");
+
+  memset(&ov, 0, sizeof(ov));
+  ov.anchor_mode = LK_ANCHOR_AT_CURSOR;
+  ov.offset.x = 333;
+  ov.offset.y = 222;
+  memset(&owner, 0, sizeof(owner));
+
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 50, 40);
+  CHECK_EQ(r.x, 333);
+  CHECK_EQ(r.y, 222);
+
+  /* Cursor near the bottom-right corner clamps back inside. */
+  ov.offset.x = 790;
+  ov.offset.y = 590;
+  r = lk_anchor_resolve(&ov, owner, 800, 600, 50, 40);
+  CHECK_EQ(r.x, 750);
+  CHECK_EQ(r.y, 560);
+
+  END_TEST();
+}
+
+static void test_overlay_push_pop_count(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_overlay ov;
+
+  BEGIN_TEST("overlay: push/pop/pop_owner/top/count");
+
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+  CHECK(lk_overlay_top(ui) == NULL);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
+  ov.owner_id = 11;
+  CHECK_EQ(lk_overlay_push(ui, &ov), 1);
+
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.owner_id = 22;
+  CHECK_EQ(lk_overlay_push(ui, &ov), 1);
+
+  CHECK_EQ(lk_overlay_count(ui), 2u);
+  CHECK(lk_overlay_top(ui) != NULL);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, 22u);
+
+  lk_overlay_pop(ui);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, 11u);
+
+  /* pop_owner removes mid-stack entries */
+  ov.owner_id = 22;
+  lk_overlay_push(ui, &ov);
+  CHECK_EQ(lk_overlay_pop_owner(ui, 11), 1);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, 22u);
+
+  /* pop_owner on an absent owner is a no-op */
+  CHECK_EQ(lk_overlay_pop_owner(ui, 99), 0);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* pop on empty is safe */
+  lk_overlay_pop(ui);
+  lk_overlay_pop(ui);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Build w > colA + colB, with button "b" under colA (moved=0) or
+ * colB (moved=1), or omitted entirely (present=0). */
+static void build_move_tree(lk_tree *t, int present, int moved) {
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix ca = lk_tree_add_node_s(t, lk_str_c("colA"), UIK_COLUMN);
+  lk_ix cb = lk_tree_add_node_s(t, lk_str_c("colB"), UIK_COLUMN);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ca);
+  lk_tree_append_child(t, w, cb);
+
+  if (present) {
+    lk_ix b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+    lk_tree_append_child(t, moved ? cb : ca, b);
+  }
+}
+
+static void test_overlay_end_frame_gc(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_overlay ov;
+  lk_node_id b_id;
+
+  BEGIN_TEST("overlay: end_frame pops on owner removal, not move");
+
+  t = lk_ui_begin_frame(ui);
+  build_move_tree(t, 1, 0);
+  lk_ui_end_frame(ui);
+
+  b_id = lk_intern_id(ui->intern, lk_str_c("b"));
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
+  ov.owner_id = b_id;
+  lk_overlay_push(ui, &ov);
+
+  /* Move "b" to a different parent: REMOVED+ADDED — overlay stays. */
+  t = lk_ui_begin_frame(ui);
+  build_move_tree(t, 1, 1);
+  lk_ui_end_frame(ui);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Remove "b" entirely — overlay popped. */
+  t = lk_ui_begin_frame(ui);
+  build_move_tree(t, 0, 0);
+  lk_ui_end_frame(ui);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_overlay_escape_pops(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id dd_id;
+
+  BEGIN_TEST("overlay: ESC pops topmost + syncs dropdown state");
+
+  ui = make_dropdown_ui(&dd);
+  st = lk_ui_state(ui);
+  dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+
+  open_dropdown(ui, dd);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1);
+
+  /* ESC routed anywhere (target = root, as when nothing is focused)
+   * is consumed by the pre-step in lk_event_route. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = lk_ui_tree(ui)->root;
+  ev.data.key.keycode = LKK_ESCAPE;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0);
+
+  /* With no overlay open, ESC is NOT consumed by the pre-step. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = lk_ui_tree(ui)->root;
+  ev.data.key.keycode = LKK_ESCAPE;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_bottom_edge_flips(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, sp, dd, o1, o2, o3;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect popup;
+
+  BEGIN_TEST("dropdown: popup flips above near bottom edge");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_H, lk_v_i32(150));
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  dd = lk_tree_find_by_id(lk_ui_tree(ui),
+                          lk_intern_id(ui->intern, lk_str_c("dd")));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+
+  /* Short viewport: popup would overflow the bottom -> flips above,
+   * sitting exactly on top of the trigger. */
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 200;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+  popup = lk_dropdown_popup_rect(lk_ui_tree(ui), dd, rects, cfg.styles, &cfg);
+  CHECK(popup.y < rects[dd].y);
+  CHECK_EQ(popup.y + popup.h, rects[dd].y);
+  CHECK(popup.y >= 0);
+
+  /* Tall viewport: same tree, popup stays below the trigger. */
+  cfg.viewport_h = 600;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+  popup = lk_dropdown_popup_rect(lk_ui_tree(ui), dd, rects, cfg.styles, &cfg);
+  CHECK_EQ(popup.y, rects[dd].y + rects[dd].h);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Build a tree with a hidden modal subtree:
+ *   w > col > btn "outside" (focusable)
+ *           > col "modal" (hidden) > btn "m1", btn "m2" (focusable)
+ * Returns node indices via out params. */
+static lk_ui *make_modal_ui(lk_ix *out_outside, lk_ix *out_modal) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, bo, modal, m1, m2;
+  const lk_tree *cur;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  bo = lk_tree_add_node_s(t, lk_str_c("outside"), UIK_BUTTON);
+  lk_tree_add_prop(t, bo, UIP_TEXT, lk_v_cstr(t->intern, "Open"));
+  lk_tree_add_prop(t, bo, UIP_FOCUSABLE, lk_v_bool(1));
+  modal = lk_tree_add_node_s(t, lk_str_c("modal"), UIK_COLUMN);
+  lk_tree_add_prop(t, modal, UIP_HIDDEN, lk_v_bool(1));
+  m1 = lk_tree_add_node_s(t, lk_str_c("m1"), UIK_BUTTON);
+  lk_tree_add_prop(t, m1, UIP_TEXT, lk_v_cstr(t->intern, "OK"));
+  lk_tree_add_prop(t, m1, UIP_FOCUSABLE, lk_v_bool(1));
+  m2 = lk_tree_add_node_s(t, lk_str_c("m2"), UIK_BUTTON);
+  lk_tree_add_prop(t, m2, UIP_TEXT, lk_v_cstr(t->intern, "Cancel"));
+  lk_tree_add_prop(t, m2, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, bo);
+  lk_tree_append_child(t, col, modal);
+  lk_tree_append_child(t, modal, m1);
+  lk_tree_append_child(t, modal, m2);
+  lk_ui_end_frame(ui);
+
+  cur = lk_ui_tree(ui);
+  *out_outside =
+      lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("outside")));
+  *out_modal =
+      lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("modal")));
+  return ui;
+}
+
+static void test_overlay_modal_blocks(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_overlay ov;
+  lk_node_id modal_id;
+  int rc;
+
+  BEGIN_TEST("overlay: modal consumes outside click, no dismiss");
+
+  ui = make_modal_ui(&outside, &modal);
+  modal_id = lk_intern_id(ui->intern, lk_str_c("modal"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  ov.dismiss_on_outside = 0;
+  ov.traps_focus = 1;
+  ov.owner_id = modal_id;
+  ov.content_root_id = modal_id;
+  lk_overlay_push(ui, &ov);
+
+  /* Outside click: blocked (consumed), overlay NOT dismissed. */
+  rc = lk_overlay_dismiss_outside(ui, rects, &cfg, 5, 595);
+  CHECK_EQ(rc, LK_DISMISS_BLOCKED);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Click inside the centered modal: nothing dismissed or blocked. */
+  rc = lk_overlay_dismiss_outside(ui, rects, &cfg, 400, 300);
+  CHECK_EQ(rc, LK_DISMISS_NONE);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* The modal content is hit-testable through the overlay pass. */
+  CHECK(lk_hit_test_overlay(ui, rects, &cfg, 400, 300) != 0);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_hidden_subtree_layout(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, la, hid, lb, lc;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+
+  BEGIN_TEST("hidden: subtree excluded from layout stacking");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "aa"));
+  hid = lk_tree_add_node_s(t, lk_str_c("hid"), UIK_COLUMN);
+  lk_tree_add_prop(t, hid, UIP_HIDDEN, lk_v_bool(1));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "hidden"));
+  lc = lk_tree_add_node_s(t, lk_str_c("lc"), UIK_LABEL);
+  lk_tree_add_prop(t, lc, UIP_TEXT, lk_v_cstr(t->intern, "cc"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_tree_append_child(t, col, hid);
+  lk_tree_append_child(t, col, lc);
+  lk_tree_append_child(t, hid, lb);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  /* styles == NULL: layout reads tree props (no theme padding/gap),
+   * so the geometry below is exact stub arithmetic. */
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix ila = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("la")));
+    lk_ix ihid = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                      lk_str_c("hid")));
+    lk_ix ilb = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("lb")));
+    lk_ix ilc = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("lc")));
+
+    /* la at y=0 h=16; lc packs directly under it (hidden col skipped,
+     * contributes no height and no gap). */
+    CHECK_EQ(rects[ila].y, 0);
+    CHECK_EQ(rects[ila].h, 16);
+    CHECK_EQ(rects[ilc].y, 16);
+
+    /* Hidden nodes keep zeroed rects. */
+    CHECK_EQ(rects[ihid].w, 0);
+    CHECK_EQ(rects[ihid].h, 0);
+    CHECK_EQ(rects[ilb].w, 0);
+    CHECK_EQ(rects[ilb].h, 0);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_hidden_subtree_render_hit(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, la, hid, lb;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_u32 i, draw_text_count;
+
+  BEGIN_TEST("hidden: subtree skipped by render and hit-test");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "aa"));
+  hid = lk_tree_add_node_s(t, lk_str_c("hid"), UIK_COLUMN);
+  lk_tree_add_prop(t, hid, UIP_HIDDEN, lk_v_bool(1));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "hidden"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_tree_append_child(t, col, hid);
+  lk_tree_append_child(t, hid, lb);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix ila = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("la")));
+    lk_ix ihid = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                      lk_str_c("hid")));
+    lk_ix ilb = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("lb")));
+
+    /* Render: only the visible label's text is emitted. */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(cur, rects, NULL, lk_ui_state(ui), &rl);
+    draw_text_count = 0;
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+        draw_text_count++;
+      }
+    }
+
+    CHECK_EQ(draw_text_count, 1u);
+
+    /* Hit-test: even with stale rects overlapping visible content,
+     * hidden nodes are never returned. */
+    rects[ihid] = rects[ila];
+    rects[ilb] = rects[ila];
+    CHECK_EQ(lk_hit_test(cur, rects,
+                         rects[ila].x + 1, rects[ila].y + 1), ila);
+
+    lk_render_list_destroy(&rl);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_hidden_focus_next_skips(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_node_id got;
+
+  BEGIN_TEST("hidden: focus_next skips hidden subtree");
+
+  /* modal subtree is hidden and no trapping overlay is active, so
+   * m1/m2 are not focus-collectable — only "outside" is. */
+  ui = make_modal_ui(&outside, &modal);
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("outside")));
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("outside"))); /* wraps */
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_layout_subtree_positions(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, ov, l1, l2;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+
+  BEGIN_TEST("layout_subtree: column laid out at origin");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  ov = lk_tree_add_node_s(t, lk_str_c("ov"), UIK_COLUMN);
+  lk_tree_add_prop(t, ov, UIP_HIDDEN, lk_v_bool(1));
+  lk_tree_add_prop(t, ov, UIP_GAP, lk_v_i32(4));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "abc"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "de"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, ov);
+  lk_tree_append_child(t, ov, l1);
+  lk_tree_append_child(t, ov, l2);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  /* styles NULL: exact tree-prop arithmetic (no theme padding). */
+
+  {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix iov = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("ov")));
+    lk_ix il1 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("l1")));
+    lk_ix il2 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
+                                                     lk_str_c("l2")));
+
+    CHECK_EQ(lk_layout_subtree(cur, &cfg, iov, 100, 50, rects), 1);
+
+    /* Stub text: 8 px per codepoint, 16 px tall.
+     * "abc" = 24x16, "de" = 16x16, gap 4.
+     * Column: w = 24, h = 16 + 4 + 16 = 36. */
+    CHECK_EQ(rects[iov].x, 100);
+    CHECK_EQ(rects[iov].y, 50);
+    CHECK_EQ(rects[iov].w, 24);
+    CHECK_EQ(rects[iov].h, 36);
+
+    CHECK_EQ(rects[il1].x, 100);
+    CHECK_EQ(rects[il1].y, 50);
+    CHECK_EQ(rects[il1].w, 24); /* stretched to column width */
+    CHECK_EQ(rects[il1].h, 16);
+
+    CHECK_EQ(rects[il2].y, 70); /* 50 + 16 + gap 4 */
+    CHECK_EQ(rects[il2].h, 16);
+  }
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_trap_scopes_tab(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_overlay ov;
+  lk_node_id modal_id, got;
+
+  BEGIN_TEST("focus trap: tab-cycling scoped to trap subtree");
+
+  ui = make_modal_ui(&outside, &modal);
+  modal_id = lk_intern_id(ui->intern, lk_str_c("modal"));
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  ov.dismiss_on_outside = 0;
+  ov.traps_focus = 1;
+  ov.owner_id = modal_id;
+  ov.content_root_id = modal_id;
+  lk_overlay_push(ui, &ov);
+
+  /* Cycling only visits m1 and m2 — never "outside". */
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m1")));
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m2")));
+
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m1"))); /* wraps */
+
+  got = lk_focus_prev(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("m2")));
+
+  /* Popping the modal restores whole-tree cycling (hidden subtree
+   * skipped again). */
+  lk_overlay_pop(ui);
+  got = lk_focus_next(ui, lk_ui_tree(ui));
+  CHECK_EQ(got, lk_intern_id(ui->intern, lk_str_c("outside")));
+
   END_TEST();
   lk_ui_destroy(ui);
 }
@@ -7565,8 +8273,7 @@ static void test_dropdown_padding_click_stays_open(void) {
     lk_i32 px = tr.x + tr.w / 2;
     lk_i32 py = tr.y + tr.h + 2;
 
-    hit = lk_hit_test_overlay(lk_ui_tree(ui), rects, cfg.styles, st, &cfg,
-                              px, py);
+    hit = lk_hit_test_overlay(ui, rects, &cfg, px, py);
     CHECK_EQ(hit, dd); /* padding resolves to the dropdown itself */
 
     memset(&ev, 0, sizeof(ev));
@@ -7612,8 +8319,6 @@ static void test_dropdown_hover_follows_pointer(void) {
   ui = make_dropdown_ui(&dd);
   st = lk_ui_state(ui);
   dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
-  lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
-  lk_state_set(st, dd_id, LKS_HOVER_INDEX, lk_v_i32(0));
 
   rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
   memset(&cfg, 0, sizeof(cfg));
@@ -7625,6 +8330,8 @@ static void test_dropdown_hover_follows_pointer(void) {
   cfg.state = st;
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
+  open_dropdown(ui, dd); /* hover starts at selection (0) */
+
   tr = rects[dd];
 
   /* Move over option row 1 (second option) */
@@ -7632,8 +8339,7 @@ static void test_dropdown_hover_follows_pointer(void) {
     lk_i32 px = tr.x + tr.w / 2;
     lk_i32 py = tr.y + tr.h + inset + row_h + row_h / 2;
 
-    hit = lk_hit_test_overlay(lk_ui_tree(ui), rects, cfg.styles, st, &cfg,
-                              px, py);
+    hit = lk_hit_test_overlay(ui, rects, &cfg, px, py);
     CHECK(hit > 0);
     CHECK_EQ((unsigned)lk_ui_tree(ui)->nodes[hit].kind, (unsigned)UIK_OPTION);
 
@@ -7651,8 +8357,7 @@ static void test_dropdown_hover_follows_pointer(void) {
     lk_i32 px = tr.x + tr.w / 2;
     lk_i32 py = tr.y + tr.h + inset + row_h * 2 + row_h / 2;
 
-    hit = lk_hit_test_overlay(lk_ui_tree(ui), rects, cfg.styles, st, &cfg,
-                              px, py);
+    hit = lk_hit_test_overlay(ui, rects, &cfg, px, py);
     CHECK(hit > 0);
 
     memset(&ev, 0, sizeof(ev));
@@ -8580,6 +9285,24 @@ int main(void) {
   test_dropdown_overlay_hit_test();
   test_dropdown_click_outside_closes();
   test_dropdown_overlay_render_when_expanded();
+
+  /* overlay generalization */
+  printf("\nlk overlay tests:\n");
+  test_anchor_below_fits();
+  test_anchor_below_flips_above();
+  test_anchor_x_clamp();
+  test_anchor_center_viewport();
+  test_anchor_at_cursor();
+  test_overlay_push_pop_count();
+  test_overlay_end_frame_gc();
+  test_overlay_escape_pops();
+  test_dropdown_bottom_edge_flips();
+  test_overlay_modal_blocks();
+  test_hidden_subtree_layout();
+  test_hidden_subtree_render_hit();
+  test_hidden_focus_next_skips();
+  test_layout_subtree_positions();
+  test_focus_trap_scopes_tab();
 
   /* text backend contract (stage A) */
   printf("\nlk text backend tests:\n");

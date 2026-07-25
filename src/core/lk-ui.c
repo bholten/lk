@@ -481,12 +481,43 @@ void lk_ui_destroy(lk_ui *ui) {
     ui_dealloc(ui, ui->node_states);
   }
 
+  if (ui->overlays) {
+    ui_dealloc(ui, ui->overlays);
+  }
+
   ui->dealloc(ui->alloc_ud, ui);
 }
 
 lk_tree *lk_ui_begin_frame(lk_ui *ui) {
   lk_tree_reset(ui->next);
   return ui->next;
+}
+
+/* 1 when id was REMOVED in cs and not re-ADDED (i.e. truly gone, not
+ * merely moved to a new parent).  Shared by the focus-clear and
+ * overlay GC in lk_ui_end_frame; lk_state_gc applies the same rule. */
+static int cs_id_removed_not_readded(const lk_changeset *cs, lk_node_id id) {
+  lk_u32 i;
+  int removed = 0;
+
+  for (i = 0; i < cs->count; i++) {
+    if (cs->changes[i].kind == LK_CHANGE_REMOVED && cs->changes[i].id == id) {
+      removed = 1;
+      break;
+    }
+  }
+
+  if (!removed) {
+    return 0;
+  }
+
+  for (i = 0; i < cs->count; i++) {
+    if (cs->changes[i].kind == LK_CHANGE_ADDED && cs->changes[i].id == id) {
+      return 0;
+    }
+  }
+
+  return 1;
 }
 
 const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
@@ -515,27 +546,28 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
   /* Clear focus if the focused node was removed.  A node that is
    * REMOVED and ADDED in the same changeset merely moved to a new
    * parent — keep focus in that case. */
-  if (ui->focused_id != 0) {
-    lk_u32 fi;
-    for (fi = 0; fi < ui->changeset.count; fi++) {
-      if (ui->changeset.changes[fi].kind == LK_CHANGE_REMOVED &&
-          ui->changeset.changes[fi].id == ui->focused_id) {
-        lk_u32 ai;
-        int readded = 0;
+  if (ui->focused_id != 0 &&
+      cs_id_removed_not_readded(&ui->changeset, ui->focused_id)) {
+    ui->focused_id = 0;
+  }
 
-        for (ai = 0; ai < ui->changeset.count; ai++) {
-          if (ui->changeset.changes[ai].kind == LK_CHANGE_ADDED &&
-              ui->changeset.changes[ai].id == ui->focused_id) {
-            readded = 1;
-            break;
-          }
+  /* Pop overlays whose owner node was removed (same move filter:
+   * REMOVED + ADDED in one changeset is a reparent, overlay stays). */
+  {
+    lk_u32 oi = ui->overlay_count;
+
+    while (oi > 0) {
+      oi--;
+
+      if (cs_id_removed_not_readded(&ui->changeset,
+                                    ui->overlays[oi].owner_id)) {
+        lk_u32 k;
+
+        for (k = oi; k + 1 < ui->overlay_count; k++) {
+          ui->overlays[k] = ui->overlays[k + 1];
         }
 
-        if (!readded) {
-          ui->focused_id = 0;
-        }
-
-        break;
+        ui->overlay_count--;
       }
     }
   }

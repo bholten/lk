@@ -52,8 +52,8 @@ The diff matches children by `lk_node_id` (interned, so comparison is a u32 chec
 - **`lk_node`** — Has `id` (interned u32), `kind` (enum), `parent`/`first_child`/`next_sibling` (index-based adjacency), and a props slice.
 - **`lk_intern`** — String interning table (FNV-1a hash, open addressing, string pool). Maps strings to stable `lk_node_id` (u32, starting at 1). Supports reverse lookup via `by_id` array.
 - **`lk_value`** — Tagged union: `NONE`, `BOOL`, `I32`, `STR` (where STR stores an interned `lk_u32` string ID, not a raw pointer).
-- **`lk_kind`** — Node kinds: `WINDOW`, `ROW`, `COLUMN`, `SPACER`, `LABEL`, `BUTTON`, `TEXT_INPUT`, `SCROLL`.
-- **`lk_prop_key`** — Property keys: `TEXT`, `FOCUSABLE`, `DISABLED`, `W`, `H`, `PADDING`, `GAP`, `ALIGN`, `JUSTIFY`.
+- **`lk_kind`** — Node kinds: `WINDOW`, `ROW`, `COLUMN`, `SPACER`, `LABEL`, `BUTTON`, `TEXT_INPUT`, `SCROLL`, `DROPDOWN`, `OPTION`.
+- **`lk_prop_key`** — Property keys: `TEXT`, `FOCUSABLE`, `DISABLED`, `W`, `H`, `PADDING`, `GAP`, `ALIGN`, `JUSTIFY`, `HIDDEN` (bool — subtree skipped by main measure/layout/render/hit-test/focus passes; used for overlay content subtrees).
 
 ### Style and Theme System (`lk-style.c`)
 
@@ -98,6 +98,20 @@ Scroll container that clips children and scrolls vertically via wheel events. Ch
 - **Rendering**: Background FILL_RECT, scroll bar track + thumb (colors from `style->scrollbar_track` / `style->scrollbar_thumb`) when content overflows, CLIP_BEGIN/CLIP_END for child clipping.
 - **Layout**: Scroll bar reduces available width by `SCROLL_BAR_W` (6px) when content exceeds viewport.
 
+### Overlay System (`lk-overlay.c`) and Dropdown Widget (`lk-dropdown.c`)
+
+Generalized overlay machinery (docs/overlays.md steps 1–5). An overlay draws after the main tree, is hit-tested before it, and belongs to an owner node.
+
+- **`lk_overlay`** — `{kind, anchor_mode, dismiss_on_outside, traps_focus, owner_id, content_root_id, offset}`. Nodes referenced by stable `lk_node_id` (tree indices are reassigned every frame), resolved per pass via `lk_tree_find_by_id`. Kinds: `DROPDOWN_POPUP`, `TOOLTIP`, `CONTEXT_MENU`, `MODAL`. Anchors: `BELOW`, `ABOVE`, `AT_CURSOR` (offset.x/y = cursor point), `CENTER_VIEWPORT`.
+- **Overlay stack on `lk_ui`** — `overlays/overlay_count/overlay_cap`, topmost = last. Persists across frames; `lk_ui_end_frame` pops overlays whose owner was REMOVED and not re-ADDED (same move filter as state GC / focus-clear, shared helper `cs_id_removed_not_readded` in lk-ui.c). API: `lk_overlay_push/pop/pop_owner/top/count`.
+- **`lk_anchor_resolve(ov, owner_rect, vw, vh, content_w, content_h)`** — final overlay rect. BELOW flips above when overflowing the bottom with room above (ABOVE flips symmetrically); result clamped into the viewport on both axes; `offset.w/h` override content size when non-zero; vw/vh = 0 skips clamping on that axis.
+- **Three overlay passes** (public, take `lk_ui*` + `lk_layout_cfg*`): `lk_render_build_overlays` (bottom-to-top, draws over the main list), `lk_hit_test_overlay` (top-to-bottom, before `lk_hit_test`), `lk_overlay_dismiss_outside` (pointer-down: pops dismissible overlays not containing the point — syncing dropdown `LKS_EXPANDED`; returns `LK_DISMISS_NONE/DISMISSED/BLOCKED`; BLOCKED = a modal (`traps_focus && !dismiss_on_outside`) consumed the click and the caller must not route the event).
+- **Content models** — Procedural (`content_root_id == 0`): per-kind dispatch; DROPDOWN_POPUP delegates to `lk_dropdown_render_popup`/`lk_dropdown_hit_popup`. Subtree (`content_root_id != 0`): a `UIP_HIDDEN` subtree in the main tree is measured/laid out at the resolved anchor via `lk_layout_subtree` into a transient scratch rects array (the shared `lk_layout` rects stay untouched), rendered via internal `lk_render_build_from` (lk-overlay.h).
+- **`lk_layout_subtree(t, cfg, subtree_root, ox, oy, rects)`** — measures + lays out just that subtree with its root at (ox, oy); ignores `UIP_HIDDEN` on the root itself, still skips hidden descendants; zeroes the subtree's rect slots first.
+- **ESC in core** — pre-step in `lk_event_route`: KEY_DOWN + ESCAPE with a non-empty overlay stack pops the topmost overlay (any kind; dropdowns get `LKS_EXPANDED` cleared) and marks the event handled before widget/user dispatch.
+- **Focus traps** — `lk_focus_next/prev` scope their collection DFS to the topmost trapping overlay's content subtree (which is hidden, but exempt from the hidden-skip while it is the active trap root).
+- **Dropdown** — `UIK_DROPDOWN` (leaf in main layout) + `UIK_OPTION` children. Opening (click/Down/Return/Space) pushes a DROPDOWN_POPUP overlay AND sets `LKS_EXPANDED` (public invariant — kept in sync via `dropdown_open`/`dropdown_close`). Popup geometry goes through `lk_anchor_resolve`, so it flips above near the bottom edge instead of clipping. State: `LKS_SELECTED_INDEX`, `LKS_HOVER_INDEX`, `LKS_EXPANDED`, `LKS_TRIGGER_*` (trigger rect stashed by `lk_layout`). Selection emits `LK_EVENT_VALUE_CHANGED` with the option text in `data.value_changed.str_id`.
+
 ### Event Routing (`lk-event.c`)
 
 Two-tier event dispatch model. Widget handlers get first-right-of-refusal; user handlers see only unconsumed events.
@@ -106,7 +120,9 @@ Two-tier event dispatch model. Widget handlers get first-right-of-refusal; user 
 2. **User handler dispatch** (capture → target → bubble): Only reached if no widget consumed. The `lk_event_handler_fn` fires in full DOM-style phases for application-level concerns (global shortcuts, modal interception).
 3. **Translator dispatch**: Only reached if neither tier consumed. Walks ancestors for presentation matches, emits commands.
 
-Key functions: `lk_event_route(ui, event)`, `lk_hit_test(tree, rects, x, y)`, `lk_focus_set/clear/next/prev`, `lk_hover_set/clear`.
+An overlay pre-step runs before all tiers: ESC pops the topmost overlay and consumes the event (see Overlay System above). `lk_hit_test` and focus collection skip `UIP_HIDDEN` subtrees.
+
+Key functions: `lk_event_route(ui, event)`, `lk_hit_test(tree, rects, x, y)`, `lk_hit_test_overlay(ui, rects, cfg, x, y)`, `lk_focus_set/clear/next/prev`, `lk_hover_set/clear`.
 
 ### Node Prop Helpers (`lk-tree.c`)
 

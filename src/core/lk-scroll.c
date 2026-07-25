@@ -69,12 +69,15 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   int count = 0;
 
   while (ch) {
-    if (sizes[ch].w > max_w) {
-      max_w = sizes[ch].w;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      if (sizes[ch].w > max_w) {
+        max_w = sizes[ch].w;
+      }
+
+      sum_h += sizes[ch].h;
+      count++;
     }
 
-    sum_h += sizes[ch].h;
-    count++;
     ch = t->nodes[ch].next_sibling;
   }
 
@@ -107,8 +110,11 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   ch = nd->first_child;
 
   while (ch) {
-    content_h += sizes[ch].h;
-    count++;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      content_h += sizes[ch].h;
+      count++;
+    }
+
     ch = t->nodes[ch].next_sibling;
   }
 
@@ -149,11 +155,14 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   ch = nd->first_child;
 
   while (ch) {
-    rects[ch].x = content->x;
-    rects[ch].y = y;
-    rects[ch].w = avail_w;
-    rects[ch].h = sizes[ch].h;
-    y += sizes[ch].h + gap;
+    if (!lk_node_prop_bool(t, ch, UIP_HIDDEN)) {
+      rects[ch].x = content->x;
+      rects[ch].y = y;
+      rects[ch].w = avail_w;
+      rects[ch].h = sizes[ch].h;
+      y += sizes[ch].h + gap;
+    }
+
     ch = t->nodes[ch].next_sibling;
   }
 
