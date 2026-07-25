@@ -2,9 +2,13 @@
  * lk-text-input.c — Single-line text input widget.
  *
  * Text buffer is stored as an interned string in lk_state (LKS_TEXT_BUF).
- * Cursor position (char index) in LKS_CURSOR_POS.
- * Selection range in LKS_SELECTION_START / LKS_SELECTION_END.
- * Cursor pixel x-offset computed during measure, stored in LKS_CURSOR_X.
+ * Cursor position (byte index, codepoint-boundary-aligned) in
+ * LKS_CURSOR_POS.  Selection range in LKS_SELECTION_START /
+ * LKS_SELECTION_END.  Cursor motion and deletion are codepoint-wise
+ * (lk-utf8.h).  Cursor/selection pixel x-offsets are computed during
+ * measure via the text backend's x_from_index and stored in
+ * LKS_CURSOR_X / LKS_SEL_X0 / LKS_SEL_X1.  POINTER_DOWN positions the
+ * cursor via index_from_x (requires lk_ui_set_text_backend).
  *
  * The host feeds the edited text back as UIP_TEXT each frame for rendering.
  */
@@ -12,6 +16,7 @@
 #include <string.h>
 
 #include "lk-memory.h"
+#include "lk-utf8.h"
 #include <lk.h>
 
 #include "lk-text-input.h"
@@ -185,6 +190,24 @@ static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
   }
 }
 
+/* Pixel x-offset of byte_ix in run, via the backend's x_from_index
+ * (0 when no backend). */
+static lk_i32 run_x_from_ix(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
+                            lk_u32 byte_ix) {
+  lk_u16 font_id;
+  lk_u16 font_size;
+
+  if (!cfg->text) {
+    return 0;
+  }
+
+  font_id = cfg->styles ? (lk_u16)cfg->styles[n].font_id : 0;
+  font_size = cfg->styles ? (lk_u16)cfg->styles[n].font_size : 0;
+
+  return cfg->text->x_from_index(cfg->text->ud, run, font_id, font_size,
+                                 byte_ix);
+}
+
 static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
                                const lk_layout_cfg *cfg, lk_i32 *out_w,
                                lk_i32 *out_h) {
@@ -213,20 +236,63 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_w = m.w + inset * 2;
   *out_h = m.h + inset * 2;
 
-  /* Compute cursor pixel offset and store in state.
-   * Prefix re-measure for now; migrating to x_from_index is stage C
-   * of the text-contract plan. */
+  /* Compute cursor and selection pixel offsets via x_from_index and
+   * store them in state for render (which has no text backend).
+   * Derived geometry in retained state (LKS_CURSOR_X / LKS_SEL_X0/X1)
+   * is on the design-coherence list (docs/TODO.md): it belongs in
+   * per-frame scratch parallel to rects[]. */
   if (cfg->state) {
     nid = t->nodes[n].id;
     {
       lk_i32 cursor_pos = get_cursor(cfg->state, nid, (lk_i32)text.len);
-      lk_text_metrics cm;
-      lk_str sub;
-      sub.ptr = text.ptr;
-      sub.len = (lk_u32)cursor_pos;
-      measure_run(cfg, n, sub, &cm);
-      lk_state_set(cfg->state, nid, LKS_CURSOR_X, lk_v_i32(cm.w));
+      lk_i32 sel_s = get_sel_start(cfg->state, nid, (lk_i32)text.len);
+      lk_i32 sel_e = get_sel_end(cfg->state, nid, (lk_i32)text.len);
+      lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
+      lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
+
+      lk_state_set(cfg->state, nid, LKS_CURSOR_X,
+                   lk_v_i32(run_x_from_ix(cfg, n, text, (lk_u32)cursor_pos)));
+      lk_state_set(cfg->state, nid, LKS_SEL_X0,
+                   lk_v_i32(run_x_from_ix(cfg, n, text, (lk_u32)lo)));
+      lk_state_set(cfg->state, nid, LKS_SEL_X1,
+                   lk_v_i32(run_x_from_ix(cfg, n, text, (lk_u32)hi)));
     }
+  }
+}
+
+/* Stash per-node geometry the event handler needs but cannot compute
+ * (no rects, no styles at event time): the text content origin x and
+ * the resolved font.  Called by lk_layout after rects are final —
+ * same coherence-debt pattern as lk_dropdown_store_trigger_rects
+ * (derived geometry in retained state; see docs/TODO.md). */
+void lk_text_input_store_geometry(const lk_tree *t, const lk_rect *rects,
+                                  const lk_layout_cfg *cfg) {
+  lk_ix n;
+
+  if (!t || !rects || !cfg || !cfg->state) {
+    return;
+  }
+
+  for (n = 1; n < (lk_ix)t->node_count; n++) {
+    lk_node_id nid;
+    lk_i32 pad;
+    lk_i32 bw;
+
+    if (t->nodes[n].kind != UIK_TEXT_INPUT) {
+      continue;
+    }
+
+    pad = cfg->styles ? cfg->styles[n].padding
+                      : lk_node_prop_i32(t, n, UIP_PADDING, 0);
+    bw = cfg->styles ? cfg->styles[n].border_width : 0;
+    nid = t->nodes[n].id;
+
+    lk_state_set(cfg->state, nid, LKS_TEXT_ORIGIN_X,
+                 lk_v_i32(rects[n].x + pad + bw));
+    lk_state_set(cfg->state, nid, LKS_FONT_ID,
+                 lk_v_i32(cfg->styles ? (lk_i32)cfg->styles[n].font_id : 0));
+    lk_state_set(cfg->state, nid, LKS_FONT_SIZE,
+                 lk_v_i32(cfg->styles ? (lk_i32)cfg->styles[n].font_size : 0));
   }
 }
 
@@ -252,40 +318,31 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
   text = get_text(t, n, state, &sid);
 
-  /* Selection highlight */
+  /* Selection highlight — endpoint x-offsets were computed via
+   * x_from_index during measure and stashed in LKS_SEL_X0/X1
+   * (render has no text backend). */
   if (state) {
     lk_i32 sel_s = get_sel_start(state, nid, (lk_i32)text.len);
     lk_i32 sel_e = get_sel_end(state, nid, (lk_i32)text.len);
 
     if (sel_s != sel_e) {
-      lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
-      lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
-      lk_i32 char_w = 8;
+      lk_value x0_v = lk_state_get(state, nid, LKS_SEL_X0);
+      lk_value x1_v = lk_state_get(state, nid, LKS_SEL_X1);
 
-      if (text.len > 0) {
-        lk_value cx_v = lk_state_get(state, nid, LKS_CURSOR_X);
-        lk_i32 cursor_pos = get_cursor(state, nid, (lk_i32)text.len);
-
-        if (cx_v.tag == UIV_I32 && cursor_pos > 0) {
-          char_w = (lk_i32)cx_v.as.i / cursor_pos;
-
-          if (char_w < 1) {
-            char_w = 1;
-          }
-        }
+      if (x0_v.tag == UIV_I32 && x1_v.tag == UIV_I32 &&
+          (lk_i32)x1_v.as.i > (lk_i32)x0_v.as.i) {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.op = LK_ROP_FILL_RECT;
+        cmd.rect.x = rect->x + inset + (lk_i32)x0_v.as.i;
+        cmd.rect.y = rect->y + inset;
+        cmd.rect.w = (lk_i32)x1_v.as.i - (lk_i32)x0_v.as.i;
+        cmd.rect.h = rect->h - inset * 2;
+        cmd.color.r = 80;
+        cmd.color.g = 120;
+        cmd.color.b = 200;
+        cmd.color.a = 128;
+        lk_render_list_push(out, cmd);
       }
-
-      memset(&cmd, 0, sizeof(cmd));
-      cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect.x = rect->x + inset + lo * char_w;
-      cmd.rect.y = rect->y + inset;
-      cmd.rect.w = (hi - lo) * char_w;
-      cmd.rect.h = rect->h - inset * 2;
-      cmd.color.r = 80;
-      cmd.color.g = 120;
-      cmd.color.b = 200;
-      cmd.color.a = 128;
-      lk_render_list_push(out, cmd);
     }
   }
 
@@ -420,9 +477,25 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
       cursor = sel_cursor;
     }
 
-    /* Check capacity */
+    /* Check capacity — truncate at a codepoint boundary so a UTF-8
+     * sequence is never split at the buffer cap. */
     if (text_len + ins_len >= LK_TEXT_INPUT_MAX) {
-      return 1; /* consumed but truncated */
+      lk_i32 full_len = ins_len;
+      ins_len = LK_TEXT_INPUT_MAX - 1 - text_len;
+
+      if (ins_len < 0) {
+        ins_len = 0;
+      }
+
+      while (ins_len > 0 &&
+             !lk_utf8_is_boundary(ev->data.text.buf, (lk_u32)full_len,
+                                  (lk_u32)ins_len)) {
+        ins_len--;
+      }
+
+      if (ins_len == 0) {
+        return 1; /* consumed but nothing fits */
+      }
     }
 
     /* Build: text[0..cursor] + insert + text[cursor..] */
@@ -446,6 +519,56 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
     return 1;
   }
 
+  if (ev->type == LK_EVENT_POINTER_DOWN) {
+    /* Click-to-position: map pointer x to a byte index via the UI's
+     * text backend (installed by lk_ui_set_text_backend; NULL means
+     * the feature is off and the event bubbles so the host's built-in
+     * click-to-focus still runs).  Text origin and resolved font come
+     * from state, stashed by lk_text_input_store_geometry during
+     * layout — event handlers see neither rects nor styles. */
+    lk_value v;
+    lk_i32 origin_x;
+    lk_u16 font_id;
+    lk_u16 font_size;
+    lk_u32 ix;
+
+    if (!ui->text) {
+      return 0;
+    }
+
+    v = lk_state_get(st, nid, LKS_TEXT_ORIGIN_X);
+
+    if (v.tag != UIV_I32) {
+      return 0; /* no layout pass has stashed geometry yet */
+    }
+
+    origin_x = (lk_i32)v.as.i;
+
+    v = lk_state_get(st, nid, LKS_FONT_ID);
+    font_id = (v.tag == UIV_I32) ? (lk_u16)v.as.i : 0;
+    v = lk_state_get(st, nid, LKS_FONT_SIZE);
+    font_size = (v.tag == UIV_I32) ? (lk_u16)v.as.i : 0;
+
+    /* index_from_x snaps to the nearest boundary and clamps to
+     * [0, len] per the contract; re-clamp defensively. */
+    ix = ui->text->index_from_x(ui->text->ud, text, font_id, font_size,
+                                ev->data.pointer.x - origin_x);
+
+    if (ix > text.len) {
+      ix = text.len;
+    }
+
+    /* We consume the event, so the host's built-in click-to-focus
+     * never sees it — take focus here. */
+    lk_focus_set(ui, t, nid);
+
+    lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32((lk_i32)ix));
+    lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
+    lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
+
+    return 1;
+  }
+
   if (ev->type == LK_EVENT_KEY_DOWN) {
     lk_u16 kc = ev->data.key.keycode;
     int shift = (ev->mods & LK_MOD_SHIFT) ? 1 : 0;
@@ -461,12 +584,15 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
       }
 
       if (cursor > 0) {
+        /* Delete the whole codepoint before the cursor. */
         char buf[LK_TEXT_INPUT_MAX];
-        lk_i32 new_len = text_len - 1;
+        lk_i32 del_from =
+            (lk_i32)lk_utf8_prev(text.ptr, text.len, (lk_u32)cursor);
+        lk_i32 new_len = text_len - (cursor - del_from);
         lk_value v;
         lk_str s;
-        memcpy(buf, text.ptr, (size_t)(cursor - 1));
-        memcpy(buf + cursor - 1, text.ptr + cursor,
+        memcpy(buf, text.ptr, (size_t)del_from);
+        memcpy(buf + del_from, text.ptr + cursor,
                (size_t)(text_len - cursor));
         buf[new_len] = '\0';
         s.ptr = buf;
@@ -474,7 +600,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         v.tag = UIV_STR;
         v.as.str_id = lk_intern_id(t->intern, s);
         lk_state_set(st, nid, LKS_TEXT_BUF, v);
-        lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(cursor - 1));
+        lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(del_from));
         emit_value_changed(ui, t, n);
       }
 
@@ -488,13 +614,16 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         return 1;
       }
       if (cursor < text_len) {
+        /* Delete the whole codepoint after the cursor. */
         char buf[LK_TEXT_INPUT_MAX];
-        lk_i32 new_len = text_len - 1;
+        lk_i32 del_to =
+            (lk_i32)lk_utf8_next(text.ptr, text.len, (lk_u32)cursor);
+        lk_i32 new_len = text_len - (del_to - cursor);
         lk_value v;
         lk_str s;
         memcpy(buf, text.ptr, (size_t)cursor);
-        memcpy(buf + cursor, text.ptr + cursor + 1,
-               (size_t)(text_len - cursor - 1));
+        memcpy(buf + cursor, text.ptr + del_to,
+               (size_t)(text_len - del_to));
         buf[new_len] = '\0';
         s.ptr = buf;
         s.len = (lk_u32)new_len;
@@ -509,7 +638,8 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
 
     case LKK_LEFT:
       if (cursor > 0) {
-        lk_i32 new_pos = cursor - 1;
+        lk_i32 new_pos =
+            (lk_i32)lk_utf8_prev(text.ptr, text.len, (lk_u32)cursor);
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(new_pos));
 
         if (shift) {
@@ -532,7 +662,8 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
 
     case LKK_RIGHT:
       if (cursor < text_len) {
-        lk_i32 new_pos = cursor + 1;
+        lk_i32 new_pos =
+            (lk_i32)lk_utf8_next(text.ptr, text.len, (lk_u32)cursor);
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(new_pos));
 
         if (shift) {
@@ -675,7 +806,20 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
           }
 
           if (text_len + ins_len >= LK_TEXT_INPUT_MAX) {
+            lk_i32 full_len = ins_len;
             ins_len = LK_TEXT_INPUT_MAX - 1 - text_len;
+
+            if (ins_len < 0) {
+              ins_len = 0;
+            }
+
+            /* Truncate at a codepoint boundary — never split a
+             * UTF-8 sequence at the buffer cap. */
+            while (ins_len > 0 &&
+                   !lk_utf8_is_boundary(clip, (lk_u32)full_len,
+                                        (lk_u32)ins_len)) {
+              ins_len--;
+            }
           }
 
           if (ins_len > 0) {

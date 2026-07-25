@@ -109,6 +109,19 @@ typedef enum lk_state_key {
   LKS_TRIGGER_Y,
   LKS_TRIGGER_W,
   LKS_TRIGGER_H,
+  LKS_SEL_X0,         /* text_input: selection endpoint x-offsets (px from
+                         text origin), computed via x_from_index during
+                         measure — like LKS_CURSOR_X, derived geometry in
+                         retained state (design-coherence list, docs/TODO.md) */
+  LKS_SEL_X1,
+  LKS_TEXT_ORIGIN_X,  /* text_input: content origin x (rect.x + inset)
+                         stashed by the layout pass so click-to-position
+                         (which has no layout rects) can map pointer x to
+                         a byte index — same coherence-debt pattern as the
+                         dropdown LKS_TRIGGER_* keys */
+  LKS_FONT_ID,        /* text_input: resolved font stashed by the layout
+                         pass; event handlers have no styles */
+  LKS_FONT_SIZE,
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -402,6 +415,11 @@ typedef enum lk_keycode {
   LKK_A, LKK_B, LKK_C, LKK_D, LKK_E, LKK_F, LKK_G, LKK_H, LKK_I,
   LKK_J, LKK_K, LKK_L, LKK_M, LKK_N, LKK_O, LKK_P, LKK_Q, LKK_R,
   LKK_S, LKK_T, LKK_U, LKK_V, LKK_W, LKK_X, LKK_Y, LKK_Z,
+  LKK_0, LKK_1, LKK_2, LKK_3, LKK_4, LKK_5, LKK_6, LKK_7, LKK_8,
+  LKK_9,
+  LKK_PAGEUP, LKK_PAGEDOWN,
+  LKK_F1, LKK_F2, LKK_F3, LKK_F4, LKK_F5, LKK_F6, LKK_F7, LKK_F8,
+  LKK_F9, LKK_F10, LKK_F11, LKK_F12,
   LKK__COUNT
 } lk_keycode;
 
@@ -551,6 +569,11 @@ typedef struct lk_ui {
   lk_clipboard_get_fn clipboard_get;
   lk_clipboard_set_fn clipboard_set;
   void *clipboard_ud;
+
+  /* Text backend (optional) — set via lk_ui_set_text_backend so widget
+   * event handlers (which receive no lk_layout_cfg) can do geometry
+   * queries like click-to-position.  NULL disables those behaviors. */
+  const struct lk_text_backend *text;
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -709,6 +732,13 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects);
  * sizes identical — documented stub behavior).  register_font hands
  * out 1, 2, 3, ... from a process-global counter. */
 const lk_text_backend *lk_text_backend_stub(void);
+
+/* Install the text backend on the UI context so widget event handlers
+ * can do geometry queries (e.g. text input click-to-position via
+ * index_from_x).  Hosts that drive layout/events themselves should
+ * pass the same backend they put in lk_layout_cfg.text; the SDL run
+ * loop does this automatically.  NULL disables click-to-position. */
+void lk_ui_set_text_backend(lk_ui *ui, const lk_text_backend *text);
 
 /* Convenience: layout with stub text measurer (for bindings). */
 int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,

@@ -116,6 +116,14 @@ static const str_enum keycode_table[] = {
     {"q", LKK_Q}, {"r", LKK_R}, {"s", LKK_S}, {"t", LKK_T},
     {"u", LKK_U}, {"v", LKK_V}, {"w", LKK_W}, {"x", LKK_X},
     {"y", LKK_Y}, {"z", LKK_Z},
+    {"0", LKK_0}, {"1", LKK_1}, {"2", LKK_2}, {"3", LKK_3},
+    {"4", LKK_4}, {"5", LKK_5}, {"6", LKK_6}, {"7", LKK_7},
+    {"8", LKK_8}, {"9", LKK_9},
+    {"page_up",   LKK_PAGEUP  },
+    {"page_down", LKK_PAGEDOWN},
+    {"f1", LKK_F1}, {"f2",  LKK_F2 }, {"f3",  LKK_F3 }, {"f4",  LKK_F4 },
+    {"f5", LKK_F5}, {"f6",  LKK_F6 }, {"f7",  LKK_F7 }, {"f8",  LKK_F8 },
+    {"f9", LKK_F9}, {"f10", LKK_F10}, {"f11", LKK_F11}, {"f12", LKK_F12},
     {NULL,        0            }
 };
 
