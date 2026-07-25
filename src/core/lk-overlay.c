@@ -24,6 +24,7 @@
 #include "lk-dropdown.h"
 #include "lk-memory.h"
 #include "lk-overlay.h"
+#include "lk-tooltip.h"
 #include <lk.h>
 
 /* ---- Stack manipulation ---- */
@@ -343,6 +344,12 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
         lk_dropdown_render_popup(t, n, rects, cfg->styles, cfg->state, cfg,
                                  out);
       }
+    } else if (ov->kind == LK_OVERLAY_TOOLTIP) {
+      lk_ix n = lk_tree_find_by_id(t, ov->owner_id);
+
+      if (n != 0) {
+        lk_tooltip_render(t, n, ov, rects, cfg, out);
+      }
     }
   }
 
@@ -366,7 +373,9 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
     return 0;
   }
 
-  /* Top to bottom: topmost overlay is hit-tested first. */
+  /* Top to bottom: topmost overlay is hit-tested first.  Kinds with
+   * no case below (LK_OVERLAY_TOOLTIP) are never hit-testable — the
+   * pointer sees straight through them. */
   i = ui->overlay_count;
 
   while (i > 0) {
@@ -463,13 +472,19 @@ static int overlay_contains(lk_ui *ui, const lk_overlay *ov,
 int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
                                const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y) {
   int dismissed = 0;
+  lk_u32 i;
 
   if (!ui || !rects || !cfg) {
     return LK_DISMISS_NONE;
   }
 
-  while (ui->overlay_count > 0) {
-    const lk_overlay *ov = &ui->overlays[ui->overlay_count - 1];
+  /* Top to bottom.  Passive overlays (tooltips) are transparent: the
+   * scan skips over them so a dismissible overlay underneath still
+   * sees the outside click. */
+  i = ui->overlay_count;
+
+  while (i > 0) {
+    const lk_overlay *ov = &ui->overlays[i - 1];
     lk_node_id owner;
     lk_u8 kind;
 
@@ -484,18 +499,31 @@ int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
 
     /* Passive overlay (e.g. tooltip): outside clicks pass through. */
     if (!ov->dismiss_on_outside) {
-      break;
+      i--;
+      continue;
     }
 
     owner = ov->owner_id;
     kind = ov->kind;
-    lk_overlay_pop(ui);
+
+    /* Remove entry i-1 (may not be topmost when a passive overlay
+     * sits above it). */
+    {
+      lk_u32 k;
+
+      for (k = i - 1; k + 1 < ui->overlay_count; k++) {
+        ui->overlays[k] = ui->overlays[k + 1];
+      }
+
+      ui->overlay_count--;
+    }
 
     if (kind == LK_OVERLAY_DROPDOWN_POPUP && ui->state) {
       lk_state_set(ui->state, owner, LKS_EXPANDED, lk_v_i32(0));
     }
 
     dismissed = 1;
+    i--;
   }
 
   return dismissed ? LK_DISMISS_DISMISSED : LK_DISMISS_NONE;

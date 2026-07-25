@@ -1283,6 +1283,231 @@ static void test_hidden_prop(void) {
   END_TEST();
 }
 
+/* Build (in interp) a ui named "ui" whose tree has a hidden modal
+ * subtree: w > col > btn "outside" (focusable) + col "m" (hidden) >
+ * "m1"/"m2" (focusable buttons). */
+static void eval_modal_tree(lcl_interp *interp) {
+  lcl_value *r = NULL;
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let col [lk::node $t \"col\" \"column\"]\n"
+    "let outside [lk::node $t \"outside\" \"button\"]\n"
+    "lk::prop $t $outside \"focusable\" 1\n"
+    "let m [lk::node $t \"m\" \"column\"]\n"
+    "lk::prop $t $m \"hidden\" 1\n"
+    "let m1 [lk::node $t \"m1\" \"button\"]\n"
+    "lk::prop $t $m1 \"focusable\" 1\n"
+    "let m2 [lk::node $t \"m2\" \"button\"]\n"
+    "lk::prop $t $m2 \"focusable\" 1",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  eval_ok(interp,
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $col\n"
+    "lk::append_child $t $col $outside\n"
+    "lk::append_child $t $col $m\n"
+    "lk::append_child $t $m $m1\n"
+    "lk::append_child $t $m $m2\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+}
+
+/* Fetch the lk_ui* behind the script-side "$ui" for C-level asserts. */
+static lk_ui *fetch_ui(lcl_interp *interp) {
+  lcl_value *r = NULL;
+  lk_ui *ui = NULL;
+
+  eval_ok(interp, "$ui", &r);
+  if (r) {
+    if (lcl_opaque_get(r, "lk_ui", (void **)&ui) != LCL_OK) {
+      ui = NULL;
+    }
+    lcl_ref_dec(r);
+  }
+
+  return ui;
+}
+
+static void test_overlay_push_modal(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("overlay_push modal: count, trap, ESC pops");
+  interp = make_interp();
+  eval_modal_tree(interp);
+
+  eval_ok(interp,
+          "lk::overlay_push $ui #{kind modal owner_id m content_root_id m}",
+          &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  eval_ok(interp, "lk::overlay_count $ui", &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 1);
+    lcl_ref_dec(r);
+  }
+
+  /* C-level asserts on the same ui: modal defaults + focus trap + ESC. */
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+
+  if (ui) {
+    const lk_overlay *top = lk_overlay_top(ui);
+    lk_node_id got;
+    lk_event ev;
+
+    CHECK(top != NULL);
+    if (top) {
+      CHECK((unsigned)top->kind == (unsigned)LK_OVERLAY_MODAL);
+      CHECK((unsigned)top->anchor_mode == (unsigned)LK_ANCHOR_CENTER_VIEWPORT);
+      CHECK(top->traps_focus == 1);
+      CHECK(top->dismiss_on_outside == 0);
+    }
+
+    /* Focus cycling is trapped inside the hidden content subtree:
+     * from no focus, next lands on "m1", never "outside". */
+    got = lk_focus_next(ui, lk_ui_tree(ui));
+    CHECK(got == lk_intern_cid(ui->intern, "m1"));
+    got = lk_focus_next(ui, lk_ui_tree(ui));
+    CHECK(got == lk_intern_cid(ui->intern, "m2"));
+
+    /* Routed ESC pops the modal (core pre-step, no backend code). */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = lk_ui_tree(ui)->root;
+    ev.data.key.keycode = LKK_ESCAPE;
+    lk_event_route(ui, &ev);
+    CHECK(ev.handled == 1);
+    CHECK(lk_overlay_count(ui) == 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_overlay_pop_proc(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("overlay_push non-modal defaults + overlay_pop");
+  interp = make_interp();
+  eval_modal_tree(interp);
+
+  eval_ok(interp, "lk::overlay_push $ui #{kind tooltip owner_id outside}", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+
+  if (ui) {
+    const lk_overlay *top = lk_overlay_top(ui);
+
+    CHECK(top != NULL);
+    if (top) {
+      /* Non-modal defaults: below anchor, dismissible, no trap. */
+      CHECK((unsigned)top->anchor_mode == (unsigned)LK_ANCHOR_BELOW);
+      CHECK(top->dismiss_on_outside == 1);
+      CHECK(top->traps_focus == 0);
+    }
+  }
+
+  eval_ok(interp, "lk::overlay_pop $ui", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  eval_ok(interp, "lk::overlay_count $ui", &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 0);
+    lcl_ref_dec(r);
+  }
+
+  /* pop on an empty stack is a safe no-op */
+  eval_ok(interp, "lk::overlay_pop $ui", &r);
+  if (r) lcl_ref_dec(r);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_overlay_push_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("overlay_push rejects bad kind/anchor/dict");
+  interp = make_interp();
+  eval_modal_tree(interp);
+
+  rc = lcl_eval_string(interp, "lk::overlay_push $ui #{kind bogus}", &r);
+  CHECK(rc != LCL_RC_OK);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  rc = lcl_eval_string(interp,
+                       "lk::overlay_push $ui #{kind modal anchor sideways}",
+                       &r);
+  CHECK(rc != LCL_RC_OK);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  rc = lcl_eval_string(interp, "lk::overlay_push $ui #{owner_id m}", &r);
+  CHECK(rc != LCL_RC_OK); /* missing kind */
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  /* Nothing was pushed by the failed calls. */
+  eval_ok(interp, "lk::overlay_count $ui", &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 0);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_tooltip_prop_binding(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("tooltip prop settable via lk::prop");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let b [lk::node $t \"b\" \"button\"]\n"
+    "lk::prop $t $b \"tooltip\" \"Saves the file\"\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $b\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) {
+    CHECK(lcl_list_len(r) >= 2);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -1340,6 +1565,10 @@ int main(void) {
 
   test_overlay_count_proc();
   test_hidden_prop();
+  test_overlay_push_modal();
+  test_overlay_pop_proc();
+  test_overlay_push_errors();
+  test_tooltip_prop_binding();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

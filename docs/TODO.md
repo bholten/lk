@@ -401,16 +401,19 @@ panels). See `docs/weft-gap-analysis.md` §4.
 Required for syntax-highlighted code display, colored logs, rich text.
 See `docs/weft-gap-analysis.md` §3.
 
-### 7. Overlays / positioning — generalization (steps 1–5 ✓)
+### ~~7. Overlays / positioning — generalization~~ ✓ (steps 1–6, "Proper")
 
-Steps 1–5 of `docs/overlays.md` landed (2026-07-25): overlay stack on
+All of `docs/overlays.md` landed (2026-07-25): overlay stack on
 `lk_ui` (`src/core/lk-overlay.c`), `lk_anchor_resolve` with
 flip/clamp, `UIP_HIDDEN` content subtrees + `lk_layout_subtree`,
 focus traps, modal outside-click blocking, ESC dismissal in
-`lk_event_route`, and the dropdown migrated onto the stack.
-Remaining (step 6): the tooltip producer (`UIP_TOOLTIP` prop, hover
-push/pop in core) and a modal demo / app-level overlay procs in the
-Lcl bindings.
+`lk_event_route`, the dropdown migrated onto the stack, the tooltip
+producer (`UIP_TOOLTIP` prop + `src/core/lk-tooltip.c`, hover
+push/pop hook in `lk_hover_set`/`lk_hover_clear`), and app-level
+modal support (`lk::overlay_push` / `lk::overlay_pop` bindings,
+`examples/modal-dsl.lcl`).  All three exit criteria met — see
+`docs/overlays.md`.  Remnants (dropdown popup scrolling, dropdown
+`-value` flag) live in the known-issues list below.
 
 
 ## Known issues / small hardening items
@@ -445,10 +448,11 @@ Places where the implementation diverges from `design_draft.md`/`layers.md`
 in mechanism (not meaning). Tracked so they don't fossilize; none block
 shipping.
 
-- **Overlay pass is dropdown-specific.**  `layers.md` §7 specifies overlays
-  as anchored subtrees (`OverlayNode {anchor, subtree}`) in an overlay
-  root; `lk_render_build_overlays` is hard-wired to dropdowns.  Migration
-  path already written in `docs/overlays.md`.
+- ~~**Overlay pass is dropdown-specific.**~~ Resolved (2026-07-25):
+  the generalized stack landed — `lk_render_build_overlays` iterates
+  `ui->overlays` with per-kind dispatch, and subtree-content overlays
+  (`content_root_id` + `UIP_HIDDEN`) are the anchored-subtree shape
+  `layers.md` §7 called for.  See `docs/overlays.md`.
 - **`LK_EVENT_VALUE_CHANGED` re-enters `lk_event_route` mid-dispatch.**
   Widgets synthesize it by recursively calling the router from inside
   their own event handlers.  Cleaner: a small pending-event queue on

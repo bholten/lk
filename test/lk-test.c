@@ -5,6 +5,7 @@
 #include <lk.h>
 #include "core/lk-dropdown.h" /* lk_dropdown_popup_rect (geometry tests) */
 #include "core/lk-memory.h"
+#include "core/lk-tooltip.h" /* lk_tooltip_rect (geometry tests) */
 
 /* ---- minimal test harness ---- */
 
@@ -7985,6 +7986,219 @@ static void test_focus_trap_scopes_tab(void) {
 }
 
 /* ================================================================
+ * Tooltip tests (UIP_TOOLTIP prop, lk-tooltip.c, hover hook)
+ * ================================================================ */
+
+/* w > col > b1 (tooltip), b2 (tooltip), lab (plain) */
+static lk_ui *make_tooltip_ui(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, b1, b2, lab;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_tree_add_prop(t, b1, UIP_TEXT, lk_v_cstr(t->intern, "Save"));
+  lk_tree_add_prop(t, b1, UIP_TOOLTIP, lk_v_cstr(t->intern, "Saves the file"));
+  b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+  lk_tree_add_prop(t, b2, UIP_TEXT, lk_v_cstr(t->intern, "Undo"));
+  lk_tree_add_prop(t, b2, UIP_TOOLTIP, lk_v_cstr(t->intern, "Reverts"));
+  lab = lk_tree_add_node_s(t, lk_str_c("lab"), UIK_LABEL);
+  lk_tree_add_prop(t, lab, UIP_TEXT, lk_v_cstr(t->intern, "plain"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b1);
+  lk_tree_append_child(t, col, b2);
+  lk_tree_append_child(t, col, lab);
+  lk_ui_end_frame(ui);
+
+  return ui;
+}
+
+static void test_tooltip_hover_push_pop(void) {
+  lk_ui *ui;
+  lk_node_id b1_id, b2_id, lab_id;
+
+  BEGIN_TEST("tooltip: hover transitions push/pop/swap");
+
+  ui = make_tooltip_ui();
+  b1_id = lk_intern_id(ui->intern, lk_str_c("b1"));
+  b2_id = lk_intern_id(ui->intern, lk_str_c("b2"));
+  lab_id = lk_intern_id(ui->intern, lk_str_c("lab"));
+
+  /* Hover onto a tooltip'd button pushes exactly one TOOLTIP overlay. */
+  lk_hover_set(ui, b1_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ((unsigned)lk_overlay_top(ui)->kind, (unsigned)LK_OVERLAY_TOOLTIP);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, b1_id);
+
+  /* Re-hovering the same node is not a transition — still one. */
+  lk_hover_set(ui, b1_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Hover between two tooltip'd nodes swaps cleanly (count stays 1). */
+  lk_hover_set(ui, b2_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  CHECK_EQ(lk_overlay_top(ui)->owner_id, b2_id);
+
+  /* Moving hover to a plain node pops it. */
+  lk_hover_set(ui, lab_id);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  /* And hover_clear pops too. */
+  lk_hover_set(ui, b1_id);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  lk_hover_clear(ui);
+  CHECK_EQ(lk_overlay_count(ui), 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tooltip_render_on_top(void) {
+  lk_ui *ui;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_u32 main_count;
+  lk_u32 tip_sid;
+
+  BEGIN_TEST("tooltip: render list gets tooltip text on top");
+
+  ui = make_tooltip_ui();
+  tip_sid = lk_intern_id(ui->intern, lk_str_c("Saves the file"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b1")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  main_count = rl.count;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+
+  /* Tooltip commands (bg + 4 border strips + text) appended on top;
+   * the final command is the tooltip's DRAW_TEXT. */
+  CHECK_EQ(rl.count, main_count + 6);
+  CHECK_EQ((unsigned)rl.cmds[rl.count - 1].op, (unsigned)LK_ROP_DRAW_TEXT);
+  CHECK_EQ(rl.cmds[rl.count - 1].str_id, tip_sid);
+  CHECK_EQ((unsigned)rl.cmds[main_count].op, (unsigned)LK_ROP_FILL_RECT);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tooltip_passive(void) {
+  lk_ui *ui;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect tip;
+  lk_ix b1;
+  int rc;
+
+  BEGIN_TEST("tooltip: passive — no hit, no click consumption");
+
+  ui = make_tooltip_ui();
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b1")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* Pointer-down far outside is NOT consumed and does not pop. */
+  rc = lk_overlay_dismiss_outside(ui, rects, &cfg, 399, 299);
+  CHECK_EQ(rc, LK_DISMISS_NONE);
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  /* The tooltip rect itself is transparent to the overlay hit-test. */
+  b1 = lk_tree_find_by_id(lk_ui_tree(ui),
+                          lk_intern_id(ui->intern, lk_str_c("b1")));
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b1, lk_overlay_top(ui), rects, &cfg);
+  CHECK(tip.w > 0 && tip.h > 0);
+  CHECK_EQ(lk_hit_test_overlay(ui, rects, &cfg, tip.x + tip.w / 2,
+                               tip.y + tip.h / 2), 0u);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_tooltip_bottom_edge_flips(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, sp, b;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect tip;
+
+  BEGIN_TEST("tooltip: flips above near bottom edge");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_H, lk_v_i32(150));
+  b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+  lk_tree_add_prop(t, b, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_add_prop(t, b, UIP_TOOLTIP, lk_v_cstr(t->intern, "Runs it"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, b);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 200; /* short: below the button would overflow */
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+
+  b = lk_tree_find_by_id(lk_ui_tree(ui),
+                         lk_intern_id(ui->intern, lk_str_c("b")));
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b, lk_overlay_top(ui), rects, &cfg);
+  CHECK(tip.y < rects[b].y);
+  CHECK_EQ(tip.y + tip.h, rects[b].y); /* sits directly above */
+  CHECK(tip.y >= 0);
+
+  /* Tall viewport: same tree, tooltip stays below. */
+  cfg.viewport_h = 600;
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b, lk_overlay_top(ui), rects, &cfg);
+  CHECK_EQ(tip.y, rects[b].y + rects[b].h);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
  * Bug-fix regression tests
  * ================================================================ */
 
@@ -9303,6 +9517,13 @@ int main(void) {
   test_hidden_focus_next_skips();
   test_layout_subtree_positions();
   test_focus_trap_scopes_tab();
+
+  /* tooltips (overlay step 6) */
+  printf("\nlk tooltip tests:\n");
+  test_tooltip_hover_push_pop();
+  test_tooltip_render_on_top();
+  test_tooltip_passive();
+  test_tooltip_bottom_edge_flips();
 
   /* text backend contract (stage A) */
   printf("\nlk text backend tests:\n");

@@ -1,12 +1,14 @@
 # Overlays — Current State (Lean) and Path to Proper
 
-Status: **Steps 1–5 DONE (2026-07-25)** — the generalized overlay
-stack (`lk_overlay` on `lk_ui`, `src/core/lk-overlay.c`), anchor
-resolution with viewport clamping, `UIP_HIDDEN` + `lk_layout_subtree`
-content subtrees, focus traps, modal blocking, and core ESC dismissal
-are implemented; dropdowns are migrated onto the stack.  Step 6
-(tooltip / context-menu / modal producers) remains.  The historical
-Lean description below is kept for context.
+Status: **Proper — steps 1–6 DONE (2026-07-25)** — the generalized
+overlay stack (`lk_overlay` on `lk_ui`, `src/core/lk-overlay.c`),
+anchor resolution with viewport clamping, `UIP_HIDDEN` +
+`lk_layout_subtree` content subtrees, focus traps, modal blocking,
+core ESC dismissal, the dropdown migration, the `UIP_TOOLTIP` producer
+(`src/core/lk-tooltip.c`), and app-level modal support
+(`lk::overlay_push`/`lk::overlay_pop`, `examples/modal-dsl.lcl`) are
+all implemented.  All three exit criteria are met (see below).  The
+historical Lean description below is kept for context.
 
 ## What "overlay" means here
 
@@ -167,7 +169,28 @@ overlay anchor + `lk_anchor_resolve`.  The three `lk.h` public symbols
 `lk_overlay_dismiss_outside`) remain, but now iterate `ui->overlays`
 generically.
 
-### Step 6 — new overlay widgets
+### Step 6 — new overlay widgets — DONE
+
+*(2026-07-25: tooltip shipped as a **prop**, per v2 note 6, not the
+widget-kind sketched below.  `UIP_TOOLTIP` (interned string) on any
+node; hover transitions — a hook in `lk_hover_set`/`lk_hover_clear`
+that fires only when `hovered_id` actually changes — pop the previous
+tooltip overlay and push one for the newly hovered node.  Geometry +
+paint are procedural in `src/core/lk-tooltip.c` (~144 code LoC),
+anchored BELOW through `lk_anchor_resolve` (flips above near the
+bottom edge for free).  Tooltips are passive: never hit-testable, and
+`lk_overlay_dismiss_outside` scans through them so clicks reach
+dismissible overlays underneath.*
+
+*Modal support landed at the app level: `lk::overlay_push [ui dict]`
+and `lk::overlay_pop [ui]` in the Lcl bindings (dict keys kind /
+anchor / owner_id / content_root_id / dismiss_on_outside /
+traps_focus, with per-kind defaults — modal defaults to center anchor,
+no outside dismissal, focus trap).  `examples/modal-dsl.lcl` is the
+demo: a `-hidden 1` column as content subtree, confirm/cancel via
+presentations, ESC and outside-click blocking from core.  Context
+menus need no dedicated producer — `overlay_push` with
+`kind context_menu, anchor at_cursor` from app code covers them.)*
 
 With the above in place, adding a tooltip is: one new widget-kind that
 pushes a TOOLTIP overlay with its text as content on `pointer_move` and
@@ -240,22 +263,39 @@ The overlay system is "Proper" when:
 3. A modal dialog can be opened, has focus trapped to itself, and
    closes on ESC without any ad-hoc SDL-backend code.
 
-Status against these (2026-07-25): criterion 2 is met (popup flips
-above at the bottom edge, x/y clamped).  Criteria 1 and 3 have all
-their machinery in place (overlay stack, `UIP_HIDDEN` content
-subtrees, focus traps, modal blocking, core ESC) but the tooltip
-producer and a modal demo are still to be written — that is step 6.
+Status against these (2026-07-25, step 6 landed) — **all three met**:
+
+1. **Met.**  Tooltip is `src/core/lk-tooltip.c` (144 code LoC / 204
+   raw) + `lk-tooltip.h` (10 code LoC), a 6-line hover-transition
+   hook in `lk_hover_set`/`lk_hover_clear`, and a 5-line render
+   dispatch case in `lk-overlay.c` — ~165 code LoC total against the
+   ~150 target.  `lk-render.c` and `lk-layout.c` are untouched; the
+   only `lk-event.c` change is the hook in the hover *setters* (the
+   routing/hit-test/focus paths are untouched).  It shipped as a prop
+   (`UIP_TOOLTIP`), not a widget kind, per v2 note 6.  Tests:
+   hover push/pop/swap, render-on-top, passivity, bottom-edge flip.
+2. **Met** (step 3): popup flips above at the bottom edge, x/y
+   clamped — `test_dropdown_bottom_edge_flips`.
+3. **Met**: `examples/modal-dsl.lcl` opens a modal via
+   `lk::overlay_push` (hidden content subtree, centered), focus is
+   trapped (`test_focus_trap_scopes_tab`, and the binding-level
+   `test_overlay_push_modal` asserts trap + routed-ESC pop), outside
+   clicks are blocked, and ESC closes it via the core pre-step in
+   `lk_event_route` — zero ad-hoc SDL-backend code.
 
 ## File-level summary (post-migration, 2026-07-25)
 
 | File | Overlay-related code |
 |------|----------------------|
-| `src/core/lk-overlay.c` (new) | overlay stack (push/pop/pop_owner/top/count), `lk_anchor_resolve`, generalized `lk_render_build_overlays` / `lk_hit_test_overlay` / `lk_overlay_dismiss_outside` (iterate `ui->overlays`, per-kind dispatch, modal blocking).  Subtree-content overlays are laid out into a transient scratch rects array, not the shared `lk_layout` rects. |
+| `src/core/lk-overlay.c` (new) | overlay stack (push/pop/pop_owner/top/count), `lk_anchor_resolve`, generalized `lk_render_build_overlays` / `lk_hit_test_overlay` / `lk_overlay_dismiss_outside` (iterate `ui->overlays`, per-kind dispatch, modal blocking; passive overlays are transparent to the dismiss scan).  Subtree-content overlays are laid out into a transient scratch rects array, not the shared `lk_layout` rects. |
+| `src/core/lk-tooltip.c` (new) | tooltip producer: `lk_tooltip_hover_changed` (pop/push on hover transition), `lk_tooltip_rect` (measure + pad + anchor), `lk_tooltip_render` (fg/bg-swapped plate, 1 px border, text), dispatched from `lk-overlay.c` |
 | `src/core/lk-dropdown.c` | widget only + procedural popup paint (`lk_dropdown_render_popup`) and hit (`lk_dropdown_hit_popup`), dispatched from `lk-overlay.c`; `dropdown_open`/`dropdown_close` keep `LKS_EXPANDED` and the overlay stack in sync |
 | `src/core/lk-layout.c` | `UIP_HIDDEN` skip in measure/layout; `lk_layout_subtree` entry point for overlay content |
 | `src/core/lk-render.c` | `UIP_HIDDEN` skip; internal `lk_render_build_from` for overlay subtrees |
-| `src/core/lk-event.c` | `UIP_HIDDEN` skip in hit-test + focus collection; focus-trap scoping; ESC pre-step in `lk_event_route` |
+| `src/core/lk-event.c` | `UIP_HIDDEN` skip in hit-test + focus collection; focus-trap scoping; ESC pre-step in `lk_event_route`; hover-transition hook in `lk_hover_set`/`lk_hover_clear` calling `lk_tooltip_hover_changed` |
 | `src/core/lk-ui.c` | overlay stack storage/free; end_frame pops overlays on owner removal (move filter) |
 | `src/sdl/lk-sdl.c` | three call sites, now `lk_ui*`-based; pointer-down routing skipped on `LK_DISMISS_BLOCKED` |
-| `include/lk.h` | `lk_overlay` + enums, stack API, `lk_anchor_resolve`, `lk_layout_subtree`, `UIP_HIDDEN`, `LK_DISMISS_*` |
-| `src/lcl/lcl-lk.c` | `lk::overlay_count`, `"hidden"` prop key |
+| `include/lk.h` | `lk_overlay` + enums, stack API, `lk_anchor_resolve`, `lk_layout_subtree`, `UIP_HIDDEN`, `UIP_TOOLTIP`, `LK_DISMISS_*` |
+| `src/lcl/lcl-lk.c` | `lk::overlay_count`, `lk::overlay_push` / `lk::overlay_pop` (dict-driven, per-kind defaults), `"hidden"` / `"tooltip"` prop keys |
+| `lib/lk-dsl.lcl` | `hidden` + `tooltip` added to the generic `-flag` prop whitelist |
+| `examples/modal-dsl.lcl` (new) | confirm-dialog modal demo: hidden content subtree, `overlay_push`/`pop` from command handlers, ESC + focus trap from core |
