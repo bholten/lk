@@ -59,9 +59,19 @@ Migration audit checklist:
 - [ ] Commit the bump + audit fixes as one commit, before any
       syntax work.
 
-## 2. Stage 1 — DSL test harness (before syntax changes)
+## 2. Stage 1 — DSL test harness (before syntax changes) — DONE
 
-The DSL has zero automated tests; migrating without a net is not on.
+**Status: DONE (2026-07-25).** 15 DSL tests added to
+`test/lcl-lk-test.c` (suite now 67, all green; core suite unchanged at
+230).  The fixture evals `lib/lk-dsl.lcl` via a `TEST_DSL_PATH`
+compile definition, binds `lk_dsl::_ui`/`lk_dsl::_tree` from script
+(`set! lk_dsl::_ui $u` — qualified `set!` works on the pinned Lcl),
+and asserts tree shape from C through the public lk API (kinds, props,
+parent/child order, presentations, tags, translators, resolved
+styles).  Both warts below are pinned as tests marked WART with the
+stage-3 required change.  `app` is not covered (needs a window).
+
+The DSL had zero automated tests; migrating without a net is not on.
 Plan: extend `test/lcl-lk-test.c` with a fixture that
 
 1. creates a plain `lk_ui` (no window), registers lk + evals

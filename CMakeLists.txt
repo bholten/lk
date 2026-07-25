@@ -131,5 +131,7 @@ if(LK_BUILD_LCL)
   target_include_directories(lcl_lk_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_definitions(lcl_lk_test PRIVATE
+    TEST_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
   target_compile_options(lcl_lk_test PRIVATE -Wall -Wextra -pedantic)
 endif()
