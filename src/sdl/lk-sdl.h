@@ -25,4 +25,10 @@ lk_ui *lk_window_ui(lk_window *win);
 void lk_window_set_event_handler(lk_window *win, lk_event_handler_fn fn,
                                  void *ud);
 
+/* Register a font face with the window's text backend (sugar over the
+ * lk_text_backend.register_font vtable slot).  Returns the new
+ * font_id (>= 1) for use in theme rules, or 0 on failure (unreadable
+ * path, registry full).  Face 0 is always lk_window_cfg.font_path. */
+lk_u16 lk_window_register_font(lk_window *win, const char *path);
+
 #endif

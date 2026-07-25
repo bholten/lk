@@ -198,11 +198,11 @@ the SDL map, and the binding lookup tables. Pure enumeration work.
 
 Each stage lands green on its own:
 
-- **A. Contract + stub + core threading.** Add `lk_text_backend`,
+- **A. Contract + stub + core threading.** DONE. Add `lk_text_backend`,
   swap `lk_layout_cfg`, convert widgets, port tests to the stub
   backend (mechanical), delete `lk_measure_text_fn`. Style
   `font_id`/`font_size` flow into render commands.
-- **B. SDL TTF_TextEngine.** Implement the vtable, face registry,
+- **B. SDL TTF_TextEngine.** DONE. Implement the vtable, face registry,
   scratch text; delete the texture cache; wire `register_font` +
   binding + DSL flags. Verify with the demo + budget app.
 - **C. Text input correctness.** `lk-utf8.c`, codepoint motion,

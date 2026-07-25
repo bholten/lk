@@ -862,6 +862,106 @@ static void test_lcl_theme_rule(void) {
   END_TEST();
 }
 
+static void test_theme_rule_font_keys(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("theme_rule accepts font_id / font_size keys");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::theme_rule $ui label \"\" \"\" #{font_id 1 font_size 24}\n"
+    "lk::theme_rule $ui \"*\" \"\" \"\" #{font_size 18}",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_theme_rule_bad_font_id(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("theme_rule rejects non-int font_id");
+  interp = make_interp();
+
+  rc = lcl_eval_string(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::theme_rule $ui label \"\" \"\" #{font_id nope}",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(rc != LCL_RC_OK);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_theme_rule_bad_font_size(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("theme_rule rejects negative font_size");
+  interp = make_interp();
+
+  rc = lcl_eval_string(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::theme_rule $ui label \"\" \"\" #{font_size -4}",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(rc != LCL_RC_OK);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+#ifdef LK_HAVE_SDL
+/* lk::register_font error paths only: a successful registration needs
+ * a real lk_window (SDL renderer + display), which headless CI does
+ * not have.  The success path is covered by the C-side contract
+ * (sdl_text_register_font) and exercised by the demo apps. */
+
+static void test_register_font_arity(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("register_font rejects wrong arity");
+  interp = make_interp();
+
+  rc = lcl_eval_string(interp, "lk::register_font \"only-one-arg\"", &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(rc != LCL_RC_OK);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_register_font_bad_window(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  int rc;
+
+  BEGIN_TEST("register_font rejects non-window handle");
+  interp = make_interp();
+
+  /* An lk_ui opaque is not an lk_window opaque */
+  rc = lcl_eval_string(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::register_font $ui \"/tmp/font.ttf\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(rc != LCL_RC_OK);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+#endif /* LK_HAVE_SDL */
+
 static void test_set_command_handler(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -1146,6 +1246,13 @@ int main(void) {
 
   test_lcl_tag();
   test_lcl_theme_rule();
+  test_theme_rule_font_keys();
+  test_theme_rule_bad_font_id();
+  test_theme_rule_bad_font_size();
+#ifdef LK_HAVE_SDL
+  test_register_font_arity();
+  test_register_font_bad_window();
+#endif
   test_set_command_handler();
   test_set_command_handler_with_translator();
   test_text_input_kind();

@@ -78,7 +78,7 @@ Get pixels on screen.
   - `lk_window_create` / `lk_window_run` / `lk_window_destroy` — built-in run loop.
   - Conditional CMake targets (SDL3 + SDL3_ttf). No SDL types in public headers.
   - SDL_ttf text measurement plugged into layout; falls back to stub measurer.
-  - Consumes render list: `FILL_RECT` → `SDL_RenderFillRect`, `DRAW_TEXT` → `TTF_RenderText_Blended`.
+  - Consumes render list: `FILL_RECT` → `SDL_RenderFillRect`, `DRAW_TEXT` → `TTF_RenderText_Blended` (since replaced by `TTF_TextEngine` glyph-atlas drawing, text-contract stage B).
 
 - [x] **Basic theme/style**
   - Hardcoded MVP dark theme: window bg `(30,30,30)`, button bg `(60,60,60)`, text `(220,220,220)`.
@@ -86,11 +86,9 @@ Get pixels on screen.
 - [x] **Demo** (`src/sdl/demo.c`)
   - Window > column > label + button. Works with `lk_demo` executable.
 
-- [x] **Text texture caching**
-  - Open-addressing cache keyed by `str_id` in SDL backend (default 2048 slots, configurable via `lk_window_cfg.text_cache_cap`).
-  - Frame-stamped LRU eviction: on miss, probes for empty slot or match while tracking stalest entry; evicts stalest when probe chain is full.
-  - Cache owns all textures (no uncached returns). Stats tracked: hits, misses, evictions, probe steps. One-time warning on long probe chains.
-  - Textures persist across frames; cleared on window destroy.
+- [x] **Text texture caching** *(deleted in text-contract stage B)*
+  - Was: open-addressing per-string texture cache keyed by `(str_id, color)` with frame-stamped LRU eviction.
+  - Replaced wholesale by SDL_ttf's `TTF_TextEngine` (internal glyph atlas) — see `docs/text-contract.md` §4.4.
 
 - [x] **Clip rects**
   - `LK_ROP_CLIP_BEGIN` / `LK_ROP_CLIP_END` render ops. WINDOW clips its children.
@@ -200,7 +198,7 @@ Depends on retained UI state (Phase 4), layout, rendering, and input.
   - Separate file (`src/core/lk-text-input.c`, ~400 lines) — complex interactive widgets get their own files.
   - 10 new headless tests (131→141 total). 1 new Lcl binding test (29→30 total).
   - Known issues:
-    - **Text stretching**: DRAW_TEXT render command uses the full content rect width; SDL backend stretches the text texture to fill it. Should size to measured text dimensions instead.
+    - **Text stretching**: ~~DRAW_TEXT render command uses the full content rect width; SDL backend stretches the text to fill it~~ — fixed; text draws at its natural size, overflow handled by the active clip.
     - **No default stretch**: Text input uses intrinsic width (text + padding, min 100px) and shrinks as text is deleted. Workaround: set explicit `UIP_W`. Could default to stretch in cross-axis, or increase minimum width.
 
 - [x] **Scroll container** (`lk-scroll.c`)

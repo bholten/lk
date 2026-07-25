@@ -7,45 +7,37 @@
 #include "core/lk-memory.h"
 #include "lk-sdl.h"
 
-/* ------- Text texture cache ------- */
+/* ------- Text backend: face registry, (face, size) instances,
+ * TTF_TextEngine rendering (text-contract stage B) ------- */
 
-#define TEXT_CACHE_DEFAULT_CAP 2048
+#define SDL_TEXT_MAX_FACES 16
+#define SDL_TEXT_MAX_INSTANCES 32
+#define SDL_TEXT_DEFAULT_SIZE 16
 
-typedef struct text_cache_entry {
-  lk_u32 str_id;    /* 0 = empty slot */
-  lk_u32 color_key; /* packed RGBA — same string in two colors = two entries */
-  SDL_Texture *tex;
-  int w, h;
-  lk_u32 last_frame; /* frame counter when last accessed */
-} text_cache_entry;
-
-static lk_u32 pack_color(lk_color c) {
-  return ((lk_u32)c.r << 24) | ((lk_u32)c.g << 16) | ((lk_u32)c.b << 8) |
-         (lk_u32)c.a;
-}
-
-typedef struct text_cache_stats {
-  lk_u32 hits;
-  lk_u32 misses;
-  lk_u32 evictions;
-  lk_u32 probe_steps_total;
-  lk_u32 probe_steps_max;
-} text_cache_stats;
+/* One lazily-opened TTF_Font per (face, px size) pair. SDL_ttf sizes
+ * are per-open; resizing a shared handle would thrash its glyph
+ * cache. */
+typedef struct sdl_font_instance {
+  lk_u16 face_id;
+  int size; /* resolved px size, never 0 */
+  TTF_Font *font;
+} sdl_font_instance;
 
 struct lk_window {
   SDL_Window *sdl_win;
   SDL_Renderer *sdl_ren;
-  TTF_Font *font;
-  lk_text_backend text_backend; /* ud = font; see sdl_text_* */
+  TTF_TextEngine *text_engine; /* glyph-atlas engine bound to sdl_ren */
+  TTF_Text *scratch_text;      /* reused for drawing + index<->x mapping */
+  char *face_paths[SDL_TEXT_MAX_FACES]; /* [0] = cfg->font_path (may be NULL) */
+  int face_count;                       /* >= 1; slot 0 always reserved */
+  int default_font_size;                /* cfg->font_size, fallback 16 */
+  sdl_font_instance instances[SDL_TEXT_MAX_INSTANCES];
+  int instance_count;
+  lk_text_backend text_backend; /* ud = lk_window*; see sdl_text_* */
   lk_ui *ui;
   lk_rect *rects;
   lk_u32 rects_cap;
   lk_render_list rl;
-  text_cache_entry *text_cache;
-  lk_u32 text_cache_cap;
-  lk_u32 frame_counter;
-  text_cache_stats cache_stats;
-  int warned_probe;
   int width;
   int height;
   int running;
@@ -82,303 +74,276 @@ static void sdl_global_release(void) {
   }
 }
 
-/* ------- Text backend (minimal adapter over the single global font;
- * the real TTF_TextEngine implementation is stage B of the
- * text-contract plan) ------- */
+/* Resolve (face_id, size) to a TTF_Font*, lazily opening and caching
+ * the instance.  size 0 resolves to the window default size.  Returns
+ * NULL for unknown faces, faces without a path (no default face), or
+ * open failures. */
+static TTF_Font *sdl_text_instance(lk_window *win, lk_u16 face_id,
+                                   lk_u16 size) {
+  const char *path;
+  TTF_Font *font;
+  int px;
+  int i;
 
-/* Measure text.ptr[0..len) with the window's single TTF_Font.
- * font_id/font_size are ignored until stage B (one global font). */
-static void sdl_text_size(TTF_Font *font, lk_str text, int *out_w, int *out_h) {
-  int w = 0;
-  int h = 0;
-  char stack_buf[256];
-  char *buf = stack_buf;
-
-  *out_w = 0;
-  *out_h = 0;
-
-  if (!font || text.len == 0) {
-    return;
+  if ((int)face_id >= win->face_count) {
+    return NULL;
   }
 
-  /* NUL-terminate for SDL_ttf; heap only for long strings */
-  if (text.len + 1 > sizeof(stack_buf)) {
-    buf = (char *)malloc(text.len + 1);
+  path = win->face_paths[face_id];
 
-    if (!buf) {
-      return;
+  if (!path) {
+    return NULL;
+  }
+
+  px = size != 0 ? (int)size : win->default_font_size;
+
+  for (i = 0; i < win->instance_count; i++) {
+    if (win->instances[i].face_id == face_id && win->instances[i].size == px) {
+      return win->instances[i].font;
     }
   }
 
-  memcpy(buf, text.ptr, text.len);
-  buf[text.len] = '\0';
-
-  TTF_GetStringSize(font, buf, 0, &w, &h);
-
-  if (buf != stack_buf) {
-    free(buf);
+  if (win->instance_count >= SDL_TEXT_MAX_INSTANCES) {
+    return NULL;
   }
 
-  *out_w = w;
-  *out_h = h;
+  font = TTF_OpenFont(path, (float)px);
+
+  if (!font) {
+    return NULL;
+  }
+
+  win->instances[win->instance_count].face_id = face_id;
+  win->instances[win->instance_count].size = px;
+  win->instances[win->instance_count].font = font;
+  win->instance_count++;
+
+  return font;
+}
+
+/* Any real face available?  Decides real backend vs stub in the run
+ * loop (face 0 may be absent while registered faces exist). */
+static int sdl_text_have_faces(const lk_window *win) {
+  return win->face_paths[0] != NULL || win->face_count > 1;
+}
+
+/* Point the scratch TTF_Text at (font, run).  NOTE: SDL_ttf treats
+ * length 0 as "null-terminated", so an empty run must pass a literal
+ * "" — run.ptr is not NUL-terminated. */
+static TTF_Text *sdl_text_scratch(lk_window *win, TTF_Font *font, lk_str run) {
+  if (!win->text_engine || !font) {
+    return NULL;
+  }
+
+  if (!win->scratch_text) {
+    win->scratch_text = TTF_CreateText(win->text_engine, font, "", 0);
+
+    if (!win->scratch_text) {
+      return NULL;
+    }
+  }
+
+  if (!TTF_SetTextFont(win->scratch_text, font)) {
+    return NULL;
+  }
+
+  if (run.len == 0) {
+    TTF_SetTextString(win->scratch_text, "", 0);
+  } else if (!TTF_SetTextString(win->scratch_text, run.ptr, run.len)) {
+    return NULL;
+  }
+
+  return win->scratch_text;
 }
 
 static void sdl_text_measure(void *ud, lk_str run, lk_u16 font_id,
                              lk_u16 font_size, lk_text_metrics *out) {
-  TTF_Font *font = (TTF_Font *)ud;
-  int w;
-  int h;
-
-  (void)font_id;
-  (void)font_size;
+  lk_window *win = (lk_window *)ud;
+  TTF_Font *font;
+  int w = 0;
+  int h = 0;
 
   if (!out) {
     return;
   }
 
-  sdl_text_size(font, run, &w, &h);
+  out->w = 0;
+  out->h = 0;
+  out->baseline = 0;
+
+  font = sdl_text_instance(win, font_id, font_size);
+
+  if (!font) {
+    return;
+  }
+
+  out->baseline = (lk_i32)TTF_GetFontAscent(font);
+
+  if (run.len > 0) {
+    TTF_GetStringSize(font, run.ptr, run.len, &w, &h);
+  }
+
   out->w = (lk_i32)w;
   out->h = (lk_i32)h;
-  out->baseline = font ? (lk_i32)TTF_GetFontAscent(font) : 0;
 }
 
 static lk_i32 sdl_text_x_from_index(void *ud, lk_str run, lk_u16 font_id,
                                     lk_u16 font_size, lk_u32 byte_ix) {
-  TTF_Font *font = (TTF_Font *)ud;
-  lk_str prefix;
-  int w;
-  int h;
+  lk_window *win = (lk_window *)ud;
+  TTF_Font *font;
+  TTF_Text *text;
+  TTF_SubString sub;
 
-  (void)font_id;
-  (void)font_size;
+  font = sdl_text_instance(win, font_id, font_size);
 
-  prefix.ptr = run.ptr;
-  prefix.len = byte_ix > run.len ? run.len : byte_ix;
-  sdl_text_size(font, prefix, &w, &h);
-  return (lk_i32)w;
-}
-
-/* Linear scan of prefix widths picking the nearest codepoint
- * boundary.  O(n^2) — interim until stage B (TTF_TextEngine's
- * TTF_GetTextSubStringForPoint). */
-static lk_u32 sdl_text_index_from_x(void *ud, lk_str run, lk_u16 font_id,
-                                    lk_u16 font_size, lk_i32 x) {
-  TTF_Font *font = (TTF_Font *)ud;
-  lk_u32 best_ix = 0;
-  lk_i32 best_dist = x < 0 ? -x : x; /* distance to boundary 0 (x=0) */
-  lk_u32 i = 0;
-
-  (void)font_id;
-  (void)font_size;
-
-  if (x <= 0) {
+  if (!font || run.len == 0 || byte_ix == 0) {
     return 0;
   }
 
-  while (i < run.len) {
-    lk_str prefix;
-    int w;
-    int h;
-    lk_i32 dist;
-
-    /* advance to next codepoint boundary */
-    i++;
-    while (i < run.len && ((unsigned char)run.ptr[i] & 0xC0) == 0x80) {
-      i++;
-    }
-
-    prefix.ptr = run.ptr;
-    prefix.len = i;
-    sdl_text_size(font, prefix, &w, &h);
-    dist = x - (lk_i32)w;
-
-    if (dist < 0) {
-      dist = -dist;
-    }
-
-    /* <= so ties round toward the later boundary */
-    if (dist <= best_dist) {
-      best_dist = dist;
-      best_ix = i;
-    }
+  if (byte_ix >= run.len) {
+    /* Contract: x_from_index(run, run.len) == measure(run).w — use
+     * the same TTF_GetStringSize path as measure. */
+    int w = 0;
+    int h = 0;
+    TTF_GetStringSize(font, run.ptr, run.len, &w, &h);
+    return (lk_i32)w;
   }
 
-  return best_ix;
+  text = sdl_text_scratch(win, font, run);
+
+  if (!text || !TTF_GetTextSubString(text, (int)byte_ix, &sub)) {
+    return 0;
+  }
+
+  /* Left edge of the glyph cluster containing byte_ix (byte_ix is
+   * codepoint-aligned per contract, so it is the cluster start). */
+  return (lk_i32)sub.rect.x;
+}
+
+static lk_u32 sdl_text_index_from_x(void *ud, lk_str run, lk_u16 font_id,
+                                    lk_u16 font_size, lk_i32 x) {
+  lk_window *win = (lk_window *)ud;
+  TTF_Font *font;
+  TTF_Text *text;
+  TTF_SubString sub;
+  lk_u32 ix;
+
+  if (run.len == 0 || x <= 0) {
+    return 0;
+  }
+
+  font = sdl_text_instance(win, font_id, font_size);
+  text = font ? sdl_text_scratch(win, font, run) : NULL;
+
+  if (!text || !TTF_GetTextSubStringForPoint(text, (int)x, 0, &sub)) {
+    return 0;
+  }
+
+  /* Nearest boundary: at or past the midpoint of the containing
+   * cluster snaps to the boundary after it (ties round later, like
+   * the stub backend). */
+  ix = (lk_u32)sub.offset;
+
+  if (sub.length > 0 && (x - sub.rect.x) * 2 >= sub.rect.w) {
+    ix = (lk_u32)(sub.offset + sub.length);
+  }
+
+  if (ix > run.len) {
+    ix = run.len;
+  }
+
+  return ix;
 }
 
 static lk_i32 sdl_text_line_height(void *ud, lk_u16 font_id,
                                    lk_u16 font_size) {
-  TTF_Font *font = (TTF_Font *)ud;
-
-  (void)font_id;
-  (void)font_size;
+  lk_window *win = (lk_window *)ud;
+  TTF_Font *font = sdl_text_instance(win, font_id, font_size);
 
   return font ? (lk_i32)TTF_GetFontHeight(font) : 0;
 }
 
 static lk_u16 sdl_text_register_font(void *ud, const char *path) {
-  /* Stage B: face registry.  Until then only the default face exists. */
-  (void)ud;
-  (void)path;
-  return 0;
+  lk_window *win = (lk_window *)ud;
+  TTF_Font *font;
+  char *copy;
+  lk_u16 id;
+
+  if (!win || !path || path[0] == '\0') {
+    return 0;
+  }
+
+  if (win->face_count >= SDL_TEXT_MAX_FACES ||
+      win->instance_count >= SDL_TEXT_MAX_INSTANCES) {
+    return 0;
+  }
+
+  /* Open at the default size immediately so unreadable paths fail at
+   * registration, not first use.  The opened instance is kept. */
+  font = TTF_OpenFont(path, (float)win->default_font_size);
+
+  if (!font) {
+    return 0;
+  }
+
+  copy = SDL_strdup(path);
+
+  if (!copy) {
+    TTF_CloseFont(font);
+    return 0;
+  }
+
+  id = (lk_u16)win->face_count;
+  win->face_paths[win->face_count++] = copy;
+  win->instances[win->instance_count].face_id = id;
+  win->instances[win->instance_count].size = win->default_font_size;
+  win->instances[win->instance_count].font = font;
+  win->instance_count++;
+
+  return id;
 }
 
-static void text_cache_clear(lk_window *win) {
-  lk_u32 i;
+/* Destroy scratch text, close all font instances, destroy the text
+ * engine, free face paths.  Order matters: the scratch TTF_Text
+ * references a font and the engine; the engine must go before the
+ * renderer (caller destroys the renderer after this). */
+static void sdl_text_shutdown(lk_window *win) {
+  int i;
 
-  if (!win->text_cache) {
-    return;
+  if (win->scratch_text) {
+    TTF_DestroyText(win->scratch_text);
+    win->scratch_text = NULL;
   }
 
-  for (i = 0; i < win->text_cache_cap; i++) {
-    if (win->text_cache[i].tex) {
-      SDL_DestroyTexture(win->text_cache[i].tex);
+  for (i = 0; i < win->instance_count; i++) {
+    if (win->instances[i].font) {
+      TTF_CloseFont(win->instances[i].font);
     }
   }
 
-  memset(win->text_cache, 0, sizeof(text_cache_entry) * win->text_cache_cap);
+  win->instance_count = 0;
+
+  if (win->text_engine) {
+    TTF_DestroyRendererTextEngine(win->text_engine);
+    win->text_engine = NULL;
+  }
+
+  for (i = 0; i < win->face_count; i++) {
+    if (win->face_paths[i]) {
+      SDL_free(win->face_paths[i]);
+      win->face_paths[i] = NULL;
+    }
+  }
+
+  win->face_count = 0;
 }
 
-/* Look up or create a cached text texture.  Returns the texture, sets
- * out_w/out_h to the texture dimensions.  Returns NULL on failure.
- *
- * On miss: probes for a match or empty slot, tracking the stalest entry
- * seen.  Inserts into the empty slot if found, otherwise evicts the
- * stalest entry in the probe chain.  Cache always owns the returned
- * texture — caller must not destroy it.
- */
-static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id, lk_str text,
-                                   lk_color color, int *out_w, int *out_h) {
-  lk_u32 mask = win->text_cache_cap - 1;
-  lk_u32 color_key = pack_color(color);
-  /* Mix color into the home slot so two colors of one string don't
-   * always land in the same probe chain. */
-  lk_u32 slot = (str_id ^ (color_key * 2654435761u)) & mask;
-  lk_u32 probes = 0;
-  lk_u32 stalest_slot = slot;
-  lk_u32 stalest_frame = (lk_u32)~0u;
-  int found_empty = 0;
-  lk_u32 empty_slot = 0;
-
-  /* Linear probe: look for match or empty slot */
-  while (probes < win->text_cache_cap) {
-    text_cache_entry *e = &win->text_cache[slot];
-    probes++;
-
-    if (e->str_id == 0) {
-      empty_slot = slot;
-      found_empty = 1;
-      break;
-    }
-
-    if (e->str_id == str_id && e->color_key == color_key) {
-      /* Cache hit */
-      e->last_frame = win->frame_counter;
-      win->cache_stats.hits++;
-      win->cache_stats.probe_steps_total += probes;
-
-      if (probes > win->cache_stats.probe_steps_max) {
-        win->cache_stats.probe_steps_max = probes;
-      }
-
-      *out_w = e->w;
-      *out_h = e->h;
-      return e->tex;
-    }
-
-    /* Track stalest entry in probe chain for potential eviction */
-    if (e->last_frame < stalest_frame) {
-      stalest_frame = e->last_frame;
-      stalest_slot = slot;
-    }
-
-    slot = (slot + 1) & mask;
+lk_u16 lk_window_register_font(lk_window *win, const char *path) {
+  if (!win || !win->text_backend.register_font) {
+    return 0;
   }
 
-  /* Cache miss — render the texture and insert */
-  win->cache_stats.misses++;
-  win->cache_stats.probe_steps_total += probes;
-
-  if (probes > win->cache_stats.probe_steps_max) {
-    win->cache_stats.probe_steps_max = probes;
-  }
-
-  /* One-time warning for long probe chains */
-  if (!win->warned_probe && win->cache_stats.probe_steps_max > 32) {
-    SDL_Log("lk: text cache max probe reached %u (cap=%u).",
-            win->cache_stats.probe_steps_max, win->text_cache_cap);
-    win->warned_probe = 1;
-  }
-
-  {
-    SDL_Color c;
-    SDL_Surface *surf;
-    SDL_Texture *tex;
-    text_cache_entry *target;
-    int w, h;
-    char stack_buf[256];
-    char *buf = stack_buf;
-
-    /* NUL-terminate for SDL_ttf; heap only for long strings, and only
-     * on the miss path — hits never allocate. */
-    if (text.len + 1 > sizeof(stack_buf)) {
-      buf = (char *)malloc(text.len + 1);
-
-      if (!buf) {
-        return NULL;
-      }
-    }
-
-    memcpy(buf, text.ptr, text.len);
-    buf[text.len] = '\0';
-
-    c.r = color.r;
-    c.g = color.g;
-    c.b = color.b;
-    c.a = color.a;
-    surf = TTF_RenderText_Blended(win->font, buf, 0, c);
-
-    if (buf != stack_buf) {
-      free(buf);
-    }
-
-    if (!surf) {
-      return NULL;
-    }
-
-    tex = SDL_CreateTextureFromSurface(win->sdl_ren, surf);
-    w = surf->w;
-    h = surf->h;
-    SDL_DestroySurface(surf);
-
-    if (!tex) {
-      return NULL;
-    }
-
-    if (found_empty) {
-      target = &win->text_cache[empty_slot];
-    } else {
-      /* Evict stalest entry in probe chain */
-      target = &win->text_cache[stalest_slot];
-
-      if (target->tex) {
-        SDL_DestroyTexture(target->tex);
-      }
-
-      win->cache_stats.evictions++;
-    }
-
-    target->str_id = str_id;
-    target->color_key = color_key;
-    target->tex = tex;
-    target->w = w;
-    target->h = h;
-    target->last_frame = win->frame_counter;
-
-    *out_w = w;
-    *out_h = h;
-    return tex;
-  }
+  return win->text_backend.register_font(win->text_backend.ud, path);
 }
 
 /* ---- Clipboard callbacks ---- */
@@ -462,38 +427,36 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
 
   win->vsync = SDL_SetRenderVSync(win->sdl_ren, 1) ? 1 : 0;
 
-  if (cfg->font_path) {
-    win->font = TTF_OpenFont(cfg->font_path, (float)cfg->font_size);
-    /* NULL font is OK — falls back to the stub text backend */
+  /* Glyph-atlas text engine bound to the renderer.  A NULL engine is
+   * survivable: measurement still works via font instances; DRAW_TEXT
+   * and index<->x mapping degrade to no-ops. */
+  win->text_engine = TTF_CreateRendererTextEngine(win->sdl_ren);
+
+  if (!win->text_engine) {
+    SDL_Log("lk: TTF_CreateRendererTextEngine failed: %s", SDL_GetError());
   }
 
-  win->text_backend.ud = win->font;
+  /* Face registry: slot 0 is the default face from cfg. */
+  win->face_count = 1;
+  win->default_font_size =
+      cfg->font_size > 0 ? cfg->font_size : SDL_TEXT_DEFAULT_SIZE;
+
+  win->text_backend.ud = win;
   win->text_backend.measure = sdl_text_measure;
   win->text_backend.x_from_index = sdl_text_x_from_index;
   win->text_backend.index_from_x = sdl_text_index_from_x;
   win->text_backend.line_height = sdl_text_line_height;
   win->text_backend.register_font = sdl_text_register_font;
 
-  /* Allocate text cache (dies wholesale in stage B) */
-  {
-    lk_u32 cache_cap = TEXT_CACHE_DEFAULT_CAP;
-    win->text_cache = (text_cache_entry *)lk_sys_alloc(
-        NULL, (lk_u32)(sizeof(text_cache_entry) * cache_cap));
+  if (cfg->font_path) {
+    win->face_paths[0] = SDL_strdup(cfg->font_path);
 
-    if (!win->text_cache) {
-      if (win->font) {
-        TTF_CloseFont(win->font);
-      }
-
-      SDL_DestroyRenderer(win->sdl_ren);
-      SDL_DestroyWindow(win->sdl_win);
-      sdl_global_release();
-      lk_sys_dealloc(NULL, win);
-      return NULL;
+    /* Verify readable now (mirrors register_font).  Unreadable paths
+     * degrade to "no default face" — the stub text backend. */
+    if (win->face_paths[0] && !sdl_text_instance(win, 0, 0)) {
+      SDL_free(win->face_paths[0]);
+      win->face_paths[0] = NULL;
     }
-
-    memset(win->text_cache, 0, sizeof(text_cache_entry) * cache_cap);
-    win->text_cache_cap = cache_cap;
   }
 
   /* Text input is started on demand when a text-entry widget gains
@@ -503,12 +466,7 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
   win->ui = lk_ui_create(NULL);
 
   if (!win->ui) {
-    lk_sys_dealloc(NULL, win->text_cache);
-
-    if (win->font) {
-      TTF_CloseFont(win->font);
-    }
-
+    sdl_text_shutdown(win);
     SDL_DestroyRenderer(win->sdl_ren);
     SDL_DestroyWindow(win->sdl_win);
     sdl_global_release();
@@ -527,12 +485,6 @@ void lk_window_destroy(lk_window *win) {
     return;
   }
 
-  text_cache_clear(win);
-
-  if (win->text_cache) {
-    lk_sys_dealloc(NULL, win->text_cache);
-  }
-
   lk_render_list_destroy(&win->rl);
 
   if (win->rects) {
@@ -543,9 +495,7 @@ void lk_window_destroy(lk_window *win) {
     lk_ui_destroy(win->ui);
   }
 
-  if (win->font) {
-    TTF_CloseFont(win->font);
-  }
+  sdl_text_shutdown(win);
 
   if (win->sdl_ren) {
     SDL_DestroyRenderer(win->sdl_ren);
@@ -769,7 +719,8 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       const lk_style *styles = lk_ui_styles(win->ui);
       memset(&lcfg, 0, sizeof(lcfg));
 
-      lcfg.text = win->font ? &win->text_backend : lk_text_backend_stub();
+      lcfg.text =
+          sdl_text_have_faces(win) ? &win->text_backend : lk_text_backend_stub();
 
       lcfg.viewport_w = win->width;
       lcfg.viewport_h = win->height;
@@ -946,22 +897,22 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           break;
 
         case LK_ROP_DRAW_TEXT:
-          if (win->font && cmd->str_id != 0) {
+          if (cmd->str_id != 0) {
             lk_str text = lk_intern_str(cur->intern, cmd->str_id);
 
             if (text.ptr && text.len > 0) {
-              int tw, th;
-              SDL_Texture *tex =
-                  text_cache_get(win, cmd->str_id, text, cmd->color, &tw, &th);
+              TTF_Font *font =
+                  sdl_text_instance(win, cmd->font_id, cmd->font_size);
+              TTF_Text *scratch =
+                  font ? sdl_text_scratch(win, font, text) : NULL;
 
-              if (tex) {
-                /* Draw at the texture's natural size — stretching to
-                 * the command rect distorts glyphs when the widget is
-                 * wider/narrower than the text. Overflow is handled by
-                 * the active clip. */
-                fr.w = (float)tw;
-                fr.h = (float)th;
-                SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
+              if (scratch) {
+                TTF_SetTextColor(scratch, cmd->color.r, cmd->color.g,
+                                 cmd->color.b, cmd->color.a);
+                /* The engine draws at the text's natural size —
+                 * stretching to the command rect would distort glyphs.
+                 * Overflow is handled by the active clip. */
+                TTF_DrawRendererText(scratch, fr.x, fr.y);
               }
             }
           }
@@ -1017,7 +968,6 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     }
 
     SDL_RenderPresent(win->sdl_ren);
-    win->frame_counter++;
 
     /* With vsync, RenderPresent paces the loop; only sleep manually
      * when vsync is unavailable. */
