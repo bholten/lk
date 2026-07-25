@@ -1572,6 +1572,680 @@ static void test_split_ratio_prop_lcl(void) {
   END_TEST();
 }
 
+/* ============================================================================
+ * Layer-2 DSL tests (lib/lk-dsl.lcl) — DSL v2 stage 1 harness.
+ *
+ * These pin the behavior of the CURRENT -flag syntax; the stage-3
+ * syntax migration must preserve everything asserted here except where
+ * a comment explicitly marks a WART that v2 is required to change.
+ *
+ * The `app` proc is NOT tested here: it creates an SDL window and runs
+ * the event loop (lk::window_create / lk::window_run), which needs a
+ * display.  It is exercised by the examples under the dummy driver.
+ * ============================================================================
+ */
+
+#ifndef TEST_DSL_PATH
+#define TEST_DSL_PATH "lib/lk-dsl.lcl"
+#endif
+
+/* Interp with core + lk + the Layer-2 DSL prelude evaluated. */
+static lcl_interp *make_dsl_interp(void) {
+  lcl_interp *interp = make_interp();
+  lcl_value *r = NULL;
+  int rc = lcl_eval_file(interp, TEST_DSL_PATH, &r);
+
+  if (r) lcl_ref_dec(r);
+  if (rc != LCL_RC_OK) {
+    const char *msg = lcl_interp_error_msg(interp);
+    if (g_cur_ok)
+      printf("FAIL\n");
+    printf("    dsl load error (%s): %s\n", TEST_DSL_PATH,
+           msg ? msg : "(null)");
+    g_cur_ok = 0;
+  }
+  return interp;
+}
+
+/* Point the DSL's module state at a fresh ui + open frame.  After this
+ * the script vars $u / $t hold the ui and the in-progress tree, and
+ * bare widget procs (column, button, ...) build into $t. */
+static void dsl_begin(lcl_interp *interp) {
+  lcl_value *r = NULL;
+
+  eval_ok(interp,
+    "let u [lk::ui_create]\n"
+    "let t [lk::begin_frame $u]\n"
+    "set! lk_dsl::_ui $u\n"
+    "set! lk_dsl::_tree $t\n"
+    "set! lk_dsl::_parent_stack ()",
+    &r);
+  if (r) lcl_ref_dec(r);
+}
+
+/* Fetch the lk_tree* behind the script-side "$t". */
+static lk_tree *dsl_tree(lcl_interp *interp) {
+  lcl_value *r = NULL;
+  lk_tree *t = NULL;
+
+  eval_ok(interp, "$t", &r);
+  if (r) {
+    if (lcl_opaque_get(r, "lk_tree", (void **)&t) != LCL_OK) {
+      t = NULL;
+    }
+    lcl_ref_dec(r);
+  }
+  return t;
+}
+
+/* Fetch the lk_ui* behind the script-side "$u". */
+static lk_ui *dsl_ui(lcl_interp *interp) {
+  lcl_value *r = NULL;
+  lk_ui *ui = NULL;
+
+  eval_ok(interp, "$u", &r);
+  if (r) {
+    if (lcl_opaque_get(r, "lk_ui", (void **)&ui) != LCL_OK) {
+      ui = NULL;
+    }
+    lcl_ref_dec(r);
+  }
+  return ui;
+}
+
+/* Find a node index by its string id. */
+static lk_ix dsl_find(lk_tree *t, const char *id) {
+  if (!t) return 0;
+  return lk_tree_find_by_id(t, lk_intern_cid(t->intern, id));
+}
+
+/* Read a string-valued prop directly from the props arena (there is no
+ * lk_node_text-style getter for UIP_TOOLTIP).  Returns NULL if absent. */
+static const char *dsl_prop_str(const lk_tree *t, lk_ix n, lk_prop_key key) {
+  const lk_node *nd;
+  lk_u16 i;
+
+  if (!t || n == 0) return NULL;
+  nd = &t->nodes[n];
+  for (i = 0; i < nd->props_len; i++) {
+    const lk_prop *p = &t->props[nd->props_off + i];
+    if (p->key == (lk_u16)key && p->value.tag == UIV_STR) {
+      return lk_intern_cstr(t->intern, p->value.as.str_id);
+    }
+  }
+  return NULL;
+}
+
+static void test_dsl_widget_kinds(void) {
+  static const struct {
+    const char *id;
+    int kind;
+  } exp[] = {
+    {"k_col", UIK_COLUMN},   {"k_row", UIK_ROW},
+    {"k_lbl", UIK_LABEL},    {"k_btn", UIK_BUTTON},
+    {"k_ti", UIK_TEXT_INPUT},{"k_sp", UIK_SPACER},
+    {"k_sc", UIK_SCROLL},    {"k_dd", UIK_DROPDOWN},
+    {"k_opt", UIK_OPTION},   {"k_sh", UIK_SPLIT_H},
+    {"k_sv", UIK_SPLIT_V}
+  };
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+  size_t i;
+
+  BEGIN_TEST("dsl: each widget proc creates the right kind");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "column k_col\n"
+    "row k_row\n"
+    "label k_lbl\n"
+    "button k_btn\n"
+    "text_input k_ti\n"
+    "spacer k_sp\n"
+    "scroll k_sc\n"
+    "dropdown k_dd\n"
+    "option k_opt\n"
+    "split_h k_sh\n"
+    "split_v k_sv",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    for (i = 0; i < sizeof(exp) / sizeof(exp[0]); i++) {
+      lk_ix n = dsl_find(t, exp[i].id);
+      CHECK(n != 0);
+      CHECK(lk_node_kind_get(t, n) == (lk_u16)exp[i].kind);
+    }
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_flag_text_dims(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -text/-w/-h flags land as props");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "label f_lab -text \"Hello\" -w 120 -h 40", &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "f_lab");
+    CHECK(n != 0);
+    CHECK(strcmp(lk_node_text_cstr(t, n), "Hello") == 0);
+    CHECK(lk_node_prop_i32(t, n, UIP_W, -1) == 120);
+    CHECK(lk_node_prop_i32(t, n, UIP_H, -1) == 40);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_flag_layout(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -padding/-gap/-align/-justify flags");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "column f_col -padding 8 -gap 4 -align center -justify end",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "f_col");
+    CHECK(n != 0);
+    CHECK(lk_node_prop_i32(t, n, UIP_PADDING, -1) == 8);
+    CHECK(lk_node_prop_i32(t, n, UIP_GAP, -1) == 4);
+    CHECK(lk_node_prop_i32(t, n, UIP_ALIGN, -1) == (lk_i32)LK_ALIGN_CENTER);
+    CHECK(lk_node_prop_i32(t, n, UIP_JUSTIFY, -1) == (lk_i32)LK_ALIGN_END);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_flag_bools(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -focusable/-disabled/-hidden flags");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "button f_btn -focusable 1 -disabled 1\n"
+    "column f_hid -hidden 1\n"
+    "button f_off -focusable 0",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix b = dsl_find(t, "f_btn");
+    lk_ix h = dsl_find(t, "f_hid");
+    lk_ix o = dsl_find(t, "f_off");
+    CHECK(b != 0 && h != 0 && o != 0);
+    CHECK(lk_node_prop_bool(t, b, UIP_FOCUSABLE) == 1);
+    CHECK(lk_node_prop_bool(t, b, UIP_DISABLED) == 1);
+    CHECK(lk_node_prop_bool(t, h, UIP_HIDDEN) == 1);
+    CHECK(lk_node_prop_bool(t, o, UIP_FOCUSABLE) == 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_flag_tooltip_split_ratio(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -tooltip/-split_ratio flags");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "button f_tip -tooltip \"Saves the file\"\n"
+    "split_h f_spl -split_ratio 300",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix b = dsl_find(t, "f_tip");
+    lk_ix s = dsl_find(t, "f_spl");
+    const char *tip;
+    CHECK(b != 0 && s != 0);
+    tip = dsl_prop_str(t, b, UIP_TOOLTIP);
+    CHECK(tip != NULL && strcmp(tip, "Saves the file") == 0);
+    CHECK(lk_node_prop_i32(t, s, UIP_SPLIT_RATIO, -1) == 300);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_tag(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -tag applies a tag");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "button g_tag -tag primary", &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "g_tag");
+    CHECK(n != 0);
+    CHECK(lk_tree_has_tag(t, n, lk_intern_cid(t->intern, "primary")) == 1);
+    CHECK(lk_tree_has_tag(t, n, lk_intern_cid(t->intern, "danger")) == 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_present_scalar(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -present (ptype value) attaches presentation");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "button g_p1 -present (item 42)", &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "g_p1");
+    const lk_presentation *pres;
+    CHECK(n != 0);
+    pres = lk_tree_get_presentation(t, n);
+    CHECK(pres != NULL);
+    if (pres) {
+      CHECK(pres->ptype == lk_intern_cid(t->intern, "item"));
+      CHECK(pres->pvalue_count == 1);
+      CHECK(pres->pvalues[0].tag == UIV_I32);
+      CHECK(pres->pvalues[0].as.i == 42);
+    }
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_present_multiarg(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: -present list shape (action (remove_row 3))");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "button g_p2 -present (action (remove_row 3))", &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "g_p2");
+    const lk_presentation *pres;
+    CHECK(n != 0);
+    pres = lk_tree_get_presentation(t, n);
+    CHECK(pres != NULL);
+    if (pres) {
+      CHECK(pres->ptype == lk_intern_cid(t->intern, "action"));
+      CHECK(pres->pvalue_count == 2);
+      CHECK(pres->pvalues[0].tag == UIV_STR);
+      CHECK(pres->pvalues[0].as.str_id ==
+            lk_intern_cid(t->intern, "remove_row"));
+      CHECK(pres->pvalues[1].tag == UIV_I32);
+      CHECK(pres->pvalues[1].as.i == 3);
+    }
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_nesting(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: body blocks nest 3 levels, order kept");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "column outer -gap 2 {\n"
+    "    row mid {\n"
+    "        label leaf1 -text a\n"
+    "        label leaf2 -text b\n"
+    "    }\n"
+    "}",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix outer = dsl_find(t, "outer");
+    lk_ix mid = dsl_find(t, "mid");
+    lk_ix leaf1 = dsl_find(t, "leaf1");
+    lk_ix leaf2 = dsl_find(t, "leaf2");
+    CHECK(outer != 0 && mid != 0 && leaf1 != 0 && leaf2 != 0);
+    CHECK(lk_node_parent(t, outer) == 0);
+    CHECK(lk_node_parent(t, mid) == outer);
+    CHECK(lk_node_parent(t, leaf1) == mid);
+    CHECK(lk_node_parent(t, leaf2) == mid);
+    CHECK(lk_node_first_child(t, outer) == mid);
+    CHECK(lk_node_first_child(t, mid) == leaf1);
+    CHECK(lk_node_next_sibling(t, leaf1) == leaf2);
+    CHECK(lk_node_next_sibling(t, leaf2) == 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_wart_unknown_flag_ignored(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  /* WART (pinned current behavior): _apply_flags silently drops any
+   * flag not in the _prop_keys whitelist — `-bogus 42` vanishes with
+   * no error (this is how -tooltip/-hidden were lost pre-whitelist).
+   * DSL v2 stage 3 MUST turn unknown keys into a hard error carrying
+   * the widget id and the known-key list; flip this test then. */
+  BEGIN_TEST("dsl: WART unknown flag silently ignored");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "label w_unk -bogus 42 -text ok", &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix n = dsl_find(t, "w_unk");
+    CHECK(n != 0);
+    CHECK(strcmp(lk_node_text_cstr(t, n), "ok") == 0);
+    /* only the text prop landed; -bogus left no trace */
+    CHECK(t->nodes[n].props_len == 1);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_wart_trailing_flag_boolean(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  /* WART (pinned current behavior): a trailing flag with no value is
+   * parsed as boolean 1 by _parse_flags — `-focusable` becomes
+   * focusable=1, and even `-w` becomes w=1.  DSL v2 stage 3 replaces
+   * flag parsing with a props dict, making this shape inexpressible
+   * (an odd-length dict literal is a parse error). */
+  BEGIN_TEST("dsl: WART trailing flag becomes boolean 1");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "button w_tr1 -focusable\n"
+    "label w_tr2 -w",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix b = dsl_find(t, "w_tr1");
+    lk_ix l = dsl_find(t, "w_tr2");
+    CHECK(b != 0 && l != 0);
+    CHECK(lk_node_prop_bool(t, b, UIP_FOCUSABLE) == 1);
+    CHECK(lk_node_prop_i32(t, l, UIP_W, -1) == 1);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_theme_rules(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("dsl: theme + rule with -tag/-state resolve");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  /* Three rule shapes: kind+tag, wildcard kind, kind+state.  The
+   * hovered rule is added last but must NOT apply (no node is in the
+   * hovered state at resolve time). */
+  eval_ok(interp,
+    "theme {\n"
+    "    rule button -tag primary #{bg (10 20 30)}\n"
+    "    rule * #{fg (200 201 202)}\n"
+    "    rule button -state hovered #{bg (1 2 3)}\n"
+    "}\n"
+    "let w [lk::node $t rw window]\n"
+    "lk::set_root $t $w\n"
+    "let b [button pb -tag primary]\n"
+    "lk::append_child $t $w $b\n"
+    "lk::end_frame $u",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  ui = dsl_ui(interp);
+  CHECK(ui != NULL);
+  if (ui) {
+    const lk_tree *cur = lk_ui_tree(ui);
+    const lk_style *styles;
+    lk_ix n;
+
+    lk_ui_resolve_styles(ui);
+    styles = lk_ui_styles(ui);
+    CHECK(styles != NULL);
+    n = lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "pb"));
+    CHECK(n != 0);
+    if (styles && n != 0) {
+      CHECK(styles[n].bg.r == 10 && styles[n].bg.g == 20 &&
+            styles[n].bg.b == 30);
+      CHECK(styles[n].fg.r == 200 && styles[n].fg.g == 201 &&
+            styles[n].fg.b == 202);
+    }
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_translators_keybindings(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("dsl: translator/keybinding 3- and 4-arg forms");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "translator pointer_down item Select\n"
+    "translator pointer_down action button DoIt\n"
+    "keybinding s ctrl Save\n"
+    "keybinding f5 \"\" doc Refresh",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  ui = dsl_ui(interp);
+  CHECK(ui != NULL);
+  if (ui) {
+    CHECK(ui->translator_count == 4);
+    if (ui->translator_count == 4) {
+      const lk_translator *tr = ui->translators;
+      /* 3-arg translator: event + ptype, kind wildcard */
+      CHECK(tr[0].event_type == (lk_u8)LK_EVENT_POINTER_DOWN);
+      CHECK(tr[0].ptype == lk_intern_cid(ui->intern, "item"));
+      CHECK(tr[0].node_kind == 0);
+      CHECK(tr[0].keycode == 0);
+      CHECK(tr[0].command_name == lk_intern_cid(ui->intern, "Select"));
+      /* 4-arg translator: kind filter set */
+      CHECK(tr[1].ptype == lk_intern_cid(ui->intern, "action"));
+      CHECK(tr[1].node_kind == (lk_u16)UIK_BUTTON);
+      CHECK(tr[1].command_name == lk_intern_cid(ui->intern, "DoIt"));
+      /* 3-arg keybinding: global, no ptype */
+      CHECK(tr[2].event_type == (lk_u8)LK_EVENT_KEY_DOWN);
+      CHECK(tr[2].ptype == 0);
+      CHECK(tr[2].keycode == (lk_u16)LKK_S);
+      CHECK(tr[2].mods == LK_MOD_CTRL);
+      CHECK(tr[2].command_name == lk_intern_cid(ui->intern, "Save"));
+      /* 4-arg keybinding: ptype filter set */
+      CHECK(tr[3].event_type == (lk_u8)LK_EVENT_KEY_DOWN);
+      CHECK(tr[3].ptype == lk_intern_cid(ui->intern, "doc"));
+      CHECK(tr[3].keycode == (lk_u16)LKK_F5);
+      CHECK(tr[3].mods == 0);
+      CHECK(tr[3].command_name == lk_intern_cid(ui->intern, "Refresh"));
+    }
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_on_dispatch(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("dsl: on + _dispatch_command invokes handler");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  /* Handler writes into lk state so the effect is observable from
+   * script.  Dispatching an unregistered command name is a no-op (no
+   * error, state untouched). */
+  eval_ok(interp,
+    "on Save [lambda {cmd} { lk::state_set $u sink 300 [get $cmd n] }]\n"
+    "lk_dsl::_dispatch_command #{name Save n 7}\n"
+    "lk_dsl::_dispatch_command #{name Unknown n 9}\n"
+    "lk::state_get $u sink 300",
+    &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 7);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_frame_view_rebuild(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("dsl: _frame builds implicit root; rebuilds");
+  interp = make_dsl_interp();
+
+  /* Frame 1: view body + _frame on a fresh begin_frame tree. */
+  eval_ok(interp,
+    "let u [lk::ui_create]\n"
+    "set! lk_dsl::_ui $u\n"
+    "view {\n"
+    "    column main -padding 4 {\n"
+    "        label greet -text Hi\n"
+    "        button ok -text OK\n"
+    "    }\n"
+    "}\n"
+    "let t [lk::begin_frame $u]\n"
+    "lk_dsl::_frame $t\n"
+    "let cs [lk::end_frame $u]\n"
+    "len $cs",
+    &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 4); /* root + main + greet + ok all ADDED */
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  ui = dsl_ui(interp);
+  CHECK(ui != NULL);
+  if (ui) {
+    const lk_tree *cur = lk_ui_tree(ui);
+    lk_ix root = cur->root;
+    lk_ix main_n = lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "main"));
+    lk_ix greet = lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "greet"));
+    lk_ix ok_n = lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "ok"));
+
+    CHECK(root != 0);
+    CHECK(lk_node_id_get(cur, root) == lk_intern_cid(ui->intern, "root"));
+    CHECK(lk_node_kind_get(cur, root) == (lk_u16)UIK_WINDOW);
+    CHECK(main_n != 0 && greet != 0 && ok_n != 0);
+    CHECK(lk_node_parent(cur, main_n) == root);
+    CHECK(lk_node_kind_get(cur, main_n) == (lk_u16)UIK_COLUMN);
+    CHECK(lk_node_prop_i32(cur, main_n, UIP_PADDING, -1) == 4);
+    CHECK(lk_node_first_child(cur, main_n) == greet);
+    CHECK(lk_node_next_sibling(cur, greet) == ok_n);
+  }
+
+  /* Frame 2: identical rebuild diffs to zero changes. */
+  eval_ok(interp,
+    "let t2 [lk::begin_frame $u]\n"
+    "lk_dsl::_frame $t2\n"
+    "let cs2 [lk::end_frame $u]\n"
+    "len $cs2",
+    &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 0);
+    lcl_ref_dec(r);
+  }
+
+  if (ui) {
+    const lk_tree *cur = lk_ui_tree(ui);
+    CHECK(lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "greet")) != 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -1636,6 +2310,23 @@ int main(void) {
 
   test_split_kinds();
   test_split_ratio_prop_lcl();
+
+  /* Layer-2 DSL (lib/lk-dsl.lcl) — stage 1 harness */
+  test_dsl_widget_kinds();
+  test_dsl_flag_text_dims();
+  test_dsl_flag_layout();
+  test_dsl_flag_bools();
+  test_dsl_flag_tooltip_split_ratio();
+  test_dsl_tag();
+  test_dsl_present_scalar();
+  test_dsl_present_multiarg();
+  test_dsl_nesting();
+  test_dsl_wart_unknown_flag_ignored();
+  test_dsl_wart_trailing_flag_boolean();
+  test_dsl_theme_rules();
+  test_dsl_translators_keybindings();
+  test_dsl_on_dispatch();
+  test_dsl_frame_view_rebuild();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 
