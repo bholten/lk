@@ -12,11 +12,17 @@
 #define TEXT_CACHE_DEFAULT_CAP 2048
 
 typedef struct text_cache_entry {
-  lk_u32 str_id; /* 0 = empty slot */
+  lk_u32 str_id;    /* 0 = empty slot */
+  lk_u32 color_key; /* packed RGBA — same string in two colors = two entries */
   SDL_Texture *tex;
   int w, h;
   lk_u32 last_frame; /* frame counter when last accessed */
 } text_cache_entry;
+
+static lk_u32 pack_color(lk_color c) {
+  return ((lk_u32)c.r << 24) | ((lk_u32)c.g << 16) | ((lk_u32)c.b << 8) |
+         (lk_u32)c.a;
+}
 
 typedef struct text_cache_stats {
   lk_u32 hits;
@@ -43,14 +49,45 @@ struct lk_window {
   int height;
   int running;
   lk_i32 mouse_x, mouse_y;
+  float wheel_acc_x, wheel_acc_y; /* fractional wheel deltas (trackpads) */
+  int text_input_active;          /* SDL text input currently started */
+  int vsync;                      /* renderer vsync enabled */
 };
+
+/* SDL_Init/TTF_Init are process-global; refcount so multiple windows
+ * (or destroy of one) don't tear down SDL for the others. */
+static int g_sdl_refs = 0;
+
+static int sdl_global_acquire(void) {
+  if (g_sdl_refs == 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+      return 0;
+    }
+
+    if (!TTF_Init()) {
+      SDL_Quit();
+      return 0;
+    }
+  }
+
+  g_sdl_refs++;
+  return 1;
+}
+
+static void sdl_global_release(void) {
+  if (g_sdl_refs > 0 && --g_sdl_refs == 0) {
+    TTF_Quit();
+    SDL_Quit();
+  }
+}
 
 static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
                              lk_i32 *out_h) {
   TTF_Font *font = (TTF_Font *)ud;
   int w = 0;
   int h = 0;
-  char *buf;
+  char stack_buf[256];
+  char *buf = stack_buf;
 
   if (!font || text.len == 0) {
     if (out_w) {
@@ -64,24 +101,31 @@ static void sdl_measure_text(void *ud, lk_str text, lk_i32 *out_w,
     return;
   }
 
-  buf = (char *)malloc(text.len + 1);
-  if (!buf) {
-    if (out_w) {
-      *out_w = 0;
-    }
+  /* NUL-terminate for SDL_ttf; heap only for long strings */
+  if (text.len + 1 > sizeof(stack_buf)) {
+    buf = (char *)malloc(text.len + 1);
 
-    if (out_h) {
-      *out_h = 0;
-    }
+    if (!buf) {
+      if (out_w) {
+        *out_w = 0;
+      }
 
-    return;
+      if (out_h) {
+        *out_h = 0;
+      }
+
+      return;
+    }
   }
 
   memcpy(buf, text.ptr, text.len);
   buf[text.len] = '\0';
 
   TTF_GetStringSize(font, buf, 0, &w, &h);
-  free(buf);
+
+  if (buf != stack_buf) {
+    free(buf);
+  }
 
   if (out_w) {
     *out_w = (lk_i32)w;
@@ -127,11 +171,13 @@ static void text_cache_clear(lk_window *win) {
  * stalest entry in the probe chain.  Cache always owns the returned
  * texture — caller must not destroy it.
  */
-static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
-                                   const char *text, lk_color color, int *out_w,
-                                   int *out_h) {
+static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id, lk_str text,
+                                   lk_color color, int *out_w, int *out_h) {
   lk_u32 mask = win->text_cache_cap - 1;
-  lk_u32 slot = str_id & mask;
+  lk_u32 color_key = pack_color(color);
+  /* Mix color into the home slot so two colors of one string don't
+   * always land in the same probe chain. */
+  lk_u32 slot = (str_id ^ (color_key * 2654435761u)) & mask;
   lk_u32 probes = 0;
   lk_u32 stalest_slot = slot;
   lk_u32 stalest_frame = (lk_u32)~0u;
@@ -149,7 +195,7 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
       break;
     }
 
-    if (e->str_id == str_id) {
+    if (e->str_id == str_id && e->color_key == color_key) {
       /* Cache hit */
       e->last_frame = win->frame_counter;
       win->cache_stats.hits++;
@@ -195,12 +241,31 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
     SDL_Texture *tex;
     text_cache_entry *target;
     int w, h;
+    char stack_buf[256];
+    char *buf = stack_buf;
+
+    /* NUL-terminate for SDL_ttf; heap only for long strings, and only
+     * on the miss path — hits never allocate. */
+    if (text.len + 1 > sizeof(stack_buf)) {
+      buf = (char *)malloc(text.len + 1);
+
+      if (!buf) {
+        return NULL;
+      }
+    }
+
+    memcpy(buf, text.ptr, text.len);
+    buf[text.len] = '\0';
 
     c.r = color.r;
     c.g = color.g;
     c.b = color.b;
     c.a = color.a;
-    surf = TTF_RenderText_Blended(win->font, text, 0, c);
+    surf = TTF_RenderText_Blended(win->font, buf, 0, c);
+
+    if (buf != stack_buf) {
+      free(buf);
+    }
 
     if (!surf) {
       return NULL;
@@ -229,6 +294,7 @@ static SDL_Texture *text_cache_get(lk_window *win, lk_u32 str_id,
     }
 
     target->str_id = str_id;
+    target->color_key = color_key;
     target->tex = tex;
     target->w = w;
     target->h = h;
@@ -297,13 +363,7 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
   win->width = w;
   win->height = h;
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
-    lk_sys_dealloc(NULL, win);
-    return NULL;
-  }
-
-  if (!TTF_Init()) {
-    SDL_Quit();
+  if (!sdl_global_acquire()) {
     lk_sys_dealloc(NULL, win);
     return NULL;
   }
@@ -311,8 +371,7 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
   win->sdl_win = SDL_CreateWindow(title, w, h, SDL_WINDOW_RESIZABLE);
 
   if (!win->sdl_win) {
-    TTF_Quit();
-    SDL_Quit();
+    sdl_global_release();
     lk_sys_dealloc(NULL, win);
     return NULL;
   }
@@ -321,11 +380,12 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
 
   if (!win->sdl_ren) {
     SDL_DestroyWindow(win->sdl_win);
-    TTF_Quit();
-    SDL_Quit();
+    sdl_global_release();
     lk_sys_dealloc(NULL, win);
     return NULL;
   }
+
+  win->vsync = SDL_SetRenderVSync(win->sdl_ren, 1) ? 1 : 0;
 
   if (cfg->font_path) {
     win->font = TTF_OpenFont(cfg->font_path, (float)cfg->font_size);
@@ -347,8 +407,7 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
 
       SDL_DestroyRenderer(win->sdl_ren);
       SDL_DestroyWindow(win->sdl_win);
-      TTF_Quit();
-      SDL_Quit();
+      sdl_global_release();
       lk_sys_dealloc(NULL, win);
       return NULL;
     }
@@ -357,7 +416,9 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
     win->text_cache_cap = cache_cap;
   }
 
-  SDL_StartTextInput(win->sdl_win);
+  /* Text input is started on demand when a text-entry widget gains
+   * focus (see lk_window_run) so IME/on-screen keyboards only engage
+   * when a field is actually focused. */
 
   win->ui = lk_ui_create(NULL);
 
@@ -370,8 +431,7 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
 
     SDL_DestroyRenderer(win->sdl_ren);
     SDL_DestroyWindow(win->sdl_win);
-    TTF_Quit();
-    SDL_Quit();
+    sdl_global_release();
     lk_sys_dealloc(NULL, win);
 
     return NULL;
@@ -412,12 +472,14 @@ void lk_window_destroy(lk_window *win) {
   }
 
   if (win->sdl_win) {
-    SDL_StopTextInput(win->sdl_win);
+    if (win->text_input_active) {
+      SDL_StopTextInput(win->sdl_win);
+    }
+
     SDL_DestroyWindow(win->sdl_win);
   }
 
-  TTF_Quit();
-  SDL_Quit();
+  sdl_global_release();
   lk_sys_dealloc(NULL, win);
 }
 
@@ -498,7 +560,8 @@ static lk_u8 sdl_to_lk_mods(SDL_Keymod m) {
   return r;
 }
 
-static int sdl_to_lk_event(const SDL_Event *sdl, lk_event *out) {
+static int sdl_to_lk_event(lk_window *win, const SDL_Event *sdl,
+                           lk_event *out) {
   memset(out, 0, sizeof(*out));
   switch (sdl->type) {
   case SDL_EVENT_MOUSE_MOTION:
@@ -540,11 +603,26 @@ static int sdl_to_lk_event(const SDL_Event *sdl, lk_event *out) {
     out->data.text.len = (lk_u8)len;
     return 1;
   }
-  case SDL_EVENT_MOUSE_WHEEL:
+  case SDL_EVENT_MOUSE_WHEEL: {
+    /* Trackpads deliver fractional deltas; accumulate and emit whole
+     * steps so smooth scrolling isn't truncated to zero. */
+    lk_i32 dx, dy;
+    win->wheel_acc_x += sdl->wheel.x;
+    win->wheel_acc_y += sdl->wheel.y;
+    dx = (lk_i32)win->wheel_acc_x;
+    dy = (lk_i32)win->wheel_acc_y;
+
+    if (dx == 0 && dy == 0) {
+      return 0;
+    }
+
+    win->wheel_acc_x -= (float)dx;
+    win->wheel_acc_y -= (float)dy;
     out->type = LK_EVENT_WHEEL;
-    out->data.wheel.dx = (lk_i32)sdl->wheel.x;
-    out->data.wheel.dy = (lk_i32)sdl->wheel.y;
+    out->data.wheel.dx = dx;
+    out->data.wheel.dy = dy;
     return 1;
+  }
   case SDL_EVENT_WINDOW_RESIZED:
     out->type = LK_EVENT_WINDOW_RESIZE;
     out->data.window.w = sdl->window.data1;
@@ -629,6 +707,31 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       }
     }
 
+    /* 3.5. Engage SDL text input only while a text-entry widget is
+     * focused, and tell the IME where the field is so composition
+     * windows appear next to it. */
+    {
+      lk_ix f = lk_focus_current(win->ui, cur);
+      int want = (f != 0 && cur->nodes[f].kind == (lk_u16)UIK_TEXT_INPUT);
+
+      if (want && !win->text_input_active) {
+        SDL_StartTextInput(win->sdl_win);
+        win->text_input_active = 1;
+      } else if (!want && win->text_input_active) {
+        SDL_StopTextInput(win->sdl_win);
+        win->text_input_active = 0;
+      }
+
+      if (want && have_rects) {
+        SDL_Rect area;
+        area.x = (int)win->rects[f].x;
+        area.y = (int)win->rects[f].y;
+        area.w = (int)win->rects[f].w;
+        area.h = (int)win->rects[f].h;
+        SDL_SetTextInputArea(win->sdl_win, &area, 0);
+      }
+    }
+
     /* 4. Poll events (after layout so we have rects for hit-testing) */
     while (SDL_PollEvent(&sdl_ev)) {
       lk_event lk_ev;
@@ -638,7 +741,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
         break;
       }
 
-      if (!sdl_to_lk_event(&sdl_ev, &lk_ev)) {
+      if (!sdl_to_lk_event(win, &sdl_ev, &lk_ev)) {
         continue;
       }
 
@@ -746,65 +849,106 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
     SDL_RenderClear(win->sdl_ren);
 
-    for (i = 0; i < win->rl.count; i++) {
-      const lk_render_cmd *cmd = &win->rl.cmds[i];
-      SDL_FRect fr;
+    {
+      /* Clip stack: CLIP_END must restore the *enclosing* clip, not
+       * clear clipping entirely (nested clippers: window > scroll). */
+      SDL_Rect clip_stack[32];
+      int clip_sp = 0;
 
-      fr.x = (float)cmd->rect.x;
-      fr.y = (float)cmd->rect.y;
-      fr.w = (float)cmd->rect.w;
-      fr.h = (float)cmd->rect.h;
+      for (i = 0; i < win->rl.count; i++) {
+        const lk_render_cmd *cmd = &win->rl.cmds[i];
+        SDL_FRect fr;
 
-      switch (cmd->op) {
-      case LK_ROP_FILL_RECT:
-        SDL_SetRenderDrawColor(win->sdl_ren, cmd->color.r, cmd->color.g,
-                               cmd->color.b, cmd->color.a);
-        SDL_RenderFillRect(win->sdl_ren, &fr);
-        break;
+        fr.x = (float)cmd->rect.x;
+        fr.y = (float)cmd->rect.y;
+        fr.w = (float)cmd->rect.w;
+        fr.h = (float)cmd->rect.h;
 
-      case LK_ROP_DRAW_TEXT:
-        if (win->font && cmd->str_id != 0) {
-          lk_str text = lk_intern_str(cur->intern, cmd->str_id);
+        switch (cmd->op) {
+        case LK_ROP_FILL_RECT:
+          SDL_SetRenderDrawColor(win->sdl_ren, cmd->color.r, cmd->color.g,
+                                 cmd->color.b, cmd->color.a);
+          SDL_RenderFillRect(win->sdl_ren, &fr);
+          break;
 
-          if (text.ptr && text.len > 0) {
-            char *buf = (char *)malloc(text.len + 1);
+        case LK_ROP_DRAW_TEXT:
+          if (win->font && cmd->str_id != 0) {
+            lk_str text = lk_intern_str(cur->intern, cmd->str_id);
 
-            if (buf) {
+            if (text.ptr && text.len > 0) {
               int tw, th;
-              SDL_Texture *tex;
-              memcpy(buf, text.ptr, text.len);
-              buf[text.len] = '\0';
-              tex = text_cache_get(win, cmd->str_id, buf, cmd->color, &tw, &th);
+              SDL_Texture *tex =
+                  text_cache_get(win, cmd->str_id, text, cmd->color, &tw, &th);
 
               if (tex) {
+                /* Draw at the texture's natural size — stretching to
+                 * the command rect distorts glyphs when the widget is
+                 * wider/narrower than the text. Overflow is handled by
+                 * the active clip. */
+                fr.w = (float)tw;
+                fr.h = (float)th;
                 SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
               }
-
-              free(buf);
             }
           }
+
+          break;
+
+        case LK_ROP_CLIP_BEGIN: {
+          SDL_Rect cr;
+          cr.x = (int)cmd->rect.x;
+          cr.y = (int)cmd->rect.y;
+          cr.w = (int)cmd->rect.w;
+          cr.h = (int)cmd->rect.h;
+
+          /* Nested clips intersect with the enclosing clip */
+          if (clip_sp > 0) {
+            SDL_Rect merged;
+
+            if (!SDL_GetRectIntersection(&clip_stack[clip_sp - 1], &cr,
+                                         &merged)) {
+              merged.x = cr.x;
+              merged.y = cr.y;
+              merged.w = 0;
+              merged.h = 0;
+            }
+
+            cr = merged;
+          }
+
+          if (clip_sp < (int)(sizeof(clip_stack) / sizeof(clip_stack[0]))) {
+            clip_stack[clip_sp++] = cr;
+          }
+
+          SDL_SetRenderClipRect(win->sdl_ren, &cr);
+          break;
         }
 
-        break;
+        case LK_ROP_CLIP_END:
+          if (clip_sp > 0) {
+            clip_sp--;
+          }
 
-      case LK_ROP_CLIP_BEGIN: {
-        SDL_Rect cr;
-        cr.x = (int)cmd->rect.x;
-        cr.y = (int)cmd->rect.y;
-        cr.w = (int)cmd->rect.w;
-        cr.h = (int)cmd->rect.h;
-        SDL_SetRenderClipRect(win->sdl_ren, &cr);
-        break;
-      }
+          if (clip_sp > 0) {
+            SDL_SetRenderClipRect(win->sdl_ren, &clip_stack[clip_sp - 1]);
+          } else {
+            SDL_SetRenderClipRect(win->sdl_ren, NULL);
+          }
 
-      case LK_ROP_CLIP_END: SDL_SetRenderClipRect(win->sdl_ren, NULL); break;
+          break;
 
-      default: break;
+        default: break;
+        }
       }
     }
 
     SDL_RenderPresent(win->sdl_ren);
     win->frame_counter++;
-    SDL_Delay(16);
+
+    /* With vsync, RenderPresent paces the loop; only sleep manually
+     * when vsync is unavailable. */
+    if (!win->vsync) {
+      SDL_Delay(16);
+    }
   }
 }

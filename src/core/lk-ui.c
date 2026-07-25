@@ -397,7 +397,7 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
   ui->dealloc = de;
   ui->alloc_ud = ud;
 
-  ui->intern = lk_intern_new(al, ud);
+  ui->intern = lk_intern_new(al, de, ud);
 
   if (!ui->intern) {
     de(ud, ui);
@@ -512,13 +512,29 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
   ui->prev = ui->next;
   ui->next = tmp;
 
-  /* Clear focus if the focused node was removed */
+  /* Clear focus if the focused node was removed.  A node that is
+   * REMOVED and ADDED in the same changeset merely moved to a new
+   * parent — keep focus in that case. */
   if (ui->focused_id != 0) {
     lk_u32 fi;
     for (fi = 0; fi < ui->changeset.count; fi++) {
       if (ui->changeset.changes[fi].kind == LK_CHANGE_REMOVED &&
           ui->changeset.changes[fi].id == ui->focused_id) {
-        ui->focused_id = 0;
+        lk_u32 ai;
+        int readded = 0;
+
+        for (ai = 0; ai < ui->changeset.count; ai++) {
+          if (ui->changeset.changes[ai].kind == LK_CHANGE_ADDED &&
+              ui->changeset.changes[ai].id == ui->focused_id) {
+            readded = 1;
+            break;
+          }
+        }
+
+        if (!readded) {
+          ui->focused_id = 0;
+        }
+
         break;
       }
     }

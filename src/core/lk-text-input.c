@@ -287,11 +287,13 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
     lk_render_list_push(out, cmd);
   }
 
-  /* Cursor bar (only when focused — check if cursor_x is in state) */
+  /* Cursor bar — only when this node holds keyboard focus.  The
+   * LKS_FOCUSED flag is kept in sync by the lk_focus_* functions. */
   if (state) {
+    lk_value f_v = lk_state_get(state, nid, LKS_FOCUSED);
     lk_value cx_v = lk_state_get(state, nid, LKS_CURSOR_X);
 
-    if (cx_v.tag == UIV_I32) {
+    if (f_v.tag == UIV_I32 && f_v.as.i != 0 && cx_v.tag == UIV_I32) {
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
       cmd.rect.x = rect->x + inset + (lk_i32)cx_v.as.i;

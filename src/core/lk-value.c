@@ -3,6 +3,9 @@
 lk_value lk_v_none(void) {
   lk_value v;
   v.tag = UIV_NONE;
+  /* Zero the union too so reading .as.i on a NONE value is defined
+   * (0) instead of uninitialized memory. */
+  v.as.i = 0;
 
   return v;
 }

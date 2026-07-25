@@ -44,7 +44,8 @@ typedef lk_u32 lk_node_id;
 typedef struct lk_intern lk_intern;
 typedef struct lk_state lk_state;
 
-lk_intern *lk_intern_new(void *(alloc)(void *, lk_u32), void *alloc_ud);
+lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32),
+                         void (*dealloc)(void *, void *), void *alloc_ud);
 void lk_intern_destroy(lk_intern *it);
 
 lk_node_id lk_intern_id(lk_intern *it, lk_str s); /* return stable id */
@@ -97,6 +98,17 @@ typedef enum lk_state_key {
   LKS_SCROLL_MAX,
   LKS_SELECTED_INDEX, /* dropdown: index of currently selected option */
   LKS_HOVER_INDEX,    /* dropdown: index of option under cursor while open */
+  LKS_FOCUSED,        /* i32 0/1: kept in sync with the UI focus by the
+                         lk_focus_* functions so widget render code (which
+                         only sees lk_state) can tell if its node is
+                         focused */
+  LKS_TRIGGER_X,      /* dropdown: trigger rect stashed by the layout pass
+                         so event handling can distinguish trigger clicks
+                         from popup-padding clicks (Lean overlay support,
+                         see docs/overlays.md) */
+  LKS_TRIGGER_Y,
+  LKS_TRIGGER_W,
+  LKS_TRIGGER_H,
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -334,9 +346,6 @@ typedef struct lk_kind_schema {
   const lk_prop_rule *rules; /* array */
   lk_u16 rule_count;
 } lk_kind_schema;
-
-/* Temporary: for MPV provide built-in default schema for MVP kinds */
-lk_kind_schema lk_default_schema(lk_u32 *out_count);
 
 /* Optionally validate against a schema table. */
 int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,

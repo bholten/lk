@@ -261,6 +261,8 @@ void lk_ui_clear_command_log(lk_ui *ui) {
 
 void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
   lk_ix node;
+  lk_ix top_disabled;
+  int suppressed;
 
   if (!ui || !t || !event || event->handled) {
     return;
@@ -270,6 +272,22 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
     return;
   }
 
+  /* Disabled suppression: find the topmost (closest-to-root) disabled
+   * node on the target->root path.  That node and everything below it
+   * must not emit commands; ancestors above it still may. */
+  top_disabled = 0;
+  node = event->target;
+
+  while (node != 0 && node < t->node_count) {
+    if (lk_node_prop_bool(t, node, UIP_DISABLED)) {
+      top_disabled = node;
+    }
+
+    node = t->nodes[node].parent;
+  }
+
+  suppressed = (top_disabled != 0);
+
   /* Walk from target up to root, looking for presentations */
   node = event->target;
 
@@ -277,8 +295,9 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
     const lk_presentation *pres;
     lk_u32 pi;
 
-    /* Check all presentations on this node */
-    for (pi = 0; pi < t->pres_count; pi++) {
+    /* Check all presentations on this node (skipped while inside a
+     * disabled subtree) */
+    for (pi = 0; suppressed == 0 && pi < t->pres_count; pi++) {
       if (t->pres[pi].node != node) {
         continue;
       }
@@ -354,6 +373,11 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
           }
         }
       }
+    }
+
+    /* Once we step above the topmost disabled node, matching resumes. */
+    if (node == top_disabled) {
+      suppressed = 0;
     }
 
     node = t->nodes[node].parent;
