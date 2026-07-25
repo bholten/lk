@@ -810,12 +810,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
           lk_ev.type == LK_EVENT_POINTER_UP) {
         if (have_rects) {
           /* Overlay hit-test first (popups draw on top of everything) */
-          const lk_style *styles = lk_ui_styles(win->ui);
-          const lk_state *state = lk_ui_state(win->ui);
-
-          lk_ev.target = lk_hit_test_overlay(cur, win->rects, styles, state,
-                                              &lcfg, lk_ev.data.pointer.x,
-                                              lk_ev.data.pointer.y);
+          lk_ev.target = lk_hit_test_overlay(win->ui, win->rects, &lcfg,
+                                             lk_ev.data.pointer.x,
+                                             lk_ev.data.pointer.y);
 
           if (lk_ev.target == 0) {
             lk_ev.target =
@@ -825,11 +822,15 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
           /* Pointer-down outside any open overlay closes it.
            * Call before routing so the click still fires on whatever
-           * the user clicked. */
+           * the user clicked.  A modal (focus-trapping, non-dismissing)
+           * overlay consumes the click instead — skip routing. */
           if (lk_ev.type == LK_EVENT_POINTER_DOWN) {
-            lk_overlay_dismiss_outside(win->ui, win->rects, styles, &lcfg,
-                                        lk_ev.data.pointer.x,
-                                        lk_ev.data.pointer.y);
+            if (lk_overlay_dismiss_outside(win->ui, win->rects, &lcfg,
+                                           lk_ev.data.pointer.x,
+                                           lk_ev.data.pointer.y) ==
+                LK_DISMISS_BLOCKED) {
+              continue;
+            }
           }
         }
 
@@ -892,10 +893,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     lk_render_build(cur, win->rects, lk_ui_styles(win->ui),
                     lk_ui_state(win->ui), &win->rl);
 
-    /* 5b. Overlays (dropdown popups) draw on top of the main tree.
-     * See docs/overlays.md for the roadmap to a generalized system. */
-    lk_render_build_overlays(cur, win->rects, lk_ui_styles(win->ui),
-                              lk_ui_state(win->ui), &lcfg, &win->rl);
+    /* 5b. Overlays (the ui's overlay stack: dropdown popups, subtree
+     * overlays) draw on top of the main tree.  See docs/overlays.md. */
+    lk_render_build_overlays(win->ui, win->rects, &lcfg, &win->rl);
 
     SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
     SDL_RenderClear(win->sdl_ren);

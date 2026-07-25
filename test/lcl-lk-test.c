@@ -1234,6 +1234,55 @@ static void test_clipboard_get_no_clipboard(void) {
   END_TEST();
 }
 
+static void test_overlay_count_proc(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("overlay_count returns 0 on a fresh ui");
+  interp = make_interp();
+
+  eval_ok(interp, "let ui [lk::ui_create]", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  eval_ok(interp, "lk::overlay_count $ui", &r);
+  if (r) {
+    long v = -1;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 0);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_hidden_prop(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("hidden prop settable via lk::prop");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let col [lk::node $t \"col\" \"column\"]\n"
+    "lk::prop $t $col \"hidden\" 1\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $col\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) {
+    CHECK(lcl_list_len(r) >= 2);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -1288,6 +1337,9 @@ int main(void) {
   test_add_translator_extended_keycodes();
   test_add_translator_bad_keycode();
   test_add_translator_bad_mods();
+
+  test_overlay_count_proc();
+  test_hidden_prop();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

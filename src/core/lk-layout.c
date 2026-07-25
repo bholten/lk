@@ -5,8 +5,19 @@
 #include "lk-text-input.h"
 #include <lk.h>
 
+/* Hidden subtrees (UIP_HIDDEN on the root of the subtree) are skipped
+ * by the main passes.  The subtree entry points (lk_layout_subtree)
+ * ignore the flag on their start node only, so overlay content —
+ * hidden from the main tree — can still be measured and laid out. */
+static int node_hidden(const lk_tree *t, lk_ix n) {
+  return lk_node_prop_bool(t, n, UIP_HIDDEN);
+}
+
+/* Post-order measure of the subtree rooted at start.  Hidden
+ * descendants are skipped (their sizes stay zero); start itself is
+ * always measured. */
 static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
-                         lk_size *sizes) {
+                         lk_size *sizes, lk_ix start) {
   lk_ix *stack;
   lk_ix *iter;
   lk_u32 sp;
@@ -27,8 +38,8 @@ static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
   }
 
   sp = 0;
-  stack[sp] = t->root;
-  iter[sp] = t->nodes[t->root].first_child;
+  stack[sp] = start;
+  iter[sp] = t->nodes[start].first_child;
   sp++;
 
   while (sp > 0) {
@@ -37,6 +48,11 @@ static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
 
     if (c != 0) {
       iter[sp - 1] = t->nodes[c].next_sibling;
+
+      if (node_hidden(t, c)) {
+        continue; /* skip hidden subtree */
+      }
+
       stack[sp] = c;
       iter[sp] = t->nodes[c].first_child;
       sp++;
@@ -69,8 +85,11 @@ static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
   lk_sys_dealloc(NULL, iter);
 }
 
+/* Top-down layout of the subtree rooted at start.  rects[start] must
+ * already hold the subtree root's final rect.  Hidden descendants are
+ * not descended into (their rects are left as-is). */
 static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
-                        const lk_size *sizes, lk_rect *rects) {
+                        const lk_size *sizes, lk_rect *rects, lk_ix start) {
   lk_ix *stack;
   lk_u32 sp;
 
@@ -81,7 +100,7 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
   }
 
   sp = 0;
-  stack[sp++] = t->root;
+  stack[sp++] = start;
 
   while (sp > 0) {
     lk_ix n = stack[--sp];
@@ -130,7 +149,10 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
         child = nd->first_child;
 
         while (child) {
-          kids[nk++] = child;
+          if (!node_hidden(t, child)) {
+            kids[nk++] = child;
+          }
+
           child = t->nodes[child].next_sibling;
         }
 
@@ -170,22 +192,94 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
 
   memset(sizes, 0, sizeof(lk_size) * t->node_count);
 
-  measure_pass(t, cfg, sizes);
+  measure_pass(t, cfg, sizes, t->root);
 
   rects[t->root].x = 0;
   rects[t->root].y = 0;
   rects[t->root].w = cfg->viewport_w;
   rects[t->root].h = cfg->viewport_h;
 
-  layout_pass(t, cfg, sizes, rects);
+  layout_pass(t, cfg, sizes, rects, t->root);
 
-  /* Lean overlay support: stash dropdown trigger rects in retained
-   * state so dropdown event handling can reason about geometry.
+  /* Overlay support: stash dropdown trigger rects in retained state
+   * so dropdown event handling can reason about geometry.
    * See docs/overlays.md. */
   if (cfg->state) {
     lk_dropdown_store_trigger_rects(t, rects, cfg->state);
     lk_text_input_store_geometry(t, rects, cfg);
   }
+
+  lk_sys_dealloc(NULL, sizes);
+  return 1;
+}
+
+/* Zero the rect slots of every node in the subtree rooted at start
+ * (including hidden descendants), so stale values from a previous
+ * subtree layout can't leak through. */
+static void zero_subtree_rects(const lk_tree *t, lk_ix start, lk_rect *rects) {
+  lk_ix *stack;
+  lk_u32 sp;
+
+  stack = (lk_ix *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_ix) * t->node_count));
+
+  if (!stack) {
+    return;
+  }
+
+  sp = 0;
+  stack[sp++] = start;
+
+  while (sp > 0) {
+    lk_ix n = stack[--sp];
+    lk_ix child = t->nodes[n].first_child;
+
+    rects[n].x = 0;
+    rects[n].y = 0;
+    rects[n].w = 0;
+    rects[n].h = 0;
+
+    while (child) {
+      stack[sp++] = child;
+      child = t->nodes[child].next_sibling;
+    }
+  }
+
+  lk_sys_dealloc(NULL, stack);
+}
+
+int lk_layout_subtree(const lk_tree *t, const lk_layout_cfg *cfg,
+                      lk_ix subtree_root, lk_i32 origin_x, lk_i32 origin_y,
+                      lk_rect *rects) {
+  lk_size *sizes;
+
+  if (!t || !cfg || !rects) {
+    return 0;
+  }
+
+  if (subtree_root == 0 || subtree_root >= t->node_count) {
+    return 0;
+  }
+
+  sizes =
+      (lk_size *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_size) * t->node_count));
+
+  if (!sizes) {
+    return 0;
+  }
+
+  memset(sizes, 0, sizeof(lk_size) * t->node_count);
+  zero_subtree_rects(t, subtree_root, rects);
+
+  /* UIP_HIDDEN on subtree_root itself is deliberately ignored: the
+   * whole point is laying out subtrees the main pass skipped. */
+  measure_pass(t, cfg, sizes, subtree_root);
+
+  rects[subtree_root].x = origin_x;
+  rects[subtree_root].y = origin_y;
+  rects[subtree_root].w = sizes[subtree_root].w;
+  rects[subtree_root].h = sizes[subtree_root].h;
+
+  layout_pass(t, cfg, sizes, rects, subtree_root);
 
   lk_sys_dealloc(NULL, sizes);
   return 1;

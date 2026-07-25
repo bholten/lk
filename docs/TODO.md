@@ -401,12 +401,16 @@ panels). See `docs/weft-gap-analysis.md` §4.
 Required for syntax-highlighted code display, colored logs, rich text.
 See `docs/weft-gap-analysis.md` §3.
 
-### 7. Overlays / positioning — generalization
+### 7. Overlays / positioning — generalization (steps 1–5 ✓)
 
-Lean dropdown-specific overlay machinery shipped in MVP-1.0
-(`lk-dropdown.c` + three `lk.h` entry points).  Tooltips, context
-menus, and modals require the Proper generalization described in
-`docs/overlays.md`.
+Steps 1–5 of `docs/overlays.md` landed (2026-07-25): overlay stack on
+`lk_ui` (`src/core/lk-overlay.c`), `lk_anchor_resolve` with
+flip/clamp, `UIP_HIDDEN` content subtrees + `lk_layout_subtree`,
+focus traps, modal outside-click blocking, ESC dismissal in
+`lk_event_route`, and the dropdown migrated onto the stack.
+Remaining (step 6): the tooltip producer (`UIP_TOOLTIP` prop, hover
+push/pop in core) and a modal demo / app-level overlay procs in the
+Lcl bindings.
 
 
 ## Known issues / small hardening items
@@ -414,11 +418,10 @@ menus, and modals require the Proper generalization described in
 Low-priority polish, mostly surfaced during the MVP-1.0 dropdown work.
 None block shipping the budget app; revisit as the app surfaces them.
 
-- **Dropdown popup clipping near viewport edges.** Popup draws at
-  `(trigger.x, trigger.y + trigger.h)` unconditionally — near the
-  bottom/right of the window it clips off-screen.  Fix: viewport-edge
-  clamp + flip-above when overflowing down (see `docs/overlays.md`
-  step 3).
+- ~~**Dropdown popup clipping near viewport edges.**~~ Fixed
+  (2026-07-25): popup geometry goes through `lk_anchor_resolve` —
+  flips above the trigger when overflowing the bottom, clamps x/y
+  into the viewport (`docs/overlays.md` step 3).
 - **Dropdown popup doesn't scroll.**  Long option lists past
   `DROPDOWN_POPUP_MAX_HEIGHT` (240 px) hide overflow invisibly.  Fix:
   either enable scroll inside popup, or raise the cap and let it clip.

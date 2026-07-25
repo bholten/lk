@@ -1,7 +1,12 @@
 # Overlays — Current State (Lean) and Path to Proper
 
-Status: **Lean, dropdown-only**.  Introduced alongside `UIK_DROPDOWN` in
-the MVP-1.0 milestone.  This document names the debt so it is not lost.
+Status: **Steps 1–5 DONE (2026-07-25)** — the generalized overlay
+stack (`lk_overlay` on `lk_ui`, `src/core/lk-overlay.c`), anchor
+resolution with viewport clamping, `UIP_HIDDEN` + `lk_layout_subtree`
+content subtrees, focus traps, modal blocking, and core ESC dismissal
+are implemented; dropdowns are migrated onto the stack.  Step 6
+(tooltip / context-menu / modal producers) remains.  The historical
+Lean description below is kept for context.
 
 ## What "overlay" means here
 
@@ -72,7 +77,12 @@ generalization doesn't require ripping apart the core passes.
 
 Rough sequencing, smallest-to-largest:
 
-### Step 1 — introduce `lk_overlay`
+### Step 1 — introduce `lk_overlay` — DONE
+
+*(2026-07-25: `lk_overlay` in `lk.h` with `owner_id`/`content_root_id`
+as stable `lk_node_id` per v2 note 1; stack + push/pop/pop_owner/
+top/count in `src/core/lk-overlay.c`; end_frame pops on owner removal
+with the move filter.)*
 
 Add a small value type to `lk.h`:
 
@@ -106,7 +116,11 @@ typedef struct lk_overlay {
 
 Add `lk_overlay *overlays; lk_u32 overlay_count;` to `lk_ui`.
 
-### Step 2 — hoist registration out of the widget walk
+### Step 2 — hoist registration out of the widget walk — DONE
+
+*(2026-07-25: the three public functions iterate `ui->overlays` and
+now take `lk_ui*` + `lk_layout_cfg*`; dropdown's event handler pushes
+and pops via `dropdown_open`/`dropdown_close`.)*
 
 `lk_render_build_overlays` and `lk_hit_test_overlay` should no longer
 special-case `UIK_DROPDOWN`.  Instead they iterate `ui->overlays`.
@@ -115,19 +129,35 @@ event handler (e.g. dropdown's pointer-down handler pushes an overlay
 with `kind = DROPDOWN_POPUP`, `owner_node = dd`, `anchor_mode = BELOW`).
 Pop on close.
 
-### Step 3 — viewport-edge clamping
+### Step 3 — viewport-edge clamping — DONE
+
+*(2026-07-25: `lk_anchor_resolve` in `lk-overlay.c`, public in `lk.h`;
+BELOW flips above at the bottom edge, x/y clamp into the viewport;
+dropdown popup geometry routed through it.)*
 
 `lk_anchor_resolve(overlay, rects[owner], viewport_w, viewport_h) →
 lk_rect` computes the final overlay rect, flipping above/below when the
 preferred side would overflow.  Use in both render and hit-test.
 
-### Step 4 — focus traps and modals
+### Step 4 — focus traps and modals — DONE
+
+*(2026-07-25: `lk_focus_next/prev` scope to the topmost trapping
+overlay's content subtree; `lk_overlay_dismiss_outside` returns
+`LK_DISMISS_BLOCKED` for outside clicks on a modal; ESC pops the
+topmost overlay in `lk_event_route` per v2 note 3.)*
 
 When an overlay has `traps_focus`, `lk_focus_next` and `lk_focus_prev`
 scope their DFS to that overlay's `content_root` subtree.  Outside
 clicks are blocked (not just dismissing — blocking too, for modals).
 
-### Step 5 — migrate dropdown to the new API
+### Step 5 — migrate dropdown to the new API — DONE
+
+*(2026-07-25: opening pushes an `LK_OVERLAY_DROPDOWN_POPUP` overlay
+(LKS_EXPANDED kept in sync — still the public invariant); popup
+render/hit-test live on as `lk_dropdown_render_popup` /
+`lk_dropdown_hit_popup`, dispatched per-overlay from `lk-overlay.c`;
+`UIP_HIDDEN` + `lk_layout_subtree` cover subtree-content overlays
+per v2 note 5.)*
 
 `lk-dropdown.c` no longer implements its own popup rect / hit-test /
 dismiss routines.  Its event handler calls `lk_overlay_push(ui, ...)`
@@ -145,6 +175,45 @@ pops on `pointer_leave`.  No changes to core passes.
 
 Adding a context menu: overlay kind + click-on-empty-space trigger in
 the app code.
+
+## v2 implementation notes (2026-07-25, adopted for the migration)
+
+Decisions made when the migration was actually scheduled, superseding
+details of the sketch above where they conflict:
+
+1. **Overlays key nodes by `lk_node_id`, not `lk_ix`.**  The sketch
+   predates full diff-awareness: tree indices are reassigned every
+   frame, so `owner_node`/`content_root` must be stable interned ids,
+   resolved to indices per pass (linear scan is fine — overlay count
+   is small).
+2. **The overlay stack lives on `lk_ui` and persists across frames.**
+   `lk_ui_end_frame` pops overlays whose owner id was REMOVED (using
+   the same removed-and-not-re-added move filter as state GC).
+3. **ESC dismissal is core, not backend.**  `lk_event_route` gets a
+   pre-step: KEY_DOWN ESCAPE with a dismissible overlay on top pops
+   it and consumes the event.  This is what makes exit criterion 3's
+   "no ad-hoc SDL code" achievable.
+4. **Modal blocking**: `traps_focus && !dismiss_on_outside` means
+   outside pointer-downs are consumed without dismissing;
+   `lk_focus_next/prev` scope their DFS to the topmost trapping
+   overlay's content subtree.
+5. **Overlay content subtrees use a new `UIP_HIDDEN` prop** (finally
+   implementing the `hidden` flag from design_draft.md's node
+   schema): hidden subtrees are skipped by main-pass measure, layout,
+   render, hit-test, and focus collection.  The overlay pass lays
+   them out at the resolved anchor via a subtree-scoped layout entry
+   point.  This deliberately touches `lk-layout.c`/`lk-render.c` —
+   the Proper phase was always going to (step 4 touches focus); the
+   Lean-phase "untouched" claim expires here.  Dropdown popups remain
+   procedural (`content_root = 0`).
+6. **Tooltips are a prop, not a widget kind** (deviation from step
+   6's sketch): `UIP_TOOLTIP` text on any node; hover transitions
+   (already tracked on `lk_ui`) push/pop the tooltip overlay in core.
+   A wrapper kind would only work for dedicated nodes; the prop works
+   on buttons, labels, anything.  Show-delay is deferred.
+7. **Popup scrolling stays deferred** (known-issue list item 6) — it
+   wants the editor-track virtualization thinking, not this
+   migration.
 
 ## What will **not** change during the migration
 
@@ -171,16 +240,22 @@ The overlay system is "Proper" when:
 3. A modal dialog can be opened, has focus trapped to itself, and
    closes on ESC without any ad-hoc SDL-backend code.
 
-Until then: the three overlay functions stay dropdown-flavored, and
-adding a second overlay producer means either accepting parallel
-dropdown-shaped code (bad) or taking the generalization step (good).
+Status against these (2026-07-25): criterion 2 is met (popup flips
+above at the bottom edge, x/y clamped).  Criteria 1 and 3 have all
+their machinery in place (overlay stack, `UIP_HIDDEN` content
+subtrees, focus traps, modal blocking, core ESC) but the tooltip
+producer and a modal demo are still to be written — that is step 6.
 
-## File-level summary of Lean debt
+## File-level summary (post-migration, 2026-07-25)
 
-| File | Overlay-specific code | Migration difficulty |
-|------|-----------------------|----------------------|
-| `src/core/lk-dropdown.c` | all of it — widget + popup geometry + overlay render/hit-test/dismiss | replace ~200 LoC of overlay machinery with calls into `ui->overlays` |
-| `src/sdl/lk-sdl.c` | three added call sites (2 hit-test, 1 render, 1 dismiss) | unchanged — same calls still work, just with new implementations |
-| `include/lk.h` | three public declarations (`lk_render_build_overlays`, `lk_hit_test_overlay`, `lk_overlay_dismiss_outside`) plus kinds/state keys | symbols stay; implementation behind them generalizes |
-| `src/core/lk-style.c` | default theme rules for DROPDOWN/OPTION | unchanged |
-| `src/core/lk-widget.c` | dropdown/option registration | unchanged |
+| File | Overlay-related code |
+|------|----------------------|
+| `src/core/lk-overlay.c` (new) | overlay stack (push/pop/pop_owner/top/count), `lk_anchor_resolve`, generalized `lk_render_build_overlays` / `lk_hit_test_overlay` / `lk_overlay_dismiss_outside` (iterate `ui->overlays`, per-kind dispatch, modal blocking).  Subtree-content overlays are laid out into a transient scratch rects array, not the shared `lk_layout` rects. |
+| `src/core/lk-dropdown.c` | widget only + procedural popup paint (`lk_dropdown_render_popup`) and hit (`lk_dropdown_hit_popup`), dispatched from `lk-overlay.c`; `dropdown_open`/`dropdown_close` keep `LKS_EXPANDED` and the overlay stack in sync |
+| `src/core/lk-layout.c` | `UIP_HIDDEN` skip in measure/layout; `lk_layout_subtree` entry point for overlay content |
+| `src/core/lk-render.c` | `UIP_HIDDEN` skip; internal `lk_render_build_from` for overlay subtrees |
+| `src/core/lk-event.c` | `UIP_HIDDEN` skip in hit-test + focus collection; focus-trap scoping; ESC pre-step in `lk_event_route` |
+| `src/core/lk-ui.c` | overlay stack storage/free; end_frame pops overlays on owner removal (move filter) |
+| `src/sdl/lk-sdl.c` | three call sites, now `lk_ui*`-based; pointer-down routing skipped on `LK_DISMISS_BLOCKED` |
+| `include/lk.h` | `lk_overlay` + enums, stack API, `lk_anchor_resolve`, `lk_layout_subtree`, `UIP_HIDDEN`, `LK_DISMISS_*` |
+| `src/lcl/lcl-lk.c` | `lk::overlay_count`, `"hidden"` prop key |

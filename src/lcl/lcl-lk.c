@@ -64,6 +64,7 @@ static const str_enum prop_table[] = {
     {"gap",       UIP_GAP      },
     {"align",     UIP_ALIGN    },
     {"justify",   UIP_JUSTIFY  },
+    {"hidden",    UIP_HIDDEN   },
     {NULL,        0            }
 };
 
@@ -549,7 +550,8 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   switch (key_val) {
   case UIP_TEXT: lv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3])); break;
   case UIP_FOCUSABLE:
-  case UIP_DISABLED: {
+  case UIP_DISABLED:
+  case UIP_HIDDEN: {
     long b;
     if (lcl_value_to_int(argv[3], &b) != LCL_OK) {
       lcl_set_error(interp, "lk::prop: bool prop expects integer");
@@ -2059,6 +2061,32 @@ static int c_lk_register_font(lcl_interp *interp, int argc, lcl_value **argv,
 #endif /* LK_HAVE_SDL */
 
 /* ============================================================================
+ * Overlays
+ * ============================================================================
+ */
+
+/* lk::overlay_count [ui] — number of overlays on the ui's overlay
+ * stack (headless-testable introspection; widgets drive push/pop). */
+static int c_lk_overlay_count(lcl_interp *interp, int argc, lcl_value **argv,
+                              lcl_value **out) {
+  lk_ui *ui = NULL;
+
+  if (argc < 1) {
+    lcl_set_error(interp, "lk::overlay_count: expected ui");
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::overlay_count: bad ui handle");
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_overlay_count(ui));
+
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
  * Clipboard
  * ============================================================================
  */
@@ -2160,6 +2188,10 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def(ns, "focus_set", lcl_c_proc_new("lk::focus_set", c_lk_focus_set));
   lcl_ns_def(ns, "focus_clear",
              lcl_c_proc_new("lk::focus_clear", c_lk_focus_clear));
+
+  /* Overlays */
+  lcl_ns_def(ns, "overlay_count",
+             lcl_c_proc_new("lk::overlay_count", c_lk_overlay_count));
 
   /* Tags & Style */
   lcl_ns_def(ns, "tag", lcl_c_proc_new("lk::tag", c_lk_tag));

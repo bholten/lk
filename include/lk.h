@@ -37,6 +37,16 @@ lk_str lk_str_c(const char *cstr);
 int lk_str_cmp(lk_str a, lk_str b);
 
 /**
+ ** Geometry (used by overlays, layout, render)
+ **/
+typedef struct lk_rect {
+  lk_i32 x, y, w, h;
+} lk_rect;
+typedef struct lk_size {
+  lk_i32 w, h;
+} lk_size;
+
+/**
  ** lk_node_id is an interned string -> u32
  **/
 typedef lk_u32 lk_node_id;
@@ -82,6 +92,12 @@ typedef enum lk_prop_key {
 
   UIP_ALIGN,   /* i32: lk_align — cross-axis alignment */
   UIP_JUSTIFY, /* i32: lk_align — main-axis alignment */
+
+  UIP_HIDDEN,  /* bool: subtree is skipped by the main measure, layout,
+                  render, hit-test, and focus passes.  Overlay content
+                  subtrees are built hidden and laid out on demand at
+                  their resolved anchor (see lk_layout_subtree and
+                  docs/overlays.md). */
 
   UIP__COUNT
 } lk_prop_key;
@@ -504,6 +520,44 @@ typedef struct lk_translator {
 } lk_translator;
 
 /**
+ * Overlays — popups, tooltips, context menus, modals.
+ *
+ * An overlay is a rectangular region that draws after (on top of) the
+ * main tree, is hit-tested before it, and belongs to an "owner" node
+ * in the main tree.  Overlays live on a stack owned by lk_ui and
+ * persist across frames; nodes are keyed by stable lk_node_id (tree
+ * indices are reassigned every frame).  See docs/overlays.md.
+ **/
+
+typedef enum lk_overlay_kind {
+  LK_OVERLAY_DROPDOWN_POPUP = 1,
+  LK_OVERLAY_TOOLTIP,
+  LK_OVERLAY_CONTEXT_MENU,
+  LK_OVERLAY_MODAL
+} lk_overlay_kind;
+
+typedef enum lk_anchor_mode {
+  LK_ANCHOR_BELOW = 1,       /* below owner (flips above on overflow) */
+  LK_ANCHOR_ABOVE,           /* above owner (flips below on overflow) */
+  LK_ANCHOR_AT_CURSOR,       /* at (offset.x, offset.y) */
+  LK_ANCHOR_CENTER_VIEWPORT  /* centered in the viewport */
+} lk_anchor_mode;
+
+typedef struct lk_overlay {
+  lk_u8 kind;                 /* lk_overlay_kind */
+  lk_u8 anchor_mode;          /* lk_anchor_mode */
+  lk_u8 dismiss_on_outside;   /* 1 = outside pointer-down dismisses */
+  lk_u8 traps_focus;          /* 1 = focus cycling scoped to content */
+  lk_node_id owner_id;        /* trigger / hovered element (stable id) */
+  lk_node_id content_root_id; /* root of the overlay's node subtree
+                               * (stable id), or 0 if the content is
+                               * procedurally generated */
+  lk_rect offset;             /* relative to anchor.  For AT_CURSOR,
+                               * offset.x/y is the cursor point.  w/h
+                               * may be 0 to mean "intrinsic". */
+} lk_overlay;
+
+/**
  * lk_ui — Double-buffered UI context with tree diffing.
  *
  * Owns two trees (prev, next) sharing a single intern table.
@@ -574,6 +628,12 @@ typedef struct lk_ui {
    * event handlers (which receive no lk_layout_cfg) can do geometry
    * queries like click-to-position.  NULL disables those behaviors. */
   const struct lk_text_backend *text;
+
+  /* Overlay stack — topmost is last.  Persists across frames;
+   * lk_ui_end_frame pops overlays whose owner node was removed. */
+  lk_overlay *overlays;
+  lk_u32 overlay_count;
+  lk_u32 overlay_cap;
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -672,14 +732,10 @@ lk_value lk_command_source_value(const lk_command *cmd);
 
 /**
  * Layout
+ *
+ * (lk_rect / lk_size are defined near the top of this header so the
+ * overlay types can use them.)
  **/
-
-typedef struct lk_rect {
-  lk_i32 x, y, w, h;
-} lk_rect;
-typedef struct lk_size {
-  lk_i32 w, h;
-} lk_size;
 
 /**
  * Text backend contract — see docs/text-contract.md §4.1.
@@ -722,9 +778,26 @@ typedef struct lk_layout_cfg {
 
 /* Compute layout rects for every node in the tree. rects[] must be
  * at least t->node_count elements (indexed by lk_ix).  Returns 1 on
- * success, 0 on failure.
+ * success, 0 on failure.  Subtrees whose root carries UIP_HIDDEN are
+ * skipped (their rects stay zeroed and they do not participate in
+ * parent stacking).
  */
 int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects);
+
+/* Measure and lay out just the subtree rooted at subtree_root, placing
+ * its root at (origin_x, origin_y).  Ignores UIP_HIDDEN on the subtree
+ * root itself (hidden descendants inside the subtree are still
+ * skipped), so overlay content subtrees — which are hidden from the
+ * main passes — can be laid out at their resolved anchor.
+ *
+ * rects[] must be at least t->node_count elements; only the subtree's
+ * slots are written (the rest is left untouched), so the shared
+ * rects array from lk_layout may be passed directly.  Returns 1 on
+ * success, 0 on failure.
+ */
+int lk_layout_subtree(const lk_tree *t, const lk_layout_cfg *cfg,
+                      lk_ix subtree_root, lk_i32 origin_x, lk_i32 origin_y,
+                      lk_rect *rects);
 
 /* Deterministic monospace stub backend for headless tests:
  * 8 px advance per CODEPOINT (not per byte), h = 16, baseline = 12,
@@ -843,12 +916,12 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     const lk_style *styles, const lk_state *state,
                     lk_render_list *out);
 
-/* Append overlay render commands (currently: expanded dropdowns) to
- * an existing render list.  Call after lk_render_build so overlays
- * draw on top of the main tree.  See docs/overlays.md for the design
- * roadmap toward a general overlay system. */
-int lk_render_build_overlays(const lk_tree *t, const lk_rect *rects,
-                             const lk_style *styles, const lk_state *state,
+/* Append overlay render commands to an existing render list, iterating
+ * the ui's overlay stack bottom-to-top (topmost draws last).  Call
+ * after lk_render_build so overlays draw on top of the main tree.
+ * cfg supplies text backend, viewport, styles, and state.
+ * See docs/overlays.md. */
+int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
                              const lk_layout_cfg *cfg, lk_render_list *out);
 
 /* Push a command to the render list (grows as needed). Returns 1 on
@@ -896,22 +969,51 @@ const lk_widget_def *lk_widget_get(lk_kind kind);
 
 lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y);
 
-/* Overlay-aware hit-test: checks any active overlays (e.g. expanded
- * dropdown popups) before falling back to the main tree.  Returns the
- * option/overlay-content node when a popup is hit, or the normal
- * hit-test result otherwise.  Pass state so the hit-tester knows which
- * overlays are open; pass cfg so it knows how to measure option heights.
- */
-lk_ix lk_hit_test_overlay(const lk_tree *t, const lk_rect *rects,
-                          const lk_style *styles, const lk_state *state,
+/* Overlay-aware hit-test: checks the ui's overlay stack topmost-first
+ * before the caller falls back to the main tree.  Returns the
+ * option/overlay-content node when an overlay is hit, or 0 when no
+ * overlay contains the point.  cfg supplies text backend, viewport,
+ * styles, and state. */
+lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
                           const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y);
 
-/* Close any expanded overlay whose popup does NOT contain (x,y).
- * Call before routing a pointer-down event so clicks outside an open
- * dropdown dismiss it.  Returns 1 if any overlay was dismissed. */
+/* Outcome of lk_overlay_dismiss_outside. */
+#define LK_DISMISS_NONE 0      /* no overlay affected */
+#define LK_DISMISS_DISMISSED 1 /* at least one overlay was dismissed */
+#define LK_DISMISS_BLOCKED 2   /* a modal overlay consumed the click:
+                                * caller must NOT route the event */
+
+/* Handle a pointer-down at (x,y) with respect to the overlay stack.
+ * Topmost-first: an overlay containing the point (or whose owner rect
+ * contains it) stops processing; a dismissible overlay not containing
+ * it is popped (dropdowns also get LKS_EXPANDED cleared); a
+ * focus-trapping, non-dismissible overlay (modal) consumes the click
+ * without dismissing.  Call before routing a pointer-down event.
+ * Returns one of the LK_DISMISS_* codes above. */
 int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
-                                const lk_style *styles,
-                                const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y);
+                               const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y);
+
+/* Overlay stack manipulation.  push copies *ov onto the stack (returns
+ * 1 on success, 0 on allocation failure or bad args); pop removes the
+ * topmost overlay; pop_owner removes any overlay owned by owner_id
+ * (returns 1 if one was removed).  top returns the topmost overlay or
+ * NULL when the stack is empty. */
+int lk_overlay_push(lk_ui *ui, const lk_overlay *ov);
+void lk_overlay_pop(lk_ui *ui);
+int lk_overlay_pop_owner(lk_ui *ui, lk_node_id owner_id);
+const lk_overlay *lk_overlay_top(const lk_ui *ui);
+lk_u32 lk_overlay_count(const lk_ui *ui);
+
+/* Compute the final on-screen rect of an overlay of size
+ * (content_w, content_h) anchored to owner_rect in a (vw, vh)
+ * viewport.  BELOW flips above when it would overflow the bottom and
+ * there is room above (ABOVE flips symmetrically); the result is then
+ * clamped into the viewport on both axes.  offset.w/h override the
+ * content size when non-zero.  Deterministic; pass vw/vh = 0 to skip
+ * clamping on that axis. */
+lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect,
+                          lk_i32 vw, lk_i32 vh, lk_i32 content_w,
+                          lk_i32 content_h);
 
 void lk_event_init_pointer(lk_event *ev, lk_u8 type, lk_i32 x, lk_i32 y,
                            lk_u8 button);
