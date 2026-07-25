@@ -167,20 +167,44 @@ parts of recent sessions), zero-parser, error-strict by
 construction, and value-composable. B is A with extra machinery and
 fewer properties; C is future sugar.
 
-## 4. Stage 3 — migration
+## 4. Stage 3 — migration — DONE
 
-One commit, clean break (no dual-syntax period — we are the only
-users):
+**Status: DONE (2026-07-25).** One clean break, no dual-syntax period.
 
-1. Rewrite `lib/lk-dsl.lcl`: `_make_node` takes `(id, props, body)`;
-   `_parse_flags`/`_apply_flags`/`_prop_keys` whitelist die;
-   `_apply_props` walks the dict with hard unknown-key errors.
-   Schema lives in one dict (`_prop_schema`) mapping key →
-   validation kind, shared by all widgets; widget-specific keys
-   (e.g. `split_ratio`) validated per kind later if wanted.
-2. `app`, `theme`/`rule` move to the same shape.
-3. Migrate all four examples + the stage-1 harness tests.
-4. Docs: CLAUDE.md DSL section, TODO.md, this doc gains DONE marks.
+1. ~~Rewrite `lib/lk-dsl.lcl`~~ DONE: `_make_node` takes
+   `(kind, id, rest)` and delegates to `_split_args` (shape-based
+   props/body disambiguation) + `_apply_props` (dict walk, hard
+   unknown-key errors via the script-side `error` proc).
+   `_parse_flags`/`_apply_flags`/`_prop_keys` deleted.  Schema lives
+   in `_prop_schema` (key → 1 for now; per-kind validation deferred);
+   `tag`/`present` are ordinary schema keys handled specially.
+   `_dispatch_command` now uses `apply $handler $cmd` (stage-0
+   checklist).
+2. ~~`app`, `theme`/`rule` move to the same shape~~ DONE:
+   `app <title> ?props-dict? body` (keys: width, height, font,
+   font_size; unknown keys hard-error; the nested-if flag parser is
+   gone) and `rule <kind> ?selector-dict? style-dict` (selector keys:
+   tag, state; unknown selector keys hard-error).
+3. ~~Migrate all four examples + the stage-1 harness tests~~ DONE:
+   hello-dsl, budget-dsl, modal-dsl, split-dsl migrated (multiline
+   props dicts used where they help); the 15 harness tests migrated,
+   both WARTs flipped to error assertions, plus 2 new tests
+   (props-dict-in-a-variable, `Dict::merge` composition) — Lcl suite
+   67 → 69.
+4. ~~Docs~~ DONE: CLAUDE.md DSL/bindings sections, TODO.md, this doc.
+
+Behavior defined during migration (spec left open — strictest
+implementable given that Lcl body blocks are plain strings, not
+distinguishable from other strings by value shape):
+
+- `kind id x` where `x` is numeric (`button "x" 42`) → hard error.
+- `kind id -foo` (stale v1 flag: lone non-dict arg starting with `-`)
+  → hard error naming the removed flag syntax.
+- `kind id a b` where `a` is not a dict → hard error; where `b` IS a
+  dict → hard error ("body must be a block").
+- More than two trailing args → hard error.
+- A lone non-dict, non-numeric, non-dash arg is treated as the body
+  block and evaluated (the one shape that cannot be validated).
 
 ## 5. Resolved questions (2026-07-26)
 
@@ -196,13 +220,20 @@ composable values). Proposals adopted as defaults:
 3. **`present`**: keeps the compact `(ptype value-or-list)` 2-list.
 4. **Migration is in-place** — `lib/lk-dsl.lcl`, clean break.
 
-## 6. Exit criteria
+## 6. Exit criteria — all met (2026-07-25)
 
-- All four examples run under the dummy driver in the new syntax,
-  with zero `-flag` parsing left in `lib/`.
-- A typo'd prop key fails loudly with the widget id and known-key
-  list (test-asserted).
-- A props dict built in a variable and shared across two widgets
-  works (test-asserted).
-- DSL harness tests (stage 1 count) all green post-migration.
-- Submodule pinned at c1ef73d+ with the dispatch audit done.
+- [x] All four examples run under the dummy driver in the new syntax,
+  with zero `-flag` parsing left in `lib/` — verified via
+  `SDL_VIDEODRIVER=dummy timeout 2 build/lcl_lk_main examples/*.lcl`
+  (all exit 124 = event loop alive); `_parse_flags`/`_apply_flags`
+  deleted from `lib/lk-dsl.lcl`.
+- [x] A typo'd prop key fails loudly with the widget id and known-key
+  list — test-asserted (`test_dsl_unknown_prop_errors` checks the
+  message contains the id, `unknown prop 'bogus'`, and `(known:`).
+- [x] A props dict built in a variable and shared across two widgets
+  works — test-asserted (`test_dsl_props_dict_variable`; plus
+  `test_dsl_props_dict_merge` for `Dict::merge` composition).
+- [x] DSL harness tests all green post-migration — 15 migrated + 2
+  new, `build/lcl_lk_test` 69/69 (core suite unchanged, 230/230).
+- [x] Submodule pinned at c1ef73d+ with the dispatch audit done
+  (stage 0); `_dispatch_command` uses explicit `apply`.

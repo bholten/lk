@@ -4,17 +4,17 @@
 
 let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 
-app "Hello Lcl" -font $font -font_size 16 {
+app "Hello Lcl" #{font $font font_size 16} {
 
     theme {
         rule window #{bg (25 25 35)}
         rule * #{fg (200 200 220)}
         rule button #{bg (50 50 65) padding 12 border_width 1 border_color (80 80 100)}
-        rule button -state hovered #{bg (70 70 85) border_color (120 120 150)}
-        rule button -tag primary #{bg (45 90 180) fg (255 255 255) border_color (70 130 220)}
-        rule button -tag primary -state hovered #{bg (65 120 210) border_color (100 160 240)}
+        rule button #{state hovered} #{bg (70 70 85) border_color (120 120 150)}
+        rule button #{tag primary} #{bg (45 90 180) fg (255 255 255) border_color (70 130 220)}
+        rule button #{tag primary state hovered} #{bg (65 120 210) border_color (100 160 240)}
         rule text_input #{bg (40 40 55) padding 8}
-        rule text_input -state focused #{border_width 2 border_color (80 140 220)}
+        rule text_input #{state focused} #{border_width 2 border_color (80 140 220)}
         rule scroll #{bg (30 30 45) padding 8 gap 4 border_width 1 border_color (55 55 70)}
     }
 
@@ -33,24 +33,24 @@ app "Hello Lcl" -font $font -font_size 16 {
     }]
 
     view {
-        column "layout" -padding 24 -gap 16 {
-            label "title" -text "Hello from Lcl!"
-            text_input "search" -text "Type here..." -focusable 1
+        column "layout" #{padding 24 gap 16} {
+            label "title" #{text "Hello from Lcl!"}
+            text_input "search" #{text "Type here..." focusable 1}
 
-            row "buttons" -gap 12 {
-                button "ok" -text "OK" -tag primary -present (action ok)
-                button "cancel" -text "Cancel" -present (action cancel)
+            row "buttons" #{gap 12} {
+                button "ok" #{text "OK" tag primary present (action ok)}
+                button "cancel" #{text "Cancel" present (action cancel)}
             }
 
-            scroll "item_list" -h 200 -padding 8 -gap 4 {
+            scroll "item_list" #{h 200 padding 8 gap 4} {
                 var i 0
                 while [< $i 20] {
-                    label "item_$i" -text "Item $i — scroll me!"
+                    label "item_$i" #{text "Item $i — scroll me!"}
                     set! i [+ $i 1]
                 }
             }
 
-            label "footer" -text "Scroll the list with your mouse wheel! (Tab to cycle focus)"
+            label "footer" #{text "Scroll the list with your mouse wheel! (Tab to cycle focus)"}
         }
     }
 }
