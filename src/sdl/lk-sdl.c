@@ -564,6 +564,30 @@ static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
   case SDLK_X: return LKK_X;
   case SDLK_Y: return LKK_Y;
   case SDLK_Z: return LKK_Z;
+  case SDLK_0: return LKK_0;
+  case SDLK_1: return LKK_1;
+  case SDLK_2: return LKK_2;
+  case SDLK_3: return LKK_3;
+  case SDLK_4: return LKK_4;
+  case SDLK_5: return LKK_5;
+  case SDLK_6: return LKK_6;
+  case SDLK_7: return LKK_7;
+  case SDLK_8: return LKK_8;
+  case SDLK_9: return LKK_9;
+  case SDLK_PAGEUP: return LKK_PAGEUP;
+  case SDLK_PAGEDOWN: return LKK_PAGEDOWN;
+  case SDLK_F1: return LKK_F1;
+  case SDLK_F2: return LKK_F2;
+  case SDLK_F3: return LKK_F3;
+  case SDLK_F4: return LKK_F4;
+  case SDLK_F5: return LKK_F5;
+  case SDLK_F6: return LKK_F6;
+  case SDLK_F7: return LKK_F7;
+  case SDLK_F8: return LKK_F8;
+  case SDLK_F9: return LKK_F9;
+  case SDLK_F10: return LKK_F10;
+  case SDLK_F11: return LKK_F11;
+  case SDLK_F12: return LKK_F12;
   default: return LKK_UNKNOWN;
   }
 }
@@ -721,6 +745,8 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
       lcfg.text =
           sdl_text_have_faces(win) ? &win->text_backend : lk_text_backend_stub();
+      /* Same backend for widget event handlers (click-to-position). */
+      lk_ui_set_text_backend(win->ui, lcfg.text);
 
       lcfg.viewport_w = win->width;
       lcfg.viewport_h = win->height;

@@ -1032,6 +1032,29 @@ static void test_add_translator_with_keycode(void) {
   END_TEST();
 }
 
+static void test_add_translator_extended_keycodes(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("add_translator accepts page_up/f5/digit keycodes");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"page_up\" \"\" \"PgUp\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"page_down\" \"\" \"PgDn\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"f5\" \"\" \"Refresh\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"f12\" \"\" \"DevTools\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"0\" \"ctrl\" \"ZoomReset\"\n"
+    "lk::add_translator $ui \"key_down\" \"\" \"\" \"9\" \"ctrl\" \"LastTab\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_add_translator_bad_keycode(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -1262,6 +1285,7 @@ int main(void) {
   test_clipboard_get_no_clipboard();
 
   test_add_translator_with_keycode();
+  test_add_translator_extended_keycodes();
   test_add_translator_bad_keycode();
   test_add_translator_bad_mods();
 

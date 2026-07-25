@@ -205,12 +205,12 @@ Each stage lands green on its own:
 - **B. SDL TTF_TextEngine.** DONE. Implement the vtable, face registry,
   scratch text; delete the texture cache; wire `register_font` +
   binding + DSL flags. Verify with the demo + budget app.
-- **C. Text input correctness.** `lk-utf8.c`, codepoint motion,
+- **C. Text input correctness.** DONE. `lk-utf8.c`, codepoint motion,
   `x_from_index`/`index_from_x` cursor+selection+click. New tests:
   exact selection rects under the stub, multibyte editing, click-to-
   position (incl. multibyte and click-past-end).
-- **D. Keycode rider + docs.** Enum/map/tables; update CLAUDE.md and
-  TODO.md.
+- **D. Keycode rider + docs.** DONE. Enum/map/tables; update CLAUDE.md
+  and TODO.md.
 
 ## 6. Resolved questions (2026-07-25)
 
@@ -224,13 +224,22 @@ Each stage lands green on its own:
 ## 7. Exit criteria
 
 - Two faces at two sizes render in one window, selected via theme
-  rules only.
+  rules only.  *(Satisfied — stage B: theme `font_id`/`font_size` flow
+  into DRAW_TEXT; SDL backend opens `(face, size)` instances lazily.)*
 - With a proportional font: cursor lands exactly between glyphs,
   selection highlight covers exactly the selected glyphs,
-  click-to-position hits the clicked boundary.
+  click-to-position hits the clicked boundary.  *(Satisfied — stage C:
+  cursor and selection x via `x_from_index` (stashed as `LKS_CURSOR_X`
+  / `LKS_SEL_X0`/`X1` during measure), `POINTER_DOWN` maps to a byte
+  index via `index_from_x` through `lk_ui_set_text_backend`.)*
 - Typing/deleting multibyte UTF-8 (e.g. "héllo→日本") never splits a
-  codepoint; cursor motion is codepoint-wise.
+  codepoint; cursor motion is codepoint-wise.  *(Satisfied — stage C:
+  LEFT/RIGHT/BACKSPACE/DELETE step via `lk_utf8_prev`/`next`; insert
+  and paste truncate at codepoint boundaries at the buffer cap.)*
 - Per-string texture cache is gone; text renders through the glyph
-  atlas.
+  atlas.  *(Satisfied — stage B: cache deleted, `TTF_TextEngine`
+  scratch-text drawing.)*
 - All headless tests green under the stub backend, including new
-  exact-geometry tests.
+  exact-geometry tests.  *(Satisfied — 197/197 core, 44/44 binding;
+  stage C added multibyte editing, exact cursor/selection px, and
+  click-to-position tests.)*

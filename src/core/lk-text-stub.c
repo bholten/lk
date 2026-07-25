@@ -16,29 +16,24 @@
  * register_font hands out 1, 2, 3, ... from a process-global static
  * counter, so stub font ids are process-global (fine for tests).
  *
- * UTF-8 handling is a tiny local lead-byte counter; the full
- * lk-utf8.c helper module is stage C of the text-contract plan.
+ * Codepoint stepping comes from lk-utf8.c (single source of truth).
  */
 
+#include "lk-utf8.h"
 #include <lk.h>
 
 #define STUB_ADVANCE 8
 #define STUB_HEIGHT 16
 #define STUB_BASELINE 12
 
-/* A byte is a codepoint boundary unless it is a UTF-8 continuation
- * byte (10xxxxxx). */
-static int stub_is_boundary(unsigned char c) { return (c & 0xC0) != 0x80; }
-
-/* Count codepoints in run.ptr[0..len) by counting lead bytes. */
+/* Count codepoints in run.ptr[0..len). */
 static lk_u32 stub_count_cp(lk_str run, lk_u32 len) {
-  lk_u32 i;
+  lk_u32 i = 0;
   lk_u32 n = 0;
 
-  for (i = 0; i < len; i++) {
-    if (stub_is_boundary((unsigned char)run.ptr[i])) {
-      n++;
-    }
+  while (i < len) {
+    i = lk_utf8_next(run.ptr, len, i);
+    n++;
   }
 
   return n;
@@ -50,19 +45,12 @@ static lk_u32 stub_cp_to_byte(lk_str run, lk_u32 cp_count) {
   lk_u32 i = 0;
   lk_u32 seen = 0;
 
-  while (i < run.len) {
-    if (stub_is_boundary((unsigned char)run.ptr[i])) {
-      if (seen == cp_count) {
-        return i;
-      }
-
-      seen++;
-    }
-
-    i++;
+  while (i < run.len && seen < cp_count) {
+    i = lk_utf8_next(run.ptr, run.len, i);
+    seen++;
   }
 
-  return run.len;
+  return i;
 }
 
 static void stub_measure(void *ud, lk_str run, lk_u16 font_id,
@@ -93,7 +81,7 @@ static lk_i32 stub_x_from_index(void *ud, lk_str run, lk_u16 font_id,
   }
 
   /* Snap down to a codepoint boundary. */
-  while (ix > 0 && !stub_is_boundary((unsigned char)run.ptr[ix])) {
+  while (ix > 0 && !lk_utf8_is_boundary(run.ptr, run.len, ix)) {
     ix--;
   }
 

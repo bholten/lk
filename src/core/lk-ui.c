@@ -587,6 +587,14 @@ void lk_ui_set_clipboard(lk_ui *ui, lk_clipboard_get_fn get_fn,
   ui->clipboard_ud = ud;
 }
 
+void lk_ui_set_text_backend(lk_ui *ui, const lk_text_backend *text) {
+  if (!ui) {
+    return;
+  }
+
+  ui->text = text;
+}
+
 void lk_ui_resolve_styles(lk_ui *ui) {
   const lk_tree *t;
   lk_u32 nc;

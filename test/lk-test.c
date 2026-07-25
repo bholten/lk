@@ -7861,6 +7861,454 @@ static void test_render_text_carries_font(void) {
   lk_ui_destroy(ui);
 }
 
+/* ---- text input correctness tests (stage C) ----
+ *
+ * Multibyte fixture used throughout: "a\xC3\xA9\xE6\x97\xA5"
+ * ("a" + e-acute + CJK) — bytes: 'a' [0], e-acute [1..2], CJK [3..5];
+ * len 6, 3 codepoints.  Stub advance: 8 px per codepoint.
+ */
+
+static void test_text_input_multibyte_arrows(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  static const unsigned expected_left[3] = {3u, 1u, 0u};
+  static const unsigned expected_right[3] = {1u, 3u, 6u};
+  int i;
+
+  BEGIN_TEST("text_input: LEFT/RIGHT move whole codepoints");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
+
+  /* LEFT walks boundaries 6 -> 3 -> 1 -> 0, then stays at 0 */
+  for (i = 0; i < 3; i++) {
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = ti;
+    ev.data.key.keycode = LKK_LEFT;
+    lk_event_route(ui, &ev);
+    v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+    CHECK_EQ((unsigned)v.as.i, expected_left[i]);
+  }
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_LEFT;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* RIGHT walks 0 -> 1 -> 3 -> 6, then stays at 6 */
+  for (i = 0; i < 3; i++) {
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = ti;
+    ev.data.key.keycode = LKK_RIGHT;
+    lk_event_route(ui, &ev);
+    v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+    CHECK_EQ((unsigned)v.as.i, expected_right[i]);
+  }
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_RIGHT;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 6u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_multibyte_backspace_delete(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+
+  BEGIN_TEST("text_input: BACKSPACE/DELETE remove whole codepoints");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Cursor after e-acute (byte 3); BACKSPACE removes both its bytes */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_BACKSPACE;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 4u);
+  CHECK(memcmp(text.ptr, "a\xE6\x97\xA5", 4) == 0);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  /* DELETE removes all three bytes of the CJK codepoint */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_DELETE;
+  lk_event_route(ui, &ev);
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1u);
+  CHECK(text.ptr[0] == 'a');
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_insert_cap_boundary(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+  char big[LK_TEXT_INPUT_MAX];
+
+  BEGIN_TEST("text_input: cap truncation lands on codepoint boundary");
+
+  ui = make_text_input_ui("", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Fill the buffer to 2 bytes below the max payload (1023) */
+  memset(big, 'a', 1021);
+  text.ptr = big;
+  text.len = 1021;
+  v.tag = UIV_STR;
+  v.as.str_id = lk_intern_id(ui->intern, text);
+  lk_state_set(st, ti_id, LKS_TEXT_BUF, v);
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1021));
+
+  /* Insert "a" + e-acute (3 bytes): only 2 fit, and byte 2 is
+   * mid-sequence, so exactly "a" (1 byte) must be inserted */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'a';
+  ev.data.text.buf[1] = (char)0xC3;
+  ev.data.text.buf[2] = (char)0xA9;
+  ev.data.text.len = 3;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1022u);
+  CHECK(text.ptr[1021] == 'a');
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1022u);
+
+  /* Insert CJK (3 bytes): 1 byte of room, boundary snap drops the
+   * whole codepoint — consumed, buffer unchanged */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = (char)0xE6;
+  ev.data.text.buf[1] = (char)0x97;
+  ev.data.text.buf[2] = (char)0xA5;
+  ev.data.text.len = 3;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1022u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_paste_cap_boundary(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+  char big[LK_TEXT_INPUT_MAX];
+
+  BEGIN_TEST("text_input: paste at cap truncates on codepoint boundary");
+
+  ui = make_text_input_ui("", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+  lk_ui_set_clipboard(ui, mock_clipboard_get, mock_clipboard_set, NULL);
+
+  /* Buffer at 1021 bytes; clipboard "a" + e-acute + CJK (6 bytes).
+   * 2 bytes of room: "a" fits, e-acute would be split — so exactly
+   * 1 byte is pasted. */
+  memset(big, 'a', 1021);
+  text.ptr = big;
+  text.len = 1021;
+  v.tag = UIV_STR;
+  v.as.str_id = lk_intern_id(ui->intern, text);
+  lk_state_set(st, ti_id, LKS_TEXT_BUF, v);
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1021));
+
+  strcpy(g_mock_clipboard, "a\xC3\xA9\xE6\x97\xA5");
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = ti;
+  ev.data.key.keycode = LKK_V;
+  ev.mods = LK_MOD_CTRL;
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1022u);
+  CHECK(text.ptr[1021] == 'a');
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_cursor_x_from_index(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+
+  BEGIN_TEST("text_input: cursor x via x_from_index (multibyte exact)");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = st;
+
+  /* Cursor after e-acute (byte 3, 2 codepoints in) -> 16 px */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+  v = lk_state_get(st, ti_id, LKS_CURSOR_X);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
+  CHECK_EQ((unsigned)v.as.i, 16u);
+
+  /* Cursor at end (byte 6, 3 codepoints) -> 24 px == measure().w */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+  v = lk_state_get(st, ti_id, LKS_CURSOR_X);
+  CHECK_EQ((unsigned)v.as.i, 24u);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_selection_rect_exact(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_render_list rl;
+  lk_u32 i;
+  int found;
+
+  BEGIN_TEST("text_input: selection rect exact px (multibyte)");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* Select e-acute + CJK: bytes 1..6 = codepoints 1..3, so the
+   * highlight must span exactly 8..24 px from the text origin */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(6));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = st;
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+
+  /* Endpoint x-offsets stashed by measure are exact: 1 cp -> 8 px,
+   * 3 cp -> 24 px */
+  {
+    lk_value v = lk_state_get(st, ti_id, LKS_SEL_X0);
+    CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
+    CHECK_EQ((unsigned)v.as.i, 8u);
+    v = lk_state_get(st, ti_id, LKS_SEL_X1);
+    CHECK_EQ((unsigned)v.as.i, 24u);
+  }
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, NULL, st, &rl);
+
+  /* Selection fill is the only command with alpha 128.  Anchor the
+   * x assertion to the DRAW_TEXT origin so the render-side inset
+   * (fallback theme padding/border) cancels out. */
+  {
+    lk_i32 text_x = 0;
+    int text_found = 0;
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+        text_x = rl.cmds[i].rect.x;
+        text_found = 1;
+      }
+    }
+    CHECK(text_found);
+
+    found = 0;
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.a == 128) {
+        found = 1;
+        CHECK_EQ((unsigned)rl.cmds[i].rect.x, (unsigned)(text_x + 8));
+        CHECK_EQ((unsigned)rl.cmds[i].rect.w, 16u);
+      }
+    }
+    CHECK(found);
+  }
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_text_input_click_to_position(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_event ev;
+  lk_value v;
+  lk_i32 origin;
+
+  BEGIN_TEST("text_input: click-to-position via index_from_x");
+
+  ui = make_text_input_ui("a\xC3\xA9\xE6\x97\xA5", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 800;
+  cfg.viewport_h = 600;
+  cfg.state = st;
+  CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects)); /* stashes origin */
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_ORIGIN_X);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
+  origin = (lk_i32)v.as.i;
+  CHECK_EQ((unsigned)origin, (unsigned)rects[ti].x);
+
+  /* No backend installed on the UI: event bubbles (handled == 0) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 5;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 0u);
+
+  lk_ui_set_text_backend(ui, lk_text_backend_stub());
+
+  /* Left half of first glyph -> boundary before it (byte 0) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 3;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* Right half of first glyph -> boundary after it (byte 1) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 5;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u);
+
+  /* Right half of e-acute -> boundary after it (byte 3) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 13;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 3u);
+
+  /* Click past the end -> clamp to len (byte 6) */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 500;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 6u);
+
+  /* Click before the origin -> 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin - 50;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+
+  /* Click clears any selection and keeps focus on the input */
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(6));
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = ti;
+  ev.data.pointer.x = origin + 5;
+  lk_event_route(ui, &ev);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_START);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+  v = lk_state_get(st, ti_id, LKS_SELECTION_END);
+  CHECK_EQ((unsigned)v.as.i, 0u);
+  CHECK_EQ(ui->focused_id, ti_id);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 int main(void) {
   printf("lk diff tests:\n");
 
@@ -8140,6 +8588,16 @@ int main(void) {
   test_text_stub_index_from_x_rounding();
   test_text_stub_register_font_ids();
   test_render_text_carries_font();
+
+  /* text input correctness (stage C) */
+  printf("\nlk text-contract stage C tests:\n");
+  test_text_input_multibyte_arrows();
+  test_text_input_multibyte_backspace_delete();
+  test_text_input_insert_cap_boundary();
+  test_text_input_paste_cap_boundary();
+  test_text_input_cursor_x_from_index();
+  test_text_input_selection_rect_exact();
+  test_text_input_click_to_position();
 
   /* bug-fix regressions */
   printf("\nlk bug-fix regression tests:\n");

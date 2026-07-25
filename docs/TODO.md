@@ -122,7 +122,7 @@ Now unblocked — SDL backend provides the window and event pump.
 
 - [x] **SDL event normalization** (`lk-sdl.c`)
   - `sdl_to_lk_event` maps SDL3 events to `lk_event` structs.
-  - `sdl_to_lk_keycode` maps SDL keycodes to minimal `lk_keycode` enum (Tab, Return, Escape, arrows, etc.).
+  - `sdl_to_lk_keycode` maps SDL keycodes to the `lk_keycode` enum. ~~Minimal (Tab, Return, Escape, arrows, etc.)~~ — completed in text-contract stage D: A–Z, 0–9, PageUp/PageDown, F1–F12 all mapped (enum + SDL map + Lcl binding table).
   - Run loop restructured: frame → layout → event poll (with hit-test/focus targeting) → render.
   - Built-in behaviors: Tab/Shift-Tab cycles focus, click-to-focus on pointer down.
 
@@ -191,6 +191,7 @@ Depends on retained UI state (Phase 4), layout, rendering, and input.
 - [x] **Text input widget** (`lk-text-input.c`)
   - `UIK_TEXT_INPUT` kind. Single-line text input with cursor, selection, and key handling.
   - Text buffer as interned string in `lk_state` (`LKS_TEXT_BUF`). Cursor/selection via `LKS_CURSOR_POS`, `LKS_SELECTION_START`, `LKS_SELECTION_END`. Cursor pixel offset in `LKS_CURSOR_X`.
+  - ~~Byte-wise cursor motion/deletion corrupts multibyte UTF-8~~ — fixed in text-contract stage C: codepoint-wise motion and deletion via `src/core/lk-utf8.c`; cursor/selection geometry via `x_from_index`; click-to-position via `index_from_x` (`lk_ui_set_text_backend`).
   - Widget `event` handler on `lk_widget_def` vtable (called at TARGET phase before global handler).
   - `const lk_state *state` threaded through render vtable and `lk_render_build`; `lk_state *state` added to `lk_layout_cfg`.
   - Handles: TEXT (insert), BACKSPACE, DELETE, LEFT/RIGHT/HOME/END (with SHIFT for selection), CTRL+A (select all). TAB/RETURN/ESCAPE bubble to app.
@@ -456,8 +457,12 @@ shipping.
   violation of "scripts never poke internal widget state".
 - **Derived geometry stored in retained state.**  `LKS_CURSOR_X` /
   `LKS_SCROLL_MAX` are computed during measure/layout but written to
-  `lk_state`, making those passes non-idempotent.  They belong in
-  per-frame scratch parallel to `rects[]`.
+  `lk_state`, making those passes non-idempotent.  Text-contract stage C
+  extended the pattern rather than fixing it: `LKS_SEL_X0`/`X1` (selection
+  endpoint x), `LKS_TEXT_ORIGIN_X`, `LKS_FONT_ID`/`LKS_FONT_SIZE`
+  (stashed by `lk_text_input_store_geometry`, mirroring the dropdown
+  trigger-rect stash).  All of it belongs in per-frame scratch parallel
+  to `rects[]`.
 
 ## Deferred
 

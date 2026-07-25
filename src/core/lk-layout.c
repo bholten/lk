@@ -2,6 +2,7 @@
 
 #include "lk-dropdown.h"
 #include "lk-memory.h"
+#include "lk-text-input.h"
 #include <lk.h>
 
 static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
@@ -183,6 +184,7 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
    * See docs/overlays.md. */
   if (cfg->state) {
     lk_dropdown_store_trigger_rects(t, rects, cfg->state);
+    lk_text_input_store_geometry(t, rects, cfg);
   }
 
   lk_sys_dealloc(NULL, sizes);
