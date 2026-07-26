@@ -33,6 +33,7 @@ static void *th_alloc(const lk_theme *th, lk_u32 bytes) {
   if (th->alloc) {
     return th->alloc(th->ud, bytes);
   }
+
   return lk_sys_alloc(NULL, bytes);
 }
 
@@ -41,6 +42,7 @@ static void th_dealloc(const lk_theme *th, void *ptr) {
     th->dealloc(th->ud, ptr);
     return;
   }
+
   lk_sys_dealloc(NULL, ptr);
 }
 

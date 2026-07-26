@@ -609,10 +609,12 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
 
     case LKK_DELETE: {
       lk_i32 sel_cursor = delete_selection(ui, t, n, text.ptr, text_len);
+
       if (sel_cursor >= 0) {
         emit_value_changed(ui, t, n);
         return 1;
       }
+
       if (cursor < text_len) {
         /* Delete the whole codepoint after the cursor. */
         char buf[LK_TEXT_INPUT_MAX];
@@ -633,6 +635,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
         /* cursor stays at same position */
         emit_value_changed(ui, t, n);
       }
+
       return 1;
     }
 
