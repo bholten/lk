@@ -7,50 +7,17 @@
 #include "core/lk-memory.h"
 #include "core/lk-tooltip.h" /* lk_tooltip_rect (geometry tests) */
 
-/* ---- minimal test harness ---- */
+/* ---- minimal test harness (macros in lk-test-harness.h) ---- */
 
-static int g_tests = 0;
-static int g_pass = 0;
-static int g_fail = 0;
-static int g_cur_ok = 0;
+#include "lk-test-harness.h"
 
-#define BEGIN_TEST(name)                                                       \
-  do {                                                                         \
-    g_tests++;                                                                 \
-    g_cur_ok = 1;                                                              \
-    printf("  %-44s ", name);                                                  \
-  } while (0)
+int g_tests = 0;
+int g_pass = 0;
+int g_fail = 0;
+int g_cur_ok = 0;
 
-#define CHECK(cond)                                                            \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      if (g_cur_ok)                                                            \
-        printf("FAIL\n");                                                      \
-      printf("    line %d: %s\n", __LINE__, #cond);                            \
-      g_cur_ok = 0;                                                            \
-    }                                                                          \
-  } while (0)
-
-#define CHECK_EQ(a, b)                                                         \
-  do {                                                                         \
-    if ((a) != (b)) {                                                          \
-      if (g_cur_ok)                                                            \
-        printf("FAIL\n");                                                      \
-      printf("    line %d: %s == %u, expected %u\n", __LINE__, #a,             \
-             (unsigned)(a), (unsigned)(b));                                    \
-      g_cur_ok = 0;                                                            \
-    }                                                                          \
-  } while (0)
-
-#define END_TEST()                                                             \
-  do {                                                                         \
-    if (g_cur_ok) {                                                            \
-      printf("ok\n");                                                          \
-      g_pass++;                                                                \
-    } else {                                                                   \
-      g_fail++;                                                                \
-    }                                                                          \
-  } while (0)
+/* document + edit history tests (test/lk-document-test.c) */
+void lk_document_run_tests(void);
 
 /* ---- changeset query helpers ---- */
 
@@ -10108,6 +10075,9 @@ int main(void) {
   test_capture_api();
   test_capture_end_frame_gc();
   test_dump_kind_names();
+
+  /* document + edit history (editor track, stage A) */
+  lk_document_run_tests();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
