@@ -57,9 +57,11 @@ namespace lk_dsl {
         if [== $n 2] {
             set! props [get $rest 0]
             set! body [get $rest 1]
+
             if [not [dict? $props]] {
                 error "$kind \"$id\": expected a props dict (#{...}) before the body block"
             }
+
             if [dict? $body] {
                 error "$kind \"$id\": body must be a block, got a second dict"
             }
@@ -67,6 +69,7 @@ namespace lk_dsl {
 
         if [== $n 1] {
             let a [get $rest 0]
+
             if [dict? $a] {
                 set! props $a
             } else {
@@ -74,10 +77,12 @@ namespace lk_dsl {
                     if [number? $a] {
                         error "$kind \"$id\": expected a props dict (#{...}) or body block, got '$a'"
                     }
+
                     if [== [String::index $a 0] -] {
                         error "$kind \"$id\": '-flag' syntax was removed; use a props dict (#{...})"
                     }
                 }
+
                 set! body $a
             }
         }
@@ -93,6 +98,7 @@ namespace lk_dsl {
             if [not [has? $_prop_schema $key]] {
                 error "$kind \"$id\": unknown prop '$key' (known: $_known_props)"
             }
+
             let val [get $props $key]
 
             if [== $key tag] {
@@ -118,6 +124,7 @@ namespace lk_dsl {
 
         ;; Append to current parent
         let stack_len [len $_parent_stack]
+
         if [> $stack_len 0] {
             let parent [get $_parent_stack [- $stack_len 1]]
             lk::append_child $_tree $parent $node
@@ -199,9 +206,11 @@ namespace lk_dsl {
             } else {
                 if [== $n 2] {
                     let sel [get $rest 0]
+
                     if [not [dict? $sel]] {
                         error "rule $kind: selector must be a dict (#{tag <tag> state <state>})"
                     }
+
                     foreach k [Dict::keys $sel] {
                         if [== $k tag] {
                             set! tag [get $sel $k]
@@ -272,6 +281,7 @@ namespace lk_dsl {
     ;; ---- Internal: dispatch commands ----
     proc _dispatch_command {cmd} {
         let name [get $cmd name]
+
         if [has? $_cmd_handlers $name] {
             let handler [get $_cmd_handlers $name]
             apply $handler $cmd
@@ -308,21 +318,25 @@ namespace lk_dsl {
         if [or [< $n 1] [> $n 2]] {
             error "app \"$title\": expected app title ?props-dict? body-block"
         }
+
         if [== $n 2] {
             set! props [get $rest 0]
             set! body [get $rest 1]
+
             if [not [dict? $props]] {
                 error "app \"$title\": expected a props dict (#{...}) before the body block"
             }
         } else {
             set! body [get $rest 0]
         }
+
         if [dict? $body] {
             error "app \"$title\": body must be a block, got a dict"
         }
 
         foreach key [Dict::keys $props] {
             let val [get $props $key]
+
             if [== $key width] {
                 set! width $val
             } else {
@@ -348,6 +362,7 @@ namespace lk_dsl {
         } else {
             set! _win [lk::window_create $title $width $height $font $font_size]
         }
+
         set! _ui [lk::window_ui $_win]
 
         ;; Eval body — registers theme, translators, on-handlers, view, event_handler

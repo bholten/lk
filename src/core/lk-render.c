@@ -52,11 +52,13 @@ static void init_fallback_styles(void) {
 
   /* Build a small tree with one node of each kind and resolve */
   th = lk_theme_default(NULL, NULL, NULL);
+
   if (!th) {
     return;
   }
 
   t = lk_tree_create(NULL);
+
   if (!t) {
     lk_theme_destroy(th);
     return;
@@ -69,7 +71,9 @@ static void init_fallback_styles(void) {
   for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
     lk_tree_add_node(t, (lk_node_id)(k), (lk_kind)k);
   }
+
   lk_tree_set_root(t, 1);
+
   for (k = UIK_WINDOW + 1; k < (int)UIK__COUNT; k++) {
     lk_tree_append_child(t, 1, (lk_ix)k);
   }
@@ -78,9 +82,11 @@ static void init_fallback_styles(void) {
                                  (lk_u32)(sizeof(lk_style) * t->node_count));
   if (buf) {
     lk_style_resolve(th, t, NULL, buf);
+
     for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
       g_fallback_styles[k] = buf[k];
     }
+
     lk_sys_dealloc(NULL, buf);
   }
 

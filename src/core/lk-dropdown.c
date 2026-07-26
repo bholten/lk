@@ -328,6 +328,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 
   sel = get_i32(st, nid, LKS_SELECTED_INDEX);
+
   if (sel < 0 || (lk_u32)sel >= count) {
     sel = 0;
   }
@@ -374,6 +375,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   if (ev->type == LK_EVENT_KEY_DOWN) {
     kc = ev->data.key.keycode;
     hov = get_i32(st, nid, LKS_HOVER_INDEX);
+
     if (hov < 0 || (lk_u32)hov >= count) {
       hov = sel;
     }
@@ -423,6 +425,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
         dropdown_close(ui, nid);
         return 1;
       }
+
       return 0;
 
     default: break;
@@ -452,19 +455,23 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 
   parent = t->nodes[n].parent;
+
   if (!parent || t->nodes[parent].kind != UIK_DROPDOWN) {
     return 0;
   }
 
   /* Find this option's index within the parent. */
   ch = t->nodes[parent].first_child;
+
   while (ch) {
     if (t->nodes[ch].kind == UIK_OPTION) {
       if (ch == n) {
         break;
       }
+
       i++;
     }
+
     ch = t->nodes[ch].next_sibling;
   }
 
@@ -527,6 +534,7 @@ lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
   lk_overlay ov;
 
   popup_h = (lk_i32)count * row_h + (pad + bw) * 2;
+
   if (popup_h > DROPDOWN_POPUP_MAX_HEIGHT) {
     popup_h = DROPDOWN_POPUP_MAX_HEIGHT;
   }
@@ -718,6 +726,7 @@ lk_ix lk_dropdown_hit_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
   }
 
   popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
+
   if (!point_in(&popup, x, y)) {
     return 0;
   }

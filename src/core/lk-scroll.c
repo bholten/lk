@@ -21,33 +21,43 @@ static lk_i32 clamp(lk_i32 v, lk_i32 lo, lk_i32 hi) {
   if (v < lo) {
     return lo;
   }
+
   if (v > hi) {
     return hi;
   }
+
   return v;
 }
 
 static lk_i32 get_scroll_y(const lk_state *state, lk_node_id nid) {
   lk_value v;
+
   if (!state) {
     return 0;
   }
+
   v = lk_state_get(state, nid, LKS_SCROLL_Y);
+
   if (v.tag == UIV_I32) {
     return (lk_i32)v.as.i;
   }
+
   return 0;
 }
 
 static lk_i32 get_scroll_max(const lk_state *state, lk_node_id nid) {
   lk_value v;
+
   if (!state) {
     return 0;
   }
+
   v = lk_state_get(state, nid, LKS_SCROLL_MAX);
+
   if (v.tag == UIV_I32) {
     return (lk_i32)v.as.i;
   }
+
   return 0;
 }
 
@@ -187,6 +197,7 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
   /* Scroll bar (rendered before CLIP_BEGIN so not clipped) */
   scroll_max = get_scroll_max(state, nid);
+
   if (scroll_max > 0) {
     lk_i32 scroll_y = get_scroll_y(state, nid);
     lk_i32 pad = style->padding + style->border_width;
@@ -201,10 +212,13 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     }
 
     thumb_h = (viewport_h * track_h) / total_h;
+
     if (thumb_h < 8) {
       thumb_h = 8;
     }
+
     thumb_y = rect->y + pad;
+
     if (scroll_max > 0) {
       thumb_y += (scroll_y * (track_h - thumb_h)) / scroll_max;
     }

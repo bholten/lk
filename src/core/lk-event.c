@@ -113,6 +113,7 @@ void lk_ui_set_event_handler(lk_ui *ui, lk_event_handler_fn fn, void *ud) {
   if (!ui) {
     return;
   }
+
   ui->event_handler = fn;
   ui->event_ud = ud;
 }
@@ -125,6 +126,7 @@ int lk_focus_set(lk_ui *ui, const lk_tree *t, lk_node_id id) {
   }
 
   ix = lk_tree_find_by_id(t, id);
+
   if (ix == 0) {
     return 0;
   }
@@ -191,6 +193,7 @@ lk_ix lk_focus_current(const lk_ui *ui, const lk_tree *t) {
   if (!ui || !t || ui->focused_id == 0) {
     return 0;
   }
+
   return lk_tree_find_by_id(t, ui->focused_id);
 }
 

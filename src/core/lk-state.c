@@ -90,6 +90,7 @@ static int state_grow(lk_state *st, lk_u32 new_cap) {
         st->tab_len++;
       }
     }
+
     st->dealloc(st->alloc_ud, old_tab);
   }
 
@@ -100,9 +101,11 @@ static int state_ensure(lk_state *st) {
   if (st->tab_cap == 0) {
     return state_grow(st, LK_STATE_INIT_CAP);
   }
+
   if (st->tab_len * 100 >= st->tab_cap * LK_STATE_LOAD_PCT) {
     return state_grow(st, st->tab_cap * 2);
   }
+
   return 1;
 }
 
@@ -113,11 +116,13 @@ lk_state *lk_state_create(void *(*al)(void *, lk_u32),
   if (!al) {
     al = lk_sys_alloc;
   }
+
   if (!de) {
     de = lk_sys_dealloc;
   }
 
   st = (lk_state *)al(ud, (lk_u32)sizeof(lk_state));
+
   if (!st) {
     return NULL;
   }
@@ -162,6 +167,7 @@ int lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v) {
       st->tab[idx].value = v;
       return 1;
     }
+
     idx = (idx + 1) & (st->tab_cap - 1);
   }
 
@@ -183,10 +189,12 @@ lk_value lk_state_get(const lk_state *st, lk_node_id node, lk_u16 key) {
   }
 
   idx = state_hash(node, key) & (st->tab_cap - 1);
+
   while (st->tab[idx].used) {
     if (st->tab[idx].node == node && st->tab[idx].key == key) {
       return st->tab[idx].value;
     }
+
     idx = (idx + 1) & (st->tab_cap - 1);
   }
 
