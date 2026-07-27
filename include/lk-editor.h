@@ -93,6 +93,45 @@ void lk_editor_scroll_to_cursor(lk_editor *e);
 lk_u32 lk_editor_tab_size(const lk_editor *e);
 
 /**
+ ** Styled spans (docs/editor.md section 10, stage C)
+ **/
+
+#define LK_SPAN_FG (1u << 0)
+#define LK_SPAN_BG (1u << 1)
+#define LK_SPAN_UNDERLINE (1u << 2)
+
+/* One styled byte range [start, end).  Appearance only -- semantic
+ * identity stays in the annotation layer (decorations are not
+ * presentations). */
+typedef struct lk_edit_span {
+  lk_u32 start, end;
+  lk_color fg, bg;
+  lk_u8 flags; /* LK_SPAN_FG | LK_SPAN_BG | LK_SPAN_UNDERLINE */
+} lk_edit_span;
+
+/* Viewport-scoped span delivery: coordinates are valid at exactly one
+ * document revision, and the producer says which range it resolved. */
+typedef struct lk_edit_span_snapshot {
+  lk_revision revision;           /* coordinates valid at this revision */
+  lk_u32 range_start, range_end;  /* range the producer resolved */
+  const lk_edit_span *spans;      /* sorted by start, non-overlapping */
+  lk_u32 count;
+} lk_edit_span_snapshot;
+
+/* Deep-copy the snapshot into the editor, replacing any previous one
+ * (NULL snap or count 0 clears).  Producer contract: spans sorted by
+ * start and non-overlapping -- asserted under LK_EDITOR_DEBUG_ASSERTS,
+ * trusted in release (sub-segment guards keep sloppy input from
+ * emitting negative-width geometry, not from looking right).
+ *
+ * Staleness policy (pinned): a snapshot whose revision does not match
+ * the document at geometry time is ignored entirely -- unstyled text
+ * for a frame beats misplaced styling.  A snapshot covering only part
+ * of the visible range styles what it covers.  Span boundaries that
+ * land mid-codepoint are clamped down to a boundary. */
+void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap);
+
+/**
  ** Resource integration (docs/editor.md section 5)
  **/
 

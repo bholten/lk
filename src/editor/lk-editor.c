@@ -40,6 +40,7 @@
 #define ED_STICKY_NONE (-1)
 #define ED_FALLBACK_LINE_H 16
 #define ED_FALLBACK_ADVANCE 8
+#define ED_FALLBACK_BASELINE 12
 #define ED_FALLBACK_PAGE_LINES 20
 #define ED_TAB_SIZE 4
 #define ED_MAX_SEL_RECTS 3
@@ -51,11 +52,16 @@ typedef struct ed_line {
   lk_u32 off;       /* offset of the line's bytes in e->vis */
 } ed_line;
 
-/* One tab-split run segment, in absolute pixels. */
+/* One tab-split (and, when spans are active, span-split) run segment,
+ * in absolute pixels.  flags/fg/bg are copied out of the matching
+ * span at layout time so segments never dangle into a replaced span
+ * array; flags == 0 means "style->fg, no bg, no underline". */
 typedef struct ed_seg {
   lk_u32 off; /* into e->vis */
   lk_u32 len;
   lk_i32 x, y, w;
+  lk_u8 flags; /* LK_SPAN_* */
+  lk_color fg, bg;
 } ed_seg;
 
 /* Transient per-frame geometry (docs/editor.md section 7): stashed by
@@ -67,6 +73,7 @@ typedef struct ed_geom {
   lk_node_id node_id;
   lk_rect rect; /* content rect */
   lk_i32 line_h;
+  lk_i32 baseline; /* top of line -> text baseline, for underlines */
   lk_u32 first_line;
   lk_u32 vis_count;
   int cursor_vis;
@@ -111,6 +118,12 @@ struct lk_editor {
   /* command-time single-line extraction buffer */
   char *line_buf;
   lk_u32 line_buf_cap;
+
+  /* styled-span snapshot (deep copy; docs/editor.md section 10) */
+  lk_edit_span *spans;
+  lk_u32 span_count, span_cap;
+  lk_revision span_rev;
+  lk_u32 span_range_start, span_range_end;
 
   ed_geom geom;
 };
@@ -605,6 +618,124 @@ static lk_u32 ed_line_ix_from_x(const lk_editor *e, const lk_text_backend *tb,
   return len;
 }
 
+/* ---- Segment emission (tab runs, span-split into sub-pieces) ---- */
+
+static int ed_push_seg(lk_editor *e, lk_u32 off, lk_u32 len, lk_i32 x,
+                       lk_i32 y, lk_i32 w, lk_u8 flags, lk_color fg,
+                       lk_color bg) {
+  ed_seg seg;
+
+  if (!ed_segs_reserve(e, e->seg_count + 1)) {
+    return 0;
+  }
+
+  seg.off = off;
+  seg.len = len;
+  seg.x = x;
+  seg.y = y;
+  seg.w = w;
+  seg.flags = flags;
+  seg.fg = fg;
+  seg.bg = bg;
+  e->segs[e->seg_count++] = seg;
+
+  return 1;
+}
+
+/* Snap a byte offset within run[0..len) down to a codepoint boundary
+ * (sloppy producers can hand span edges that split a sequence). */
+static lk_u32 ed_snap_run_ix(const char *run, lk_u32 len, lk_u32 ix) {
+  if (ix > len) {
+    ix = len;
+  }
+
+  while (ix > 0 && !lk_utf8_is_boundary(run, len, ix)) {
+    ix--;
+  }
+
+  return ix;
+}
+
+/* Emit one tab-free run as segments: a single segment when no
+ * revision-matched spans overlap it, otherwise span-split sub-pieces
+ * whose x positions come from the same x_from_index walk the plain
+ * segments use.  run/run_len are the run's bytes (already in e->vis
+ * at vis_off), doc_off its document byte offset, x/y/w its absolute
+ * pixel geometry, spans_on the layout-time staleness verdict.
+ * Returns 0 only on allocation failure. */
+static int ed_emit_run(lk_editor *e, const lk_text_backend *tb,
+                       const char *run, lk_u32 run_len, lk_u32 vis_off,
+                       lk_u32 doc_off, lk_i32 x, lk_i32 y, lk_i32 w,
+                       int spans_on) {
+  lk_color none;
+  lk_u32 pos;
+  lk_u32 si;
+
+  memset(&none, 0, sizeof(none));
+
+  if (!spans_on) {
+    return ed_push_seg(e, vis_off, run_len, x, y, w, 0, none, none);
+  }
+
+  pos = 0;
+
+  for (si = 0; si < e->span_count; si++) {
+    const lk_edit_span *sp = &e->spans[si];
+    lk_u32 a;
+    lk_u32 b;
+
+    if (sp->end <= doc_off || sp->start >= doc_off + run_len) {
+      continue;
+    }
+
+    a = sp->start > doc_off ? sp->start - doc_off : 0;
+    b = sp->end < doc_off + run_len ? sp->end - doc_off : run_len;
+    a = ed_snap_run_ix(run, run_len, a);
+    b = ed_snap_run_ix(run, run_len, b);
+
+    if (a < pos) {
+      a = pos; /* overlap guard for sloppy producers */
+    }
+
+    if (b <= a) {
+      continue;
+    }
+
+    if (a > pos) {
+      lk_i32 x0 = x + ed_run_x(e, tb, run, run_len, pos);
+      lk_i32 x1 = x + ed_run_x(e, tb, run, run_len, a);
+
+      if (!ed_push_seg(e, vis_off + pos, a - pos, x0, y, x1 - x0, 0, none,
+                       none)) {
+        return 0;
+      }
+    }
+
+    {
+      lk_i32 x0 = x + ed_run_x(e, tb, run, run_len, a);
+      lk_i32 x1 = x + ed_run_x(e, tb, run, run_len, b);
+
+      if (!ed_push_seg(e, vis_off + a, b - a, x0, y, x1 - x0, sp->flags,
+                       sp->fg, sp->bg)) {
+        return 0;
+      }
+    }
+
+    pos = b;
+  }
+
+  if (pos < run_len) {
+    lk_i32 x0 = x + ed_run_x(e, tb, run, run_len, pos);
+
+    if (!ed_push_seg(e, vis_off + pos, run_len - pos, x0, y, x + w - x0, 0,
+                     none, none)) {
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
 /* ---- Line extraction (command-time, single line) ---- */
 
 /* Extract document line `line` into e->line_buf.  Writes length and
@@ -779,6 +910,10 @@ void lk_editor_destroy(lk_editor *e) {
     e->dealloc(e->ud, e->line_buf);
   }
 
+  if (e->spans) {
+    e->dealloc(e->ud, e->spans);
+  }
+
   e->dealloc(e->ud, e);
 }
 
@@ -840,6 +975,51 @@ void lk_editor_scroll_to_cursor(lk_editor *e) {
 
 lk_u32 lk_editor_tab_size(const lk_editor *e) {
   return e ? e->tab_size : ED_TAB_SIZE;
+}
+
+/* ---- Styled spans (docs/editor.md section 10) ---- */
+
+void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap) {
+  if (!e) {
+    return;
+  }
+
+  e->span_count = 0;
+
+  if (!snap || snap->count == 0 || !snap->spans) {
+    return;
+  }
+
+  if (snap->count > e->span_cap) {
+    lk_u32 nc = ed_grow_cap(e->span_cap, snap->count, 8);
+    lk_edit_span *nb =
+        (lk_edit_span *)ed_grow_buf(e, e->spans, 0,
+                                    nc * (lk_u32)sizeof(lk_edit_span));
+
+    if (!nb) {
+      return; /* allocation failure degrades to "no spans" */
+    }
+
+    e->spans = nb;
+    e->span_cap = nc;
+  }
+
+  memcpy(e->spans, snap->spans, snap->count * sizeof(lk_edit_span));
+  e->span_count = snap->count;
+  e->span_rev = snap->revision;
+  e->span_range_start = snap->range_start;
+  e->span_range_end = snap->range_end;
+
+#ifdef LK_EDITOR_DEBUG_ASSERTS
+  {
+    lk_u32 i;
+
+    for (i = 0; i < e->span_count; i++) {
+      LK_ED_ASSERT(e->spans[i].start < e->spans[i].end);
+      LK_ED_ASSERT(i == 0 || e->spans[i].start >= e->spans[i - 1].end);
+    }
+  }
+#endif
 }
 
 void lk_editor_set_drag(lk_editor *e, int on) {
@@ -1389,6 +1569,8 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   lk_i32 max_off;
   lk_u32 vis_count;
   lk_u32 k;
+  lk_i32 baseline;
+  int spans_on;
 
   if (!e || !t || !content) {
     return;
@@ -1429,9 +1611,18 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     m.baseline = 0;
     tb->measure(tb->ud, sp, e->font_id, e->font_size, &m);
     e->space_adv = m.w > 0 ? m.w : ED_FALLBACK_ADVANCE;
+    baseline = m.baseline > 0 ? m.baseline : ED_FALLBACK_BASELINE;
   } else {
     e->space_adv = ED_FALLBACK_ADVANCE;
+    baseline = ED_FALLBACK_BASELINE;
   }
+
+  /* Staleness policy (pinned, docs/editor.md section 10): the span
+   * snapshot participates only when its revision matches the document
+   * NOW -- and any later edit invalidates this whole geometry block,
+   * so a frame can never draw misplaced styling. */
+  spans_on = e->span_count > 0 &&
+             lk_revision_equal(e->span_rev, lk_doc_revision(e->doc));
 
   view_h = content->h;
   e->page_lines = view_h > 0 ? view_h / line_h : 0;
@@ -1543,7 +1734,9 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     e->lines[k].doc_len = llen;
     e->lines[k].off = e->vis_len;
 
-    /* Segment walk (shared shape with ed_line_x_from_ix). */
+    /* Segment walk (shared shape with ed_line_x_from_ix); each
+     * tab-free run is further span-split by ed_emit_run when a
+     * revision-matched snapshot overlaps it. */
     p = e->vis + e->vis_len;
     x = 0;
     i = 0;
@@ -1560,18 +1753,10 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
       w = ed_run_x(e, tb, p + i, j - i, j - i);
 
       if (j > i) {
-        ed_seg seg;
-
-        if (!ed_segs_reserve(e, e->seg_count + 1)) {
+        if (!ed_emit_run(e, tb, p + i, j - i, e->vis_len + i, ls + i,
+                         content->x + x, y, w, spans_on)) {
           return;
         }
-
-        seg.off = e->vis_len + i;
-        seg.len = j - i;
-        seg.x = content->x + x;
-        seg.y = y;
-        seg.w = w;
-        e->segs[e->seg_count++] = seg;
       }
 
       x += w;
@@ -1698,6 +1883,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   e->geom.node_id = t->nodes[n].id;
   e->geom.rect = *content;
   e->geom.line_h = line_h;
+  e->geom.baseline = baseline;
   e->geom.first_line = e->vp.top_line;
   e->geom.vis_count = vis_count;
   e->geom.font_id = e->font_id;
@@ -1730,6 +1916,25 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
   cmd.rect = *rect;
   lk_render_list_push(out, cmd);
 
+  /* Span backgrounds first: selection rects and the cursor render
+   * above them, exactly as they did before spans existed. */
+  for (i = 0; i < e->seg_count; i++) {
+    const ed_seg *seg = &e->segs[i];
+
+    if (!(seg->flags & LK_SPAN_BG)) {
+      continue;
+    }
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.op = LK_ROP_FILL_RECT;
+    cmd.rect.x = seg->x;
+    cmd.rect.y = seg->y;
+    cmd.rect.w = seg->w;
+    cmd.rect.h = e->geom.line_h;
+    cmd.color = seg->bg;
+    lk_render_list_push(out, cmd);
+  }
+
   /* Selection highlight (same color as the text input widget; a
    * dedicated style field is deliberately not added in this stage). */
   for (i = 0; i < e->geom.sel_count; i++) {
@@ -1743,10 +1948,13 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
     lk_render_list_push(out, cmd);
   }
 
-  /* One DRAW_RUN per visible line segment through the byte arena. */
+  /* One DRAW_RUN per visible line segment through the byte arena
+   * (span sub-segments carry their own fg; underlines are 1-px fills
+   * at the text baseline + 1). */
   for (i = 0; i < e->seg_count; i++) {
     const ed_seg *seg = &e->segs[i];
     lk_u32 run_off;
+    lk_color run_fg;
 
     if (seg->len == 0) {
       continue;
@@ -1757,18 +1965,31 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
       continue;
     }
 
+    run_fg = (seg->flags & LK_SPAN_FG) ? seg->fg : style->fg;
+
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_DRAW_RUN;
     cmd.rect.x = seg->x;
     cmd.rect.y = seg->y;
     cmd.rect.w = seg->w;
     cmd.rect.h = e->geom.line_h;
-    cmd.color = style->fg;
+    cmd.color = run_fg;
     cmd.font_id = e->geom.font_id;
     cmd.font_size = e->geom.font_size;
     cmd.run_off = run_off;
     cmd.run_len = seg->len;
     lk_render_list_push(out, cmd);
+
+    if (seg->flags & LK_SPAN_UNDERLINE) {
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_FILL_RECT;
+      cmd.rect.x = seg->x;
+      cmd.rect.y = seg->y + e->geom.baseline + 1;
+      cmd.rect.w = seg->w;
+      cmd.rect.h = 1;
+      cmd.color = run_fg;
+      lk_render_list_push(out, cmd);
+    }
   }
 
   /* Cursor bar -- only when this node holds keyboard focus (the
