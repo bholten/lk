@@ -23,6 +23,10 @@ void lk_document_run_tests(void);
  * (test/lk-resource-test.c, editor track stage B1) */
 void lk_resource_run_tests(void);
 
+/* editor view + command layer + UIK_EDITOR widget tests
+ * (test/lk-editor-test.c, editor track stage B2) */
+void lk_editor_run_tests(void);
+
 /* ---- changeset query helpers ---- */
 
 static int cs_has(const lk_changeset *cs, lk_ui *ui, lk_u8 kind,
@@ -10085,6 +10089,9 @@ int main(void) {
 
   /* resource refs + run arena (editor track, stage B1) */
   lk_resource_run_tests();
+
+  /* editor view + command layer + widget (editor track, stage B2) */
+  lk_editor_run_tests();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

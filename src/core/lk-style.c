@@ -236,6 +236,14 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_SPLIT_V, 0, 0, &s,
                     LK_SF_BG | LK_SF_PADDING | LK_SF_BORDER_COLOR);
 
+  /* EDITOR -- dark bg slightly distinct from the window bg; fg
+   * inherits from the wildcard rule.  Padding 0 keeps line geometry
+   * aligned with the node rect (apps can set UIP_PADDING). */
+  memset(&s, 0, sizeof(s));
+  s.bg = mk_color(24, 25, 29, 255);
+  s.padding = 0;
+  lk_theme_add_rule(th, UIK_EDITOR, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
+
   return th;
 }
 

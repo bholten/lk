@@ -86,6 +86,10 @@ typedef enum lk_kind {
                    children beyond the first two are ignored (zero
                    rects). */
   UIK_SPLIT_V,  /* same, stacked vertically (horizontal divider). */
+  UIK_EDITOR,   /* multi-line text editor view over an application-owned
+                   lk_document, attached via the UIP_EDITOR resource
+                   ref.  Vtable in src/editor/lk-editor-widget.c; see
+                   include/lk-editor.h and docs/editor.md section 7. */
   UIK__COUNT
 } lk_kind;
 
@@ -120,6 +124,13 @@ typedef enum lk_prop_key {
                       for UIK_SPLIT_H/V.  Host-settable initial value;
                       once the user drags, LKS_SPLIT_RATIO state takes
                       priority.  Default 500. */
+
+  UIP_EDITOR, /* UIV_RESOURCE: typed ref to an application-owned
+                 lk_editor (registered under lk_editor_type()).  Set by
+                 the app every frame like any prop; a missing, stale,
+                 or wrong-typed ref makes the UIK_EDITOR node render
+                 background only and ignore events.  See
+                 docs/editor.md sections 5 and 7. */
 
   UIP__COUNT
 } lk_prop_key;

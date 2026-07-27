@@ -5,6 +5,7 @@
 #include "lk-scroll.h"
 #include "lk-split.h"
 #include "lk-text-input.h"
+#include <lk-editor.h>
 #include <lk.h>
 
 /* ---- Registry ---- */
@@ -510,4 +511,7 @@ static void init_defaults(void) {
   /* SPLIT_H / SPLIT_V */
   g_widgets[UIK_SPLIT_H] = lk_split_h_widget_def();
   g_widgets[UIK_SPLIT_V] = lk_split_v_widget_def();
+
+  /* EDITOR (src/editor/lk-editor-widget.c) */
+  g_widgets[UIK_EDITOR] = *lk_editor_widget();
 }

@@ -1,0 +1,1503 @@
+/*
+ * lk-editor-test.c -- editor track stage B2: lk_editor view state,
+ * the command layer, and the UIK_EDITOR widget (docs/editor.md
+ * sections 6, 7, 9).
+ *
+ * All geometry runs against the deterministic stub text backend
+ * (8 px per codepoint, line height 16), so pixel assertions are
+ * exact.  Blocks: (a) command layer driven directly (no events),
+ * (b) event-tier key/text translation through lk_event_route,
+ * (c) pointer click/drag with capture, (d) anchored viewport +
+ * virtualization (DRAW_RUN commands read back from the byte arena),
+ * (e) render details (cursor, selection rects, tab expansion),
+ * (f) degradation (missing/stale/wrong-typed refs), (g) UTF-8
+ * integrity under editing.
+ */
+
+#include <stdio.h>
+#include <string.h>
+
+#include <lk-editor.h>
+#include <lk.h>
+
+#include "lk-test-harness.h"
+
+/* ---- fake clipboard ---- */
+
+static char g_clip[256];
+
+static const char *clip_get(void *ud) {
+  (void)ud;
+
+  return g_clip;
+}
+
+static void clip_set(void *ud, const char *text) {
+  (void)ud;
+  strncpy(g_clip, text, sizeof(g_clip) - 1);
+  g_clip[sizeof(g_clip) - 1] = '\0';
+}
+
+/* ---- fixture ---- */
+
+typedef struct ed_fix {
+  lk_ui *ui;
+  lk_document *doc;
+  lk_edit_history *hist;
+  lk_editor *ed;
+  lk_resource_ref ref;
+  lk_ix node;     /* editor node index in the current tree */
+  lk_node_id nid; /* stable node id */
+  lk_rect rects[8];
+  lk_layout_cfg cfg;
+} ed_fix;
+
+/* Build the standard frame: window "w" > editor "ed" (FOCUSABLE,
+ * UIP_EDITOR ref when with_prop). */
+static void fix_frame(ed_fix *f, int with_prop) {
+  lk_tree *t = lk_ui_begin_frame(f->ui);
+  lk_ix w = lk_tree_add_node_c(t, "w", UIK_WINDOW);
+  lk_ix ed = lk_tree_add_node_c(t, "ed", UIK_EDITOR);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, ed);
+  lk_tree_add_prop(t, ed, UIP_FOCUSABLE, lk_v_bool(1));
+
+  if (with_prop) {
+    lk_tree_add_prop(t, ed, UIP_EDITOR, lk_v_resource(f->ref));
+  }
+
+  lk_ui_end_frame(f->ui);
+  f->node = lk_tree_find_by_id(lk_ui_tree(f->ui),
+                               lk_intern_cid(lk_ui_intern(f->ui), "ed"));
+}
+
+static int fix_layout(ed_fix *f) {
+  return lk_layout(lk_ui_tree(f->ui), &f->cfg, f->rects);
+}
+
+static void fix_init_ex(ed_fix *f, const char *text, lk_i32 vw, lk_i32 vh,
+                        int with_prop) {
+  memset(f, 0, sizeof(*f));
+  f->doc = lk_doc_from_str(NULL, NULL, NULL, text, (lk_u32)strlen(text));
+  f->hist = lk_history_new(NULL, NULL, NULL);
+  lk_history_attach(f->hist, f->doc);
+  f->ed = lk_editor_new(NULL, NULL, NULL, f->doc, f->hist);
+  f->ui = lk_ui_create(NULL);
+  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(),
+                                f->ed, "ed");
+  lk_ui_set_text_backend(f->ui, lk_text_backend_stub());
+  f->cfg.text = lk_text_backend_stub();
+  f->cfg.viewport_w = vw;
+  f->cfg.viewport_h = vh;
+  f->cfg.state = lk_ui_state(f->ui);
+  fix_frame(f, with_prop);
+  fix_layout(f);
+  f->nid = lk_intern_cid(lk_ui_intern(f->ui), "ed");
+}
+
+static void fix_init(ed_fix *f, const char *text, lk_i32 vw, lk_i32 vh) {
+  fix_init_ex(f, text, vw, vh, 1);
+}
+
+static void fix_destroy(ed_fix *f) {
+  lk_ui_destroy(f->ui);
+  lk_editor_destroy(f->ed);
+  lk_history_destroy(f->hist);
+  lk_doc_destroy(f->doc);
+}
+
+/* ---- document content check ---- */
+
+static int doc_is(const lk_document *d, const char *expect) {
+  char buf[512];
+  lk_u32 n = lk_doc_len(d);
+
+  if (n >= sizeof(buf)) {
+    return 0;
+  }
+
+  lk_doc_get_text(d, 0, buf, n);
+  buf[n] = '\0';
+
+  return strcmp(buf, expect) == 0;
+}
+
+/* ---- command helpers ---- */
+
+static int cmd0(ed_fix *f, lk_editor_cmd_id c) {
+  return lk_editor_command(f->ed, f->ui, c, NULL);
+}
+
+static int cmd_move(ed_fix *f, lk_editor_cmd_id c, int select) {
+  lk_editor_cmd_arg a;
+
+  memset(&a, 0, sizeof(a));
+  a.select = select;
+
+  return lk_editor_command(f->ed, f->ui, c, &a);
+}
+
+static int cmd_ins(ed_fix *f, const char *s) {
+  lk_editor_cmd_arg a;
+
+  memset(&a, 0, sizeof(a));
+  a.text.ptr = s;
+  a.text.len = (lk_u32)strlen(s);
+
+  return lk_editor_command(f->ed, f->ui, LK_ED_INSERT_TEXT, &a);
+}
+
+static int cmd_setcur(ed_fix *f, lk_u32 pos, int extend) {
+  lk_editor_cmd_arg a;
+
+  memset(&a, 0, sizeof(a));
+  a.set_cursor.pos = pos;
+  a.set_cursor.extend = extend;
+
+  return lk_editor_command(f->ed, f->ui, LK_ED_SET_CURSOR, &a);
+}
+
+static int cmd_scroll(ed_fix *f, lk_i32 lines) {
+  lk_editor_cmd_arg a;
+
+  memset(&a, 0, sizeof(a));
+  a.lines = lines;
+
+  return lk_editor_command(f->ed, f->ui, LK_ED_SCROLL_LINES, &a);
+}
+
+/* ---- event helpers ---- */
+
+static int send_key(ed_fix *f, lk_u16 kc, lk_u8 mods) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = f->node;
+  ev.mods = mods;
+  ev.data.key.keycode = kc;
+  lk_event_route(f->ui, &ev);
+
+  return ev.handled;
+}
+
+static int send_text(ed_fix *f, const char *s) {
+  lk_event ev;
+  lk_u32 n = (lk_u32)strlen(s);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = f->node;
+  memcpy(ev.data.text.buf, s, n);
+  ev.data.text.len = (lk_u8)n;
+  lk_event_route(f->ui, &ev);
+
+  return ev.handled;
+}
+
+static int send_pointer(ed_fix *f, lk_u8 type, lk_i32 x, lk_i32 y) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = type;
+  ev.target = f->node;
+  ev.data.pointer.x = x;
+  ev.data.pointer.y = y;
+  lk_event_route(f->ui, &ev);
+
+  return ev.handled;
+}
+
+static int send_wheel(ed_fix *f, lk_i32 dy) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_WHEEL;
+  ev.target = f->node;
+  ev.data.wheel.dy = dy;
+  lk_event_route(f->ui, &ev);
+
+  return ev.handled;
+}
+
+/* ---- render-list query helpers ---- */
+
+static lk_u32 count_runs(const lk_render_list *rl) {
+  lk_u32 i;
+  lk_u32 n = 0;
+
+  for (i = 0; i < rl->count; i++) {
+    if (rl->cmds[i].op == LK_ROP_DRAW_RUN) {
+      n++;
+    }
+  }
+
+  return n;
+}
+
+static const lk_render_cmd *nth_run(const lk_render_list *rl, lk_u32 idx) {
+  lk_u32 i;
+  lk_u32 n = 0;
+
+  for (i = 0; i < rl->count; i++) {
+    if (rl->cmds[i].op == LK_ROP_DRAW_RUN) {
+      if (n == idx) {
+        return &rl->cmds[i];
+      }
+
+      n++;
+    }
+  }
+
+  return NULL;
+}
+
+/* 1 if the run's arena bytes equal s. */
+static int run_is(const lk_render_list *rl, const lk_render_cmd *c,
+                  const char *s) {
+  lk_u32 n = (lk_u32)strlen(s);
+
+  if (!c || c->run_len != n) {
+    return 0;
+  }
+
+  return memcmp(rl->bytes + c->run_off, s, n) == 0;
+}
+
+static int is_sel_fill(const lk_render_cmd *c) {
+  return c->op == LK_ROP_FILL_RECT && c->color.r == 80 &&
+         c->color.g == 120 && c->color.b == 200 && c->color.a == 128;
+}
+
+static lk_u32 count_sel_fills(const lk_render_list *rl) {
+  lk_u32 i;
+  lk_u32 n = 0;
+
+  for (i = 0; i < rl->count; i++) {
+    if (is_sel_fill(&rl->cmds[i])) {
+      n++;
+    }
+  }
+
+  return n;
+}
+
+static const lk_render_cmd *nth_sel_fill(const lk_render_list *rl,
+                                         lk_u32 idx) {
+  lk_u32 i;
+  lk_u32 n = 0;
+
+  for (i = 0; i < rl->count; i++) {
+    if (is_sel_fill(&rl->cmds[i])) {
+      if (n == idx) {
+        return &rl->cmds[i];
+      }
+
+      n++;
+    }
+  }
+
+  return NULL;
+}
+
+/* The cursor bar is the only 1-px-wide FILL_RECT the editor emits. */
+static const lk_render_cmd *find_cursor_fill(const lk_render_list *rl) {
+  lk_u32 i;
+
+  for (i = 0; i < rl->count; i++) {
+    if (rl->cmds[i].op == LK_ROP_FILL_RECT && rl->cmds[i].rect.w == 1) {
+      return &rl->cmds[i];
+    }
+  }
+
+  return NULL;
+}
+
+static int fix_render(ed_fix *f, lk_render_list *rl) {
+  return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL,
+                         lk_ui_state(f->ui), rl);
+}
+
+/* Build "line 0\nline 1\n...\nline N-1" (no trailing newline). */
+static void make_lines(char *buf, lk_u32 cap, int nlines) {
+  int i;
+  lk_u32 off = 0;
+
+  buf[0] = '\0';
+
+  for (i = 0; i < nlines; i++) {
+    off += (lk_u32)sprintf(buf + off, i + 1 < nlines ? "line %d\n" : "line %d",
+                           i);
+
+    if (off + 16 > cap) {
+      break;
+    }
+  }
+}
+
+/* ================================================================
+ * (a) command layer, driven directly
+ * ================================================================ */
+
+static void test_cmd_insert_text(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: insert text moves cursor");
+
+  fix_init(&f, "", 400, 80);
+
+  CHECK(cmd_ins(&f, "hello") == 1);
+  CHECK(doc_is(f.doc, "hello"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+
+  CHECK(cmd_ins(&f, " world") == 1);
+  CHECK(doc_is(f.doc, "hello world"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 11);
+
+  /* empty insert does nothing */
+  CHECK(cmd_ins(&f, "") == 0);
+  CHECK(lk_editor_command(f.ed, f.ui, LK_ED_INSERT_TEXT, NULL) == 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_delete_utf8(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: delete removes whole codepoints");
+
+  /* "a" + e-acute (2 bytes) + CJK sun (3 bytes) */
+  fix_init(&f, "a\xC3\xA9\xE6\x97\xA5", 400, 80);
+
+  cmd_setcur(&f, 6, 0);
+
+  CHECK(cmd0(&f, LK_ED_DELETE_BACKWARD) == 1);
+  CHECK(doc_is(f.doc, "a\xC3\xA9"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+
+  CHECK(cmd0(&f, LK_ED_DELETE_BACKWARD) == 1);
+  CHECK(doc_is(f.doc, "a"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+
+  cmd_setcur(&f, 0, 0);
+
+  CHECK(cmd0(&f, LK_ED_DELETE_FORWARD) == 1);
+  CHECK(doc_is(f.doc, ""));
+
+  /* nothing left */
+  CHECK(cmd0(&f, LK_ED_DELETE_FORWARD) == 0);
+  CHECK(cmd0(&f, LK_ED_DELETE_BACKWARD) == 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_move_codepoints(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: left/right move by codepoint");
+
+  fix_init(&f, "a\xC3\xA9\xE6\x97\xA5", 400, 80);
+
+  cmd_setcur(&f, 0, 0);
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+  CHECK(cmd_move(&f, LK_ED_MOVE_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  CHECK(cmd_move(&f, LK_ED_MOVE_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 6);
+  CHECK(cmd_move(&f, LK_ED_MOVE_RIGHT, 0) == 0); /* at end */
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  CHECK(cmd_move(&f, LK_ED_MOVE_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+  CHECK(cmd_move(&f, LK_ED_MOVE_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_LEFT, 0) == 0); /* at start */
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_word_motion(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: word motion incl punctuation runs");
+
+  /* f o o _ _ b a r _ b  a  z  ;  ;  q  u  x
+   * 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16   (len 17) */
+  fix_init(&f, "foo  bar_baz;;qux", 400, 80);
+
+  cmd_setcur(&f, 0, 0);
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 14);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 17);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_RIGHT, 0) == 0); /* doc end */
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 14);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_LEFT, 0) == 0); /* doc start */
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_word_motion_multibyte(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: word motion over multi-byte word chars");
+
+  /* "hé..." spelled precomposed: h e-acute space w o-umlaut
+   * bytes: h0 e-acute(1-2) sp3 w4 o-umlaut(5-6)  (len 7) */
+  fix_init(&f, "h\xC3\xA9 w\xC3\xB6", 400, 80);
+
+  cmd_setcur(&f, 0, 0);
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 4); /* after "he'" + space */
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 7);
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+  CHECK(cmd_move(&f, LK_ED_MOVE_WORD_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_selection_extend_collapse(void) {
+  ed_fix f;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("ed cmd: selection extend + collapse to edge");
+
+  fix_init(&f, "abcdef", 400, 80);
+
+  cmd_setcur(&f, 1, 0);
+
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
+
+  cmd_move(&f, LK_ED_MOVE_RIGHT, 1);
+  cmd_move(&f, LK_ED_MOVE_RIGHT, 1);
+
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 1);
+  CHECK_EQ(e, 3);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+
+  /* plain LEFT collapses to the selection's left edge */
+  CHECK(cmd_move(&f, LK_ED_MOVE_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
+
+  /* and RIGHT to the right edge */
+  cmd_move(&f, LK_ED_MOVE_RIGHT, 1);
+  cmd_move(&f, LK_ED_MOVE_RIGHT, 1);
+  CHECK(cmd_move(&f, LK_ED_MOVE_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_select_all(void) {
+  ed_fix f;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("ed cmd: select all");
+
+  fix_init(&f, "abc", 400, 80);
+
+  CHECK(cmd0(&f, LK_ED_SELECT_ALL) == 1);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 0);
+  CHECK_EQ(e, 3);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_replace_selection_one_undo(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: replace-selection is ONE undo step");
+
+  fix_init(&f, "hello", 400, 80);
+
+  cmd_setcur(&f, 1, 0);
+  cmd_setcur(&f, 4, 1); /* select "ell" */
+
+  CHECK(cmd_ins(&f, "X") == 1);
+  CHECK(doc_is(f.doc, "hXo"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 2);
+
+  /* one undo restores the whole replace; cursor derives from the
+   * undo transaction's deltas (end of the re-inserted "ell") */
+  CHECK(cmd0(&f, LK_ED_UNDO) == 1);
+  CHECK(doc_is(f.doc, "hello"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+
+  CHECK(cmd0(&f, LK_ED_REDO) == 1);
+  CHECK(doc_is(f.doc, "hXo"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 2);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_word_delete(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: word delete backward/forward");
+
+  fix_init(&f, "foo bar", 400, 80);
+
+  cmd_setcur(&f, 7, 0);
+
+  CHECK(cmd0(&f, LK_ED_DELETE_WORD_BACKWARD) == 1);
+  CHECK(doc_is(f.doc, "foo "));
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+
+  CHECK(cmd0(&f, LK_ED_DELETE_WORD_BACKWARD) == 1);
+  CHECK(doc_is(f.doc, ""));
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  cmd_ins(&f, "foo bar");
+  cmd_setcur(&f, 0, 0);
+
+  /* forward deletes the word AND its trailing separators (weft) */
+  CHECK(cmd0(&f, LK_ED_DELETE_WORD_FORWARD) == 1);
+  CHECK(doc_is(f.doc, "bar"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_line_doc_motion(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: line/doc start+end motion");
+
+  /* a0 b1 \n2 c3 d4 \n5 e6 f7 */
+  fix_init(&f, "ab\ncd\nef", 400, 80);
+
+  cmd_setcur(&f, 4, 0);
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_LINE_START, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  CHECK(cmd_move(&f, LK_ED_MOVE_LINE_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOC_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 8);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOC_START, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_vertical_sticky_x(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: vertical motion preserves sticky x");
+
+  /* line0 "abcdef" (0-5), line1 "ab" (7-8), line2 "abcdef" (10-15) */
+  fix_init(&f, "abcdef\nab\nabcdef", 400, 80);
+
+  cmd_setcur(&f, 4, 0); /* x = 32 */
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 9); /* clamped to "ab" end */
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 14); /* sticky 32 restored */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 9);
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+
+  /* boundary behavior (weft): UP on first line -> 0, DOWN on last
+   * line -> doc end */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  cmd_setcur(&f, 12, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 16);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_page_fallback_null_ui(void) {
+  lk_document *doc;
+  lk_editor *ed;
+  char buf[512];
+  int i;
+  lk_u32 off = 0;
+  lk_editor_cmd_arg a;
+
+  BEGIN_TEST("ed cmd: page motion fallback, NULL ui");
+
+  /* 50 lines of "x" */
+  for (i = 0; i < 50; i++) {
+    buf[off++] = 'x';
+
+    if (i < 49) {
+      buf[off++] = '\n';
+    }
+  }
+
+  doc = lk_doc_from_str(NULL, NULL, NULL, buf, off);
+  ed = lk_editor_new(NULL, NULL, NULL, doc, NULL);
+
+  CHECK(ed != NULL);
+
+  /* no layout ever ran, ui is NULL: page falls back to 20 lines */
+  memset(&a, 0, sizeof(a));
+  CHECK(lk_editor_command(ed, NULL, LK_ED_MOVE_PAGE_DOWN, &a) == 1);
+  CHECK_EQ(lk_doc_pos_to_line(doc, lk_editor_cursor(ed)), 20);
+  CHECK(lk_editor_command(ed, NULL, LK_ED_MOVE_PAGE_DOWN, &a) == 1);
+  CHECK_EQ(lk_doc_pos_to_line(doc, lk_editor_cursor(ed)), 40);
+  CHECK(lk_editor_command(ed, NULL, LK_ED_MOVE_PAGE_UP, &a) == 1);
+  CHECK_EQ(lk_doc_pos_to_line(doc, lk_editor_cursor(ed)), 20);
+
+  /* NULL-ui editing works too */
+  {
+    lk_editor_cmd_arg t;
+
+    memset(&t, 0, sizeof(t));
+    t.text.ptr = "yo";
+    t.text.len = 2;
+
+    CHECK(lk_editor_command(ed, NULL, LK_ED_INSERT_TEXT, &t) == 1);
+  }
+
+  /* NULL-ui clipboard degrades to a no-op */
+  CHECK(lk_editor_command(ed, NULL, LK_ED_COPY, NULL) == 0);
+  CHECK(lk_editor_command(ed, NULL, LK_ED_PASTE, NULL) == 0);
+
+  /* NULL history: undo/redo no-op */
+  CHECK(lk_editor_command(ed, NULL, LK_ED_UNDO, NULL) == 0);
+  CHECK(lk_editor_command(ed, NULL, LK_ED_REDO, NULL) == 0);
+
+  lk_editor_destroy(ed);
+  lk_doc_destroy(doc);
+  END_TEST();
+}
+
+static void test_cmd_set_cursor_snaps(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: set cursor clamps + snaps to boundary");
+
+  fix_init(&f, "a\xC3\xA9", 400, 80);
+
+  cmd_setcur(&f, 2, 0); /* mid e-acute */
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+
+  cmd_setcur(&f, 99, 0); /* past end */
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+
+  lk_editor_set_cursor(f.ed, 2); /* public accessor, same rules */
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_cmd_clipboard(void) {
+  ed_fix f;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("ed cmd: copy/cut/paste through ui clipboard");
+
+  fix_init(&f, "hello", 400, 80);
+  lk_ui_set_clipboard(f.ui, clip_get, clip_set, NULL);
+  g_clip[0] = '\0';
+
+  /* copy with no selection: nothing */
+  CHECK(cmd0(&f, LK_ED_COPY) == 0);
+
+  cmd_setcur(&f, 1, 0);
+  cmd_setcur(&f, 4, 1); /* "ell" */
+
+  CHECK(cmd0(&f, LK_ED_COPY) == 1);
+  CHECK(strcmp(g_clip, "ell") == 0);
+  CHECK(doc_is(f.doc, "hello")); /* copy does not edit */
+
+  CHECK(cmd0(&f, LK_ED_CUT) == 1);
+  CHECK(doc_is(f.doc, "ho"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
+
+  cmd_setcur(&f, 2, 0);
+
+  CHECK(cmd0(&f, LK_ED_PASTE) == 1);
+  CHECK(doc_is(f.doc, "hoell"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+
+  /* paste replaces an active selection in one step */
+  cmd_setcur(&f, 0, 0);
+  cmd_setcur(&f, 5, 1);
+  CHECK(cmd0(&f, LK_ED_PASTE) == 1);
+  CHECK(doc_is(f.doc, "ell"));
+  CHECK(cmd0(&f, LK_ED_UNDO) == 1);
+  CHECK(doc_is(f.doc, "hoell"));
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
+ * (b) event tier
+ * ================================================================ */
+
+static void test_event_typing(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed event: LK_EVENT_TEXT inserts");
+
+  fix_init(&f, "", 400, 80);
+
+  CHECK(send_text(&f, "hi") == 1);
+  CHECK(doc_is(f.doc, "hi"));
+  CHECK(send_text(&f, "!") == 1);
+  CHECK(doc_is(f.doc, "hi!"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_event_return_tab_esc(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed event: RETURN/TAB consumed, ESC bubbles");
+
+  fix_init(&f, "", 400, 80);
+
+  CHECK(send_key(&f, LKK_RETURN, 0) == 1);
+  CHECK(doc_is(f.doc, "\n"));
+
+  CHECK(send_key(&f, LKK_TAB, 0) == 1);
+  CHECK(doc_is(f.doc, "\n    ")); /* tab_size = 4 spaces */
+
+  CHECK(send_key(&f, LKK_TAB, LK_MOD_SHIFT) == 0); /* focus path */
+  CHECK(send_key(&f, LKK_ESCAPE, 0) == 0);
+  CHECK(send_key(&f, LKK_F1, 0) == 0); /* unlisted bubbles */
+  CHECK(doc_is(f.doc, "\n    "));
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_event_arrows_modifiers(void) {
+  ed_fix f;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("ed event: arrows with CTRL/SHIFT combos");
+
+  fix_init(&f, "foo bar", 400, 80);
+
+  CHECK(send_key(&f, LKK_END, LK_MOD_CTRL) == 1); /* doc end */
+  CHECK_EQ(lk_editor_cursor(f.ed), 7);
+
+  CHECK(send_key(&f, LKK_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 6);
+
+  CHECK(send_key(&f, LKK_LEFT, LK_MOD_CTRL) == 1); /* word left */
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+
+  CHECK(send_key(&f, LKK_LEFT, LK_MOD_SHIFT) == 1); /* extend */
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 3);
+  CHECK_EQ(e, 4);
+
+  CHECK(send_key(&f, LKK_HOME, 0) == 1); /* line start, drop sel */
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
+
+  /* SHIFT+CTRL+RIGHT: word-right extension */
+  CHECK(send_key(&f, LKK_RIGHT, LK_MOD_CTRL | LK_MOD_SHIFT) == 1);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 0);
+  CHECK_EQ(e, 4);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_event_page_keys(void) {
+  ed_fix f;
+  char buf[2048];
+
+  BEGIN_TEST("ed event: pageup/pagedown use viewport size");
+
+  make_lines(buf, sizeof(buf), 100);
+  fix_init(&f, buf, 400, 80); /* 5 lines per page */
+
+  CHECK(send_key(&f, LKK_PAGEDOWN, 0) == 1);
+  CHECK_EQ(lk_doc_pos_to_line(f.doc, lk_editor_cursor(f.ed)), 5);
+  CHECK(send_key(&f, LKK_PAGEDOWN, 0) == 1);
+  CHECK_EQ(lk_doc_pos_to_line(f.doc, lk_editor_cursor(f.ed)), 10);
+  CHECK(send_key(&f, LKK_PAGEUP, 0) == 1);
+  CHECK_EQ(lk_doc_pos_to_line(f.doc, lk_editor_cursor(f.ed)), 5);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_event_clipboard_keys(void) {
+  ed_fix f;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("ed event: CTRL+A/C/X/V");
+
+  fix_init(&f, "hello", 400, 80);
+  lk_ui_set_clipboard(f.ui, clip_get, clip_set, NULL);
+  g_clip[0] = '\0';
+
+  CHECK(send_key(&f, LKK_A, LK_MOD_CTRL) == 1);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 0);
+  CHECK_EQ(e, 5);
+
+  CHECK(send_key(&f, LKK_C, LK_MOD_CTRL) == 1);
+  CHECK(strcmp(g_clip, "hello") == 0);
+
+  CHECK(send_key(&f, LKK_X, LK_MOD_CTRL) == 1);
+  CHECK(doc_is(f.doc, ""));
+
+  CHECK(send_key(&f, LKK_V, LK_MOD_CTRL) == 1);
+  CHECK(doc_is(f.doc, "hello"));
+
+  /* plain letters bubble as KEY_DOWN (text arrives via LK_EVENT_TEXT) */
+  CHECK(send_key(&f, LKK_A, 0) == 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_event_undo_redo_keys(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed event: CTRL+Z / CTRL+SHIFT+Z");
+
+  fix_init(&f, "", 400, 80);
+
+  send_text(&f, "a");
+  send_text(&f, "b");
+
+  CHECK(doc_is(f.doc, "ab"));
+
+  /* one TEXT event = one transaction = one undo step */
+  CHECK(send_key(&f, LKK_Z, LK_MOD_CTRL) == 1);
+  CHECK(doc_is(f.doc, "a"));
+  CHECK(send_key(&f, LKK_Z, LK_MOD_CTRL) == 1);
+  CHECK(doc_is(f.doc, ""));
+  CHECK(send_key(&f, LKK_Z, LK_MOD_CTRL | LK_MOD_SHIFT) == 1);
+  CHECK(doc_is(f.doc, "a"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
+ * (c) pointer
+ * ================================================================ */
+
+static void test_pointer_click_position(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed pointer: click positions, focuses, captures");
+
+  fix_init(&f, "hello\nworld", 400, 80);
+
+  /* x=20 on line 0: nearest boundary = (20+4)/8 = 3 */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 20, 8) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  CHECK_EQ(f.ui->focused_id, f.nid);
+  CHECK_EQ(lk_capture_current(f.ui), f.nid);
+  CHECK(lk_editor_dragging(f.ed) == 1);
+
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_UP, 20, 8) == 1);
+  CHECK_EQ(lk_capture_current(f.ui), 0);
+  CHECK(lk_editor_dragging(f.ed) == 0);
+
+  /* second line: y = 20 -> line 1; x = 0 -> byte 6 */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 0, 20) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 6);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 0, 20);
+
+  /* click below the last line clamps to it; far x clamps to its end */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 500, 70) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 11);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 500, 70);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_pointer_click_tab_segments(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed pointer: click through tab-stop segments");
+
+  /* "ab\tcd": seg "ab" [0,16), tab span [16,32), seg "cd" [32,48) */
+  fix_init(&f, "ab\tcd", 400, 80);
+
+  /* inside the tab span, nearer the left edge -> before the tab */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 17, 8) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 2);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 17, 8);
+
+  /* nearer the right edge -> after the tab */
+  send_pointer(&f, LK_EVENT_POINTER_DOWN, 30, 8);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 30, 8);
+
+  /* in the second segment: x=33 -> boundary 0 of "cd" -> byte 3;
+   * x=37 -> boundary 1 -> byte 4 */
+  send_pointer(&f, LK_EVENT_POINTER_DOWN, 33, 8);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 33, 8);
+  send_pointer(&f, LK_EVENT_POINTER_DOWN, 37, 8);
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 37, 8);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_pointer_drag_selection(void) {
+  ed_fix f;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("ed pointer: drag extends, release clears capture");
+
+  fix_init(&f, "hello", 400, 80);
+
+  /* move without drag bubbles */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_MOVE, 30, 8) == 0);
+
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 8, 8) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_MOVE, 33, 8) == 1);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 1);
+  CHECK_EQ(e, 4);
+  CHECK_EQ(lk_editor_cursor(f.ed), 4);
+  CHECK_EQ(lk_capture_current(f.ui), f.nid);
+
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_UP, 33, 8) == 1);
+  CHECK_EQ(lk_capture_current(f.ui), 0);
+  CHECK(lk_editor_dragging(f.ed) == 0);
+
+  /* selection survives the release */
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
+  CHECK_EQ(s, 1);
+  CHECK_EQ(e, 4);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
+ * (d) anchored viewport + virtualization
+ * ================================================================ */
+
+static void test_viewport_virtualization(void) {
+  ed_fix f;
+  char buf[2048];
+  lk_render_list rl;
+
+  BEGIN_TEST("ed viewport: only visible lines emit runs");
+
+  make_lines(buf, sizeof(buf), 100);
+  fix_init(&f, buf, 400, 80); /* 5 of 100 lines visible */
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 5);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "line 0"));
+  CHECK(run_is(&rl, nth_run(&rl, 4), "line 4"));
+
+  /* exact stub geometry of the first run */
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.x, 0u);
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.y, 0u);
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 48u); /* 6 cp * 8 */
+  CHECK_EQ((unsigned)nth_run(&rl, 4)->rect.y, 64u);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_viewport_wheel_scrolls(void) {
+  ed_fix f;
+  char buf[2048];
+  lk_render_list rl;
+
+  BEGIN_TEST("ed viewport: wheel scrolls by lines");
+
+  make_lines(buf, sizeof(buf), 100);
+  fix_init(&f, buf, 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* wheel toward the user (dy = -1) scrolls down 3 lines, always
+   * consumed (the editor owns its viewport) */
+  CHECK(send_wheel(&f, -1) == 1);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 3);
+
+  fix_layout(&f);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 5);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "line 3"));
+  CHECK(run_is(&rl, nth_run(&rl, 4), "line 7"));
+
+  /* wheel away (dy = +1) scrolls back up */
+  CHECK(send_wheel(&f, 1) == 1);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 0);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_viewport_scroll_clamps(void) {
+  ed_fix f;
+  char buf[2048];
+  lk_render_list rl;
+
+  BEGIN_TEST("ed viewport: scroll clamps at both ends");
+
+  make_lines(buf, sizeof(buf), 100);
+  fix_init(&f, buf, 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* top clamp */
+  CHECK(cmd_scroll(&f, -1000) == 0); /* already at (0,0) */
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 0);
+
+  /* bottom clamp: 100 lines, 5 fit exactly -> max top = 95 */
+  cmd_scroll(&f, 100000);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 95);
+  CHECK_EQ((unsigned)lk_editor_get_viewport(f.ed).y_offset, 0u);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 5);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "line 95"));
+  CHECK(run_is(&rl, nth_run(&rl, 4), "line 99"));
+
+  /* wheel further down stays clamped */
+  send_wheel(&f, -1);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 95);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_viewport_scroll_to_cursor(void) {
+  ed_fix f;
+  char buf[2048];
+  lk_render_list rl;
+
+  BEGIN_TEST("ed viewport: scroll-to-cursor after doc end/start");
+
+  make_lines(buf, sizeof(buf), 100);
+  fix_init(&f, buf, 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOC_END, 0) == 1);
+  fix_layout(&f); /* pending scroll resolves here */
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 95);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK(run_is(&rl, nth_run(&rl, 4), "line 99"));
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOC_START, 0) == 1);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 0);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_viewport_partial_line_offset(void) {
+  ed_fix f;
+  lk_render_list rl;
+  lk_editor_viewport vp;
+
+  BEGIN_TEST("ed viewport: y_offset for non-multiple heights");
+
+  /* 4 lines, viewport 40 px = 2.5 lines: q=2, r=8 ->
+   * max scroll = (top 1, offset 8) */
+  fix_init(&f, "aa\nbb\ncc\ndd", 400, 40);
+  memset(&rl, 0, sizeof(rl));
+
+  cmd_scroll(&f, 1000);
+  fix_layout(&f);
+  vp = lk_editor_get_viewport(f.ed);
+
+  CHECK_EQ(vp.top_line, 1);
+  CHECK_EQ((unsigned)vp.y_offset, 8u);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 3); /* lines 1..3 intersect */
+  CHECK(run_is(&rl, nth_run(&rl, 0), "bb"));
+  CHECK(nth_run(&rl, 0)->rect.y == -8); /* partially above */
+  CHECK(nth_run(&rl, 2)->rect.y == 24);
+
+  /* scroll-to-cursor lands on the same anchored maximum */
+  cmd_scroll(&f, -1000);
+  cmd_move(&f, LK_ED_MOVE_DOC_END, 0);
+  fix_layout(&f);
+  vp = lk_editor_get_viewport(f.ed);
+  CHECK_EQ(vp.top_line, 1);
+  CHECK_EQ((unsigned)vp.y_offset, 8u);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
+ * (e) render details
+ * ================================================================ */
+
+static void test_render_cursor_focus_only(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *cur;
+
+  BEGIN_TEST("ed render: cursor bar only when focused");
+
+  fix_init(&f, "hello", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  cmd_setcur(&f, 3, 0);
+  fix_layout(&f);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK(find_cursor_fill(&rl) == NULL); /* not focused */
+
+  CHECK(lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid) == 1);
+  CHECK(fix_render(&f, &rl));
+  cur = find_cursor_fill(&rl);
+  CHECK(cur != NULL);
+
+  if (cur) {
+    CHECK_EQ((unsigned)cur->rect.x, 24u); /* 3 cp * 8 */
+    CHECK_EQ((unsigned)cur->rect.y, 0u);
+    CHECK_EQ((unsigned)cur->rect.h, 16u);
+  }
+
+  lk_focus_clear(f.ui);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK(find_cursor_fill(&rl) == NULL);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_render_selection_rects(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *r0;
+  const lk_render_cmd *r1;
+  const lk_render_cmd *r2;
+
+  BEGIN_TEST("ed render: selection head/body/tail rects");
+
+  /* 4 lines of 4 chars: "abcd\nefgh\nijkl\nmnop" */
+  fix_init(&f, "abcd\nefgh\nijkl\nmnop", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* 1-line selection [1,3) on line 0 */
+  cmd_setcur(&f, 1, 0);
+  cmd_setcur(&f, 3, 1);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_sel_fills(&rl), 1);
+  r0 = nth_sel_fill(&rl, 0);
+  CHECK(r0 && r0->rect.x == 8 && r0->rect.y == 0 && r0->rect.w == 16 &&
+        r0->rect.h == 16);
+
+  /* 2-line selection [2,7): head + tail, no body */
+  cmd_setcur(&f, 2, 0);
+  cmd_setcur(&f, 7, 1);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_sel_fills(&rl), 2);
+  r0 = nth_sel_fill(&rl, 0);
+  r1 = nth_sel_fill(&rl, 1);
+  CHECK(r0 && r0->rect.x == 16 && r0->rect.y == 0 && r0->rect.w == 16);
+  CHECK(r1 && r1->rect.x == 0 && r1->rect.y == 16 && r1->rect.w == 16);
+
+  /* 3-line selection [2,12): head + full-width body + tail */
+  cmd_setcur(&f, 2, 0);
+  cmd_setcur(&f, 12, 1);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_sel_fills(&rl), 3);
+  r0 = nth_sel_fill(&rl, 0);
+  r1 = nth_sel_fill(&rl, 1);
+  r2 = nth_sel_fill(&rl, 2);
+  CHECK(r0 && r0->rect.x == 16 && r0->rect.y == 0 && r0->rect.w == 16);
+  CHECK(r1 && r1->rect.x == 0 && r1->rect.y == 16 && r1->rect.w == 400 &&
+        r1->rect.h == 16);
+  CHECK(r2 && r2->rect.x == 0 && r2->rect.y == 32 && r2->rect.w == 16);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_render_tab_expansion(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *r0;
+  const lk_render_cmd *r1;
+  const lk_render_cmd *r2;
+
+  BEGIN_TEST("ed render: tab stops at 32 px (4 * space)");
+
+  fix_init(&f, "ab\tcd\n\tz", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 3);
+
+  r0 = nth_run(&rl, 0);
+  r1 = nth_run(&rl, 1);
+  r2 = nth_run(&rl, 2);
+
+  CHECK(run_is(&rl, r0, "ab"));
+  CHECK(r0 && r0->rect.x == 0 && r0->rect.y == 0 && r0->rect.w == 16);
+
+  CHECK(run_is(&rl, r1, "cd"));
+  CHECK(r1 && r1->rect.x == 32 && r1->rect.y == 0 && r1->rect.w == 16);
+
+  /* leading tab on line 1: run starts at the first stop */
+  CHECK(run_is(&rl, r2, "z"));
+  CHECK(r2 && r2->rect.x == 32 && r2->rect.y == 16 && r2->rect.w == 8);
+
+  /* cursor after the tab sits on the stop */
+  cmd_setcur(&f, 3, 0); /* after \t on line 0 */
+  lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+
+  {
+    const lk_render_cmd *cur = find_cursor_fill(&rl);
+
+    CHECK(cur != NULL);
+
+    if (cur) {
+      CHECK_EQ((unsigned)cur->rect.x, 32u);
+    }
+  }
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
+ * (f) degradation
+ * ================================================================ */
+
+static void test_degrade_missing_prop(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("ed degrade: no UIP_EDITOR -> bg only, events bubble");
+
+  fix_init_ex(&f, "hello", 400, 80, 0);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 0);
+
+  CHECK(send_text(&f, "x") == 0);
+  CHECK(send_key(&f, LKK_LEFT, 0) == 0);
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 10, 8) == 0);
+  CHECK(send_wheel(&f, -1) == 0);
+  CHECK(doc_is(f.doc, "hello")); /* untouched */
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_degrade_stale_ref(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("ed degrade: stale/wrong-typed ref -> bg only");
+
+  fix_init(&f, "hello", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* live ref resolves */
+  CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui),
+                            f.node) == f.ed);
+
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 1);
+
+  /* release the resource: the tree still carries the (now stale) ref */
+  lk_resource_release(lk_ui_resources(f.ui), f.ref);
+
+  CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui),
+                            f.node) == NULL);
+
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 0);
+
+  CHECK(send_text(&f, "x") == 0);
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 10, 8) == 0);
+  CHECK(doc_is(f.doc, "hello"));
+
+  /* wrong-typed registration also fails to resolve */
+  {
+    static const lk_resource_type other_type = {"other", NULL};
+    lk_resource_ref oref = lk_resource_register(
+        lk_ui_resources(f.ui), &other_type, f.ed, "not-an-editor");
+    lk_tree *t = lk_ui_begin_frame(f.ui);
+    lk_ix w = lk_tree_add_node_c(t, "w", UIK_WINDOW);
+    lk_ix ed = lk_tree_add_node_c(t, "ed", UIK_EDITOR);
+
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, ed);
+    lk_tree_add_prop(t, ed, UIP_EDITOR, lk_v_resource(oref));
+    lk_ui_end_frame(f.ui);
+
+    CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui),
+                              lk_tree_find_by_id(lk_ui_tree(f.ui), f.nid)) ==
+          NULL);
+  }
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
+ * (g) UTF-8 integrity under editing
+ * ================================================================ */
+
+static void test_utf8_typing_backspace(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed utf8: typing + backspace keep boundaries");
+
+  fix_init(&f, "", 400, 80);
+
+  CHECK(send_text(&f, "\xC3\xA9") == 1);       /* e-acute */
+  CHECK(send_text(&f, "\xE6\x97\xA5") == 1);   /* CJK sun */
+  CHECK_EQ(lk_doc_len(f.doc), 5);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+
+  CHECK(send_key(&f, LKK_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 2); /* whole codepoint */
+  CHECK(send_key(&f, LKK_LEFT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  CHECK(send_key(&f, LKK_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+
+  CHECK(send_key(&f, LKK_BACKSPACE, 0) == 1);
+  CHECK(doc_is(f.doc, "\xC3\xA9"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 2);
+  CHECK(send_key(&f, LKK_BACKSPACE, 0) == 1);
+  CHECK(doc_is(f.doc, ""));
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ---- runner ---- */
+
+void lk_editor_run_tests(void) {
+  printf("\nlk editor command-layer tests:\n");
+  test_cmd_insert_text();
+  test_cmd_delete_utf8();
+  test_cmd_move_codepoints();
+  test_cmd_word_motion();
+  test_cmd_word_motion_multibyte();
+  test_cmd_selection_extend_collapse();
+  test_cmd_select_all();
+  test_cmd_replace_selection_one_undo();
+  test_cmd_word_delete();
+  test_cmd_line_doc_motion();
+  test_cmd_vertical_sticky_x();
+  test_cmd_page_fallback_null_ui();
+  test_cmd_set_cursor_snaps();
+  test_cmd_clipboard();
+
+  printf("\nlk editor event-tier tests:\n");
+  test_event_typing();
+  test_event_return_tab_esc();
+  test_event_arrows_modifiers();
+  test_event_page_keys();
+  test_event_clipboard_keys();
+  test_event_undo_redo_keys();
+
+  printf("\nlk editor pointer tests:\n");
+  test_pointer_click_position();
+  test_pointer_click_tab_segments();
+  test_pointer_drag_selection();
+
+  printf("\nlk editor viewport tests:\n");
+  test_viewport_virtualization();
+  test_viewport_wheel_scrolls();
+  test_viewport_scroll_clamps();
+  test_viewport_scroll_to_cursor();
+  test_viewport_partial_line_offset();
+
+  printf("\nlk editor render tests:\n");
+  test_render_cursor_focus_only();
+  test_render_selection_rects();
+  test_render_tab_expansion();
+
+  printf("\nlk editor degradation tests:\n");
+  test_degrade_missing_prop();
+  test_degrade_stale_ref();
+
+  printf("\nlk editor utf8 tests:\n");
+  test_utf8_typing_backspace();
+}
