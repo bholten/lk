@@ -797,6 +797,9 @@ static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
     const char *s = lk_intern_cstr(intern, v->as.str_id);
     return lcl_string_new(s ? s : "");
   }
+  /* UIV_RESOURCE is not exposed to scripts until editor-track stage D;
+   * marshal a placeholder so the value stays inspectable. */
+  case UIV_RESOURCE: return lcl_string_new("<resource>");
   default: return lcl_string_new("");
   }
 }
@@ -828,6 +831,7 @@ static lcl_value *command_to_dict(const lk_command *cmd,
         break;
       }
       case UIV_BOOL: av = lcl_int_new((long)arg->as.b); break;
+      case UIV_RESOURCE: av = lcl_string_new("<resource>"); break;
       default: av = lcl_string_new(""); break;
       }
 
@@ -1172,6 +1176,7 @@ static int c_lk_state_get(lcl_interp *interp, int argc, lcl_value **argv,
     *out = lcl_string_new(s ? s : "");
     break;
   }
+  case UIV_RESOURCE: *out = lcl_string_new("<resource>"); break;
   default: *out = lcl_string_new(""); break;
   }
 

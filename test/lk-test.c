@@ -19,6 +19,10 @@ int g_cur_ok = 0;
 /* document + edit history tests (test/lk-document-test.c) */
 void lk_document_run_tests(void);
 
+/* resource table + render-list run arena tests
+ * (test/lk-resource-test.c, editor track stage B1) */
+void lk_resource_run_tests(void);
+
 /* ---- changeset query helpers ---- */
 
 static int cs_has(const lk_changeset *cs, lk_ui *ui, lk_u8 kind,
@@ -10078,6 +10082,9 @@ int main(void) {
 
   /* document + edit history (editor track, stage A) */
   lk_document_run_tests();
+
+  /* resource refs + run arena (editor track, stage B1) */
+  lk_resource_run_tests();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

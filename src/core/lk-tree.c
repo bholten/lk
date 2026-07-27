@@ -1,6 +1,7 @@
 #include <memory.h>
 
 #include "lk-memory.h"
+#include "lk-resources.h"
 #include <lk.h>
 
 static int lk_tree_reserve_nodes(lk_tree *t, lk_u32 need) {
@@ -717,6 +718,33 @@ static void wr_u32(lk_write_fn wr, void *ud, lk_u32 x) {
   wr_cstr(wr, ud, buf);
 }
 
+/* UIV_RESOURCE dump value: typename="debugname"#id resolved through
+ * the tree's borrowed resource table (e.g. editor="src-view"#17);
+ * resource#id when the tree has no table or the ref is stale.
+ * Deterministic, address-free. */
+static void wr_resource(const lk_tree *t, lk_write_fn wr, void *ud,
+                        const lk_value *v) {
+  lk_resource_ref ref;
+  const char *type_name;
+  const char *debug_name;
+
+  ref.id = v->as.res.id;
+  ref.generation = v->as.res.gen;
+
+  if (t->resources &&
+      lk_resources_lookup_names(t->resources, ref, &type_name, &debug_name)) {
+    wr_cstr(wr, ud, type_name);
+    wr_cstr(wr, ud, "=\"");
+    wr_cstr(wr, ud, debug_name);
+    wr_cstr(wr, ud, "\"#");
+    wr_u32(wr, ud, ref.id);
+    return;
+  }
+
+  wr_cstr(wr, ud, "resource#");
+  wr_u32(wr, ud, ref.id);
+}
+
 static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
                       lk_u32 indent) {
   lk_u32 i;
@@ -793,6 +821,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
 
         wr_cstr(wr, ud, "\"");
         break;
+      case UIV_RESOURCE: wr_resource(t, wr, ud, &p->value); break;
       default: wr_cstr(wr, ud, "null"); break;
       }
     }
@@ -852,6 +881,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
 
               wr_cstr(wr, ud, "\"");
               break;
+            case UIV_RESOURCE: wr_resource(t, wr, ud, pv); break;
             default: wr_cstr(wr, ud, "null"); break;
             }
           }
@@ -888,6 +918,14 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
   } else {
     wr_cstr(wr, ud, ")\n");
   }
+}
+
+void lk_tree_set_resources(lk_tree *t, lk_resources *rs) {
+  if (!t) {
+    return;
+  }
+
+  t->resources = rs;
 }
 
 void lk_tree_dump(const lk_tree *t, lk_write_fn wr, void *wr_ud) {
