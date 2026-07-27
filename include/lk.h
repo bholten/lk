@@ -53,6 +53,7 @@ typedef lk_u32 lk_node_id;
 
 typedef struct lk_intern lk_intern;
 typedef struct lk_state lk_state;
+typedef struct lk_resources lk_resources;
 
 lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32),
                          void (*dealloc)(void *, void *), void *alloc_ud);
@@ -187,7 +188,8 @@ typedef enum lk_value_tag {
   UIV_NONE = 0,
   UIV_BOOL,
   UIV_I32,
-  UIV_STR
+  UIV_STR,
+  UIV_RESOURCE /* typed resource reference — see lk_resource_ref */
 } lk_value_tag;
 
 typedef struct lk_value {
@@ -196,6 +198,11 @@ typedef struct lk_value {
     lk_u8 b;
     lk_u32 i;
     lk_u32 str_id; /* interned string id (UIV_STR) */
+    struct {
+      lk_u32 id, gen;
+    } res; /* resource reference (UIV_RESOURCE); no pointer in the
+              value — resolution and type checking go through the
+              lk_resources table (docs/editor.md §5) */
   } as;
 } lk_value;
 
@@ -254,6 +261,12 @@ typedef struct lk_tag {
 typedef struct lk_tree {
   lk_intern *intern;
   lk_u8 owns_intern; /* 1 if tree created the intern table */
+  lk_resources *resources; /* borrowed resource table (like the shared
+                              intern table) — never freed by the tree.
+                              lk_ui sets it on both its trees so every
+                              widget vtable hook can resolve refs
+                              through t alone; standalone trees have
+                              NULL (attach via lk_tree_set_resources). */
   lk_node *nodes;
   lk_u32 node_cap;
   lk_u32 node_count;
@@ -328,12 +341,27 @@ void lk_tree_add_tag(lk_tree *t, lk_ix node, lk_u32 tag_id);
 void lk_tree_add_tag_s(lk_tree *t, lk_ix node, const char *tag);
 int lk_tree_has_tag(const lk_tree *t, lk_ix node, lk_u32 tag_id);
 
+/**
+ * Resource references — typed, generation-checked handles to
+ * application-owned objects (docs/editor.md §5).  The tree presents
+ * views of those objects; it never owns them.
+ **/
+
+typedef struct lk_resource_ref {
+  lk_u32 id;         /* stable logical identity, 0 = null ref */
+  lk_u32 generation; /* stale-handle detection */
+} lk_resource_ref;
+
 /* Value constructors. */
 lk_value lk_v_none(void);
 lk_value lk_v_bool(int b);
 lk_value lk_v_i32(lk_i32 i);
 lk_value lk_v_str(lk_intern *it, lk_str s);
 lk_value lk_v_cstr(lk_intern *it, const char *cstr);
+lk_value lk_v_resource(lk_resource_ref ref);
+
+/* Extract the ref from a UIV_RESOURCE value ({0,0} if not one). */
+lk_resource_ref lk_v_resource_ref(lk_value v);
 
 /* Validation */
 typedef enum lk_diag_kind { UID_NONE = 0, UID_ERROR, UID_WARN } lk_diag_kind;
@@ -389,6 +417,48 @@ void lk_tree_dump(const lk_tree *t, lk_write_fn wr, void *wr_ud);
 
 /* very tiny selected for version 0: find node by exact id */
 lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id);
+
+/**
+ * Resource table — owned by lk_ui and borrowed by its trees (exactly
+ * like the shared intern table).  Registration happens once per object
+ * (id stability across frames); the table does NOT own registered
+ * objects — release only invalidates the ref by bumping the slot
+ * generation.  A stale or wrong-typed ref resolves to NULL, so
+ * use-after-free is unrepresentable at this boundary.  See
+ * docs/editor.md §5.
+ **/
+
+typedef struct lk_resource_type {
+  const char *name; /* "editor", "document", ... */
+  /* optional hooks, all NULL-able in v1: */
+  void (*describe)(void *obj, lk_write_fn w, void *wud);
+} lk_resource_type;
+
+lk_resources *lk_resources_new(void *(*alloc)(void *, lk_u32),
+                               void (*dealloc)(void *, void *), void *ud);
+void lk_resources_destroy(lk_resources *rs);
+
+/* Register obj under type; returns the new ref ({0,0} on failure).
+ * debug_name is copied with the table's allocator (NULL -> empty). */
+lk_resource_ref lk_resource_register(lk_resources *rs,
+                                     const lk_resource_type *type, void *obj,
+                                     const char *debug_name);
+
+/* Invalidate a ref: bumps the slot generation and clears the object.
+ * Releasing a stale or null ref is a no-op.  The slot is reused by a
+ * later register (whose new ref works; the old ref stays dead). */
+void lk_resource_release(lk_resources *rs, lk_resource_ref ref);
+
+/* Resolve a ref.  NULL if rs is NULL, the ref is null, the id is out
+ * of range, the generation mismatches (stale), or the type descriptor
+ * pointer differs (type checking is descriptor-pointer equality). */
+void *lk_resource_get(const lk_resources *rs, lk_resource_ref ref,
+                      const lk_resource_type *type);
+
+/* Attach a resource table to a standalone tree (borrow — the tree
+ * never frees it).  lk_ui wires its own table automatically; this is
+ * for headless tests and tree-driving hosts. */
+void lk_tree_set_resources(lk_tree *t, lk_resources *rs);
 
 /* Prop schema rules
  *
@@ -631,6 +701,8 @@ typedef struct lk_ui {
   lk_node_id hovered_id; /* 0 = nothing hovered */
   lk_node_id captured_id; /* 0 = no pointer capture (see lk_capture_set) */
   lk_state *state;       /* retained per-node state */
+  lk_resources *resources; /* owned resource table, borrowed by both
+                              trees (see lk_ui_resources) */
 
   /* Translators */
   lk_translator *translators;
@@ -733,6 +805,10 @@ lk_intern *lk_tree_intern(const lk_tree *t);
 
 /* UI accessors */
 lk_intern *lk_ui_intern(const lk_ui *ui);
+
+/* The ui's resource table (created at lk_ui_create, destroyed with the
+ * ui; both trees borrow it).  NULL only if ui is NULL. */
+lk_resources *lk_ui_resources(lk_ui *ui);
 
 /**
  * Retained state store — per-node state that persists across frames.
@@ -924,7 +1000,10 @@ typedef enum lk_render_op {
   LK_ROP_FILL_RECT = 1,
   LK_ROP_DRAW_TEXT,
   LK_ROP_CLIP_BEGIN,
-  LK_ROP_CLIP_END
+  LK_ROP_CLIP_END,
+  LK_ROP_DRAW_RUN /* like DRAW_TEXT, but the bytes live in the render
+                     list's own arena (run_off/run_len into rl->bytes)
+                     — never interned.  See docs/editor.md §8. */
 } lk_render_op;
 
 typedef struct lk_render_cmd {
@@ -932,14 +1011,24 @@ typedef struct lk_render_cmd {
   lk_rect rect;
   lk_color color;
   lk_u32 str_id;     /* for DRAW_TEXT: interned string ID */
-  lk_u16 font_id;    /* for DRAW_TEXT: face from resolved style (0 = default) */
-  lk_u16 font_size;  /* for DRAW_TEXT: size from resolved style (0 = default) */
+  lk_u16 font_id;    /* for DRAW_TEXT/DRAW_RUN: face from resolved style
+                        (0 = default) */
+  lk_u16 font_size;  /* for DRAW_TEXT/DRAW_RUN: size from resolved style
+                        (0 = default) */
+  lk_u32 run_off;    /* for DRAW_RUN: byte offset into rl->bytes */
+  lk_u32 run_len;    /* for DRAW_RUN: run length in bytes */
 } lk_render_cmd;
 
 typedef struct lk_render_list {
   lk_render_cmd *cmds;
   lk_u32 count;
   lk_u32 cap;
+  char *bytes; /* frame-local run arena: the list OWNS these bytes, so
+                  it stays a self-contained value — inspectable,
+                  capturable, consumable late.  Reset (capacity kept)
+                  by lk_render_build alongside count. */
+  lk_u32 bytes_count;
+  lk_u32 bytes_cap;
 } lk_render_list;
 
 /* Build a render list from a laid-out tree.  rects[] indexed by lk_ix
@@ -963,7 +1052,18 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
  * success, 0 on allocation failure. */
 int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd);
 
-/* Free the cmds array. Safe to call on a zeroed struct. */
+/* Copy len bytes into the render list's run arena (grows with the
+ * same doubling pattern as the cmd array; capacity is reused across
+ * frames).  Writes the run's starting offset to *out_off and returns
+ * 1; returns 0 on allocation failure (arena unchanged).  len 0 is
+ * legal: writes the current offset, copies nothing, returns 1.
+ * (docs/editor.md §8 sketches "returns offset"; the out-param form is
+ * a deliberate deviation so failure isn't ambiguous with offset 0.) */
+int lk_render_list_push_run(lk_render_list *rl, const char *ptr, lk_u32 len,
+                            lk_u32 *out_off);
+
+/* Free the cmds array and the run arena. Safe to call on a zeroed
+ * struct. */
 void lk_render_list_destroy(lk_render_list *rl);
 
 /**

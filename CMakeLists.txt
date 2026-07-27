@@ -34,6 +34,7 @@ set(LK_SOURCES
   src/core/lk-tooltip.c
   src/core/lk-command.c
   src/core/lk-api.c
+  src/core/lk-resources.c
 
   src/editor/lk-document.c
   src/editor/lk-edit-history.c
@@ -56,7 +57,8 @@ target_include_directories(lk_core
 
 target_compile_options(lk_core PRIVATE -Wall -Wextra -pedantic)
 
-add_executable(lk_test test/lk-test.c test/lk-document-test.c)
+add_executable(lk_test test/lk-test.c test/lk-document-test.c
+  test/lk-resource-test.c)
 target_link_libraries(lk_test PRIVATE lk_core)
 target_include_directories(lk_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

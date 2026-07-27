@@ -27,6 +27,49 @@ int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {
   return 1;
 }
 
+int lk_render_list_push_run(lk_render_list *rl, const char *ptr, lk_u32 len,
+                            lk_u32 *out_off) {
+  if (!rl || !out_off) {
+    return 0;
+  }
+
+  if (len > 0 && !ptr) {
+    return 0;
+  }
+
+  if (rl->bytes_count + len > rl->bytes_cap) {
+    lk_u32 new_cap = rl->bytes_cap == 0 ? 256 : rl->bytes_cap * 2;
+    char *new_bytes;
+
+    while (new_cap < rl->bytes_count + len) {
+      new_cap *= 2;
+    }
+
+    new_bytes = (char *)lk_sys_alloc(NULL, new_cap);
+
+    if (!new_bytes) {
+      return 0;
+    }
+
+    if (rl->bytes) {
+      memcpy(new_bytes, rl->bytes, rl->bytes_count);
+      lk_sys_dealloc(NULL, rl->bytes);
+    }
+
+    rl->bytes = new_bytes;
+    rl->bytes_cap = new_cap;
+  }
+
+  *out_off = rl->bytes_count;
+
+  if (len > 0) {
+    memcpy(rl->bytes + rl->bytes_count, ptr, len);
+    rl->bytes_count += len;
+  }
+
+  return 1;
+}
+
 /* High bit marks a CLIP_END sentinel on the DFS stack.  Node indices
  * never reach 2^31 so this is safe.
  */
@@ -267,7 +310,11 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     return 0;
   }
 
+  /* Reset commands and the run arena together (capacity is reused).
+   * lk_render_build_overlays only appends, so overlays never clobber
+   * runs emitted by the main pass. */
   out->count = 0;
+  out->bytes_count = 0;
 
   if (t->root == 0 || t->root >= t->node_count) {
     return 1;
@@ -305,7 +352,14 @@ void lk_render_list_destroy(lk_render_list *rl) {
     lk_sys_dealloc(NULL, rl->cmds);
   }
 
+  if (rl->bytes) {
+    lk_sys_dealloc(NULL, rl->bytes);
+  }
+
   rl->cmds = NULL;
   rl->count = 0;
   rl->cap = 0;
+  rl->bytes = NULL;
+  rl->bytes_count = 0;
+  rl->bytes_cap = 0;
 }

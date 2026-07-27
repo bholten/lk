@@ -970,6 +970,30 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
           break;
 
+        case LK_ROP_DRAW_RUN:
+          /* Like DRAW_TEXT, but the bytes live in the render list's
+           * own arena.  Empty runs are skipped entirely — the
+           * documented TTF_SetTextString len-0 gotcha. */
+          if (cmd->run_len > 0 && win->rl.bytes) {
+            lk_str run;
+            TTF_Font *font;
+            TTF_Text *scratch;
+
+            run.ptr = win->rl.bytes + cmd->run_off;
+            run.len = cmd->run_len;
+
+            font = sdl_text_instance(win, cmd->font_id, cmd->font_size);
+            scratch = font ? sdl_text_scratch(win, font, run) : NULL;
+
+            if (scratch) {
+              TTF_SetTextColor(scratch, cmd->color.r, cmd->color.g,
+                               cmd->color.b, cmd->color.a);
+              TTF_DrawRendererText(scratch, fr.x, fr.y);
+            }
+          }
+
+          break;
+
         case LK_ROP_CLIP_BEGIN: {
           SDL_Rect cr;
           cr.x = (int)cmd->rect.x;

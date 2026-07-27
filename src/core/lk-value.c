@@ -37,3 +37,25 @@ lk_value lk_v_str(lk_intern *it, lk_str s) {
 lk_value lk_v_cstr(lk_intern *it, const char *cstr) {
   return lk_v_str(it, lk_str_c(cstr));
 }
+
+lk_value lk_v_resource(lk_resource_ref ref) {
+  lk_value v;
+  v.tag = UIV_RESOURCE;
+  v.as.res.id = ref.id;
+  v.as.res.gen = ref.generation;
+
+  return v;
+}
+
+lk_resource_ref lk_v_resource_ref(lk_value v) {
+  lk_resource_ref ref;
+  ref.id = 0;
+  ref.generation = 0;
+
+  if (v.tag == UIV_RESOURCE) {
+    ref.id = v.as.res.id;
+    ref.generation = v.as.res.gen;
+  }
+
+  return ref;
+}

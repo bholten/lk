@@ -116,6 +116,12 @@ static int props_equal(const lk_tree *a, const lk_node *na, const lk_tree *b,
         return 0;
       }
       break;
+    case UIV_RESOURCE:
+      if (pa->value.as.res.id != pb->value.as.res.id ||
+          pa->value.as.res.gen != pb->value.as.res.gen) {
+        return 0;
+      }
+      break;
     }
   }
 
@@ -132,6 +138,8 @@ static int value_equal(const lk_value *a, const lk_value *b) {
   case UIV_BOOL: return a->as.b == b->as.b;
   case UIV_I32: return a->as.i == b->as.i;
   case UIV_STR: return a->as.str_id == b->as.str_id;
+  case UIV_RESOURCE:
+    return a->as.res.id == b->as.res.id && a->as.res.gen == b->as.res.gen;
   }
 
   return 0;
@@ -427,6 +435,19 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
     return NULL;
   }
 
+  /* Resource table — eager, matching the rest of lk_ui's init.  Both
+   * trees borrow it so widget vtable hooks can resolve refs through
+   * the tree alone (docs/editor.md §5). */
+  ui->resources = lk_resources_new(al, de, ud);
+
+  if (!ui->resources) {
+    lk_ui_destroy(ui);
+    return NULL;
+  }
+
+  ui->prev->resources = ui->resources;
+  ui->next->resources = ui->resources;
+
   ui->theme = lk_theme_default(al, de, ud);
 
   return ui;
@@ -451,6 +472,10 @@ void lk_ui_destroy(lk_ui *ui) {
 
   if (ui->state) {
     lk_state_destroy(ui->state);
+  }
+
+  if (ui->resources) {
+    lk_resources_destroy(ui->resources);
   }
 
   if (ui->changeset.changes) {
@@ -593,6 +618,10 @@ const lk_tree *lk_ui_tree(const lk_ui *ui) {
 
 lk_state *lk_ui_state(lk_ui *ui) {
   return ui ? ui->state : NULL;
+}
+
+lk_resources *lk_ui_resources(lk_ui *ui) {
+  return ui ? ui->resources : NULL;
 }
 
 void lk_ui_set_theme(lk_ui *ui, lk_theme *th) {
