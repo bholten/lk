@@ -27,6 +27,10 @@ void lk_resource_run_tests(void);
  * (test/lk-editor-test.c, editor track stage B2) */
 void lk_editor_run_tests(void);
 
+/* annotation store + styled-span render tests
+ * (test/lk-annot-test.c, editor track stage C) */
+void lk_annot_run_tests(void);
+
 /* ---- changeset query helpers ---- */
 
 static int cs_has(const lk_changeset *cs, lk_ui *ui, lk_u8 kind,
@@ -10092,6 +10096,9 @@ int main(void) {
 
   /* editor view + command layer + widget (editor track, stage B2) */
   lk_editor_run_tests();
+
+  /* annotation store + styled spans (editor track, stage C) */
+  lk_annot_run_tests();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 
