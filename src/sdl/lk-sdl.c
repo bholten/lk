@@ -763,7 +763,8 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
      * windows appear next to it. */
     {
       lk_ix f = lk_focus_current(win->ui, cur);
-      int want = (f != 0 && cur->nodes[f].kind == (lk_u16)UIK_TEXT_INPUT);
+      int want = (f != 0 && (cur->nodes[f].kind == (lk_u16)UIK_TEXT_INPUT ||
+                             cur->nodes[f].kind == (lk_u16)UIK_EDITOR));
 
       if (want && !win->text_input_active) {
         SDL_StartTextInput(win->sdl_win);
