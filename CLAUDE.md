@@ -150,24 +150,6 @@ An overlay pre-step runs before all tiers: ESC pops the topmost overlay and cons
 
 Key functions: `lk_event_route(ui, event)`, `lk_hit_test(tree, rects, x, y)`, `lk_hit_test_overlay(ui, rects, cfg, x, y)`, `lk_focus_set/clear/next/prev`, `lk_hover_set/clear`, `lk_capture_set/clear/current`.
 
-### Node Prop Helpers (`lk-tree.c`)
-
-Public functions for querying node properties (used by widget implementations and event code):
-
-- `lk_node_prop_i32(t, n, key, def)` — get i32 prop or default
-- `lk_node_has_prop(t, n, key)` — check if prop exists
-- `lk_node_prop_bool(t, n, key)` — get bool prop (0 if missing)
-- `lk_node_text(t, n)` — get text prop as `lk_str`
-- `lk_node_text_id(t, n)` — get text prop as interned string ID
-
-### Validation
-
-`lk_tree_validate` checks structural integrity (root exists, no cycles via DFS, no duplicate IDs, no multi-parent nodes, parent pointer consistency). `lk_tree_validate_schema` is stubbed out for future per-kind prop validation.
-
-### Debug
-
-`lk_tree_dump` outputs the tree as s-expression text via a `lk_write_fn` callback.
-
 ### SDL3 Backend (`src/sdl/`)
 
 Optional platform backend. Conditional on `find_package(SDL3)` and `find_package(SDL3_ttf)`.
@@ -175,7 +157,7 @@ Optional platform backend. Conditional on `find_package(SDL3)` and `find_package
 - **lk-sdl.h** — Public API: `lk_window_create/destroy/run`, `lk_window_ui`, `lk_window_set_event_handler`. The `lk_frame_fn` callback receives a mutable `lk_tree*`; the run loop handles begin/end frame, layout, event polling, and rendering.
 - **lk-sdl.c** — SDL3 integration: event translation (`sdl_to_lk_event`; `sdl_to_lk_keycode` covers TAB/RETURN/ESCAPE/BACKSPACE/DELETE/SPACE/arrows/HOME/END, A–Z, 0–9, PageUp/PageDown, and F1–F12), render list consumption, and the real `lk_text_backend` implementation (text-contract stage B). Text renders through one `TTF_TextEngine` per window (`TTF_CreateRendererTextEngine`; internal glyph atlas does the caching — the old per-string texture cache is gone) with a single reusable scratch `TTF_Text`. Fonts: a face registry (`face_paths[]`; face 0 = `lk_window_cfg.font_path`, may be absent) plus a lazily-populated `(face_id, size)` → `TTF_Font*` instance cache (linear-scan array, size 0 resolves to the window default size, fallback 16; all instances closed on window destroy). `lk_window_register_font(win, path)` (lk-sdl.h) registers a new face and returns its `font_id` (>= 1; 0 on failure — paths are verified by opening at the default size at registration). Vtable: measure via `TTF_GetStringSize`/`TTF_GetFontAscent`; `x_from_index`/`index_from_x` via `TTF_GetTextSubString`/`TTF_GetTextSubStringForPoint` on the scratch text (nearest-boundary snapping, clamped); `line_height` via `TTF_GetFontHeight`. The run loop uses the stub text backend when no face is available. Gotcha: `TTF_SetTextString` treats length 0 as "null-terminated" — empty runs must pass a literal `""`.
 - **demo.c** — Fruit selector demo exercising presentations, commands, focus, and event handling.
-- Run loop order: clear commands → begin_frame → frame callback → end_frame → resolve styles → layout (with state) → poll events (hit-test targeting for pointer events — unless a pointer capture is active, in which case MOVE/UP target the captured node and hover updates are suppressed; focus targeting for key/text events; two-tier event routing via `lk_event_route`; hover state updated on pointer move; click-to-focus and tab-cycling as built-in behaviors) → render (with state). Key/text events fall back to root when nothing is focused.
+- Run loop order: clear commands → begin_frame → frame callback → end_frame → resolve styles → layout (with state) → SDL text-input gating (engaged while a `UIK_TEXT_INPUT` or `UIK_EDITOR` is focused; IME area follows the focused rect) → poll events (hit-test targeting for pointer events — unless a pointer capture is active, in which case MOVE/UP target the captured node and hover updates are suppressed; focus targeting for key/text events; two-tier event routing via `lk_event_route`; hover state updated on pointer move; click-to-focus and tab-cycling as built-in behaviors) → **re-layout** (events mutate state after the first layout — editor documents, scroll offsets, split ratios — so a second pass keeps the frame's render consistent with what the events did; hit-testing deliberately used the pre-event rects) → render (with state). Key/text events fall back to root when nothing is focused.
 
 ### Lcl Scripting Bindings (`src/lcl/`)
 
