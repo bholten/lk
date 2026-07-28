@@ -915,6 +915,14 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       continue;
     }
 
+    /* 4.5. Events mutate state after layout ran — editor documents
+     * (which invalidate their geometry), scroll offsets, split
+     * ratios.  Re-lay out so this frame renders what the events did
+     * instead of a one-frame-stale (or, for the editor, blanked)
+     * view.  Hit-testing above deliberately used the pre-event
+     * rects. */
+    lk_layout(cur, &lcfg, win->rects);
+
     /* 5. Render */
     lk_render_build(cur, win->rects, lk_ui_styles(win->ui),
                     lk_ui_state(win->ui), &win->rl);
