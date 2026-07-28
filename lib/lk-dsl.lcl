@@ -33,7 +33,7 @@ namespace lk_dsl {
     ;; handled specially (lk::tag / lk::present); the rest map to
     ;; lk::prop.  Values are 1 for now; per-kind validation may hang
     ;; richer descriptors here later.
-    let _prop_schema #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1 split_ratio 1 tag 1 present 1}
+    let _prop_schema #{text 1 focusable 1 disabled 1 w 1 h 1 padding 1 gap 1 align 1 justify 1 hidden 1 tooltip 1 split_ratio 1 editor 1 tag 1 present 1}
     let _known_props [String::join [Dict::keys $_prop_schema] ", "]
 
     ;; ---- Trailing-arg disambiguation ----
@@ -187,6 +187,10 @@ namespace lk_dsl {
 
     proc split_v {id *rest} {
         _make_node split_v $id $rest
+    }
+
+    proc editor {id *rest} {
+        _make_node editor $id $rest
     }
 
     ;; ---- Theme ----
@@ -387,4 +391,4 @@ namespace lk_dsl {
 import lk_dsl app
 import lk_dsl view theme translator keybinding on event_handler
 import lk_dsl column row label button text_input spacer scroll
-import lk_dsl dropdown option split_h split_v
+import lk_dsl dropdown option split_h split_v editor

@@ -447,6 +447,40 @@ modal support (`lk::overlay_push` / `lk::overlay_pop` bindings,
 `docs/overlays.md`.  Remnants (dropdown popup scrolling, dropdown
 `-value` flag) live in the known-issues list below.
 
+### ~~8. Editor track (weft's document core + UIK_EDITOR)~~ ✓
+
+All four stages of `docs/editor.md` landed (2026-07-26/27,
+9b4ede9 → this change):
+
+- **A**: `lk_document` piece table with transactional, observable
+  mutation (deltas carry the actual bytes; subscribers notified once
+  per committed transaction), opaque `lk_revision {hi,lo}` tokens,
+  `lk_edit_history` as an ordinary origin-filtered subscriber.
+- **B1**: typed resource refs — `UIV_RESOURCE` + `lk_resources` on
+  `lk_ui`, generation-checked, dumpable (`editor="name"#17`) — and
+  the self-contained render list (`LK_ROP_DRAW_RUN` + byte arena).
+- **B2**: `lk_editor` view (anchored viewport, sticky-x, tab-stop
+  segments) + the `LK_ED_*` command layer (one editing command = one
+  transaction = one undo step) + the `UIK_EDITOR` widget.
+- **C**: `lk_annot_store` (biased anchors transformed from committed
+  deltas via subscription) + viewport-scoped, revision-stamped span
+  snapshots with the ignore-stale-at-render policy.
+- **D**: 30 Lcl procs (`lk::doc_*`, `lk::history_*`, `lk::editor_*`
+  incl. `lk::editor_command` by command name, `lk::annot_*`), opaque
+  wrappers whose dependents retain their dependencies' Lcl values
+  (finalizer order = refcount order — no destruction-order UAF),
+  DSL `editor` widget + `editor` prop key,
+  `examples/editor-dsl.lcl` (editor in a split beside live status
+  labels, annotation-driven styled spans, command buttons).
+- Deferred with landing spots (docs/editor.md §13): wrapping,
+  column selection, cursor blink, IME preedit, tree-sitter,
+  annotation persistence, search/goto UI, multi-view cursor sync,
+  shared position markers, keybindings-as-data, the
+  widget-registration protocol upgrade.
+- Note: item 6 above (per-character styled text) is now delivered
+  for the editor by span-split `DRAW_RUN` rendering; a standalone
+  `STYLED_TEXT` widget for labels/logs remains open.
+
 
 ## Known issues / small hardening items
 

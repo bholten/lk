@@ -665,7 +665,8 @@ ordinary panes — not one gigantic magical widget.
 
 Each stage one commit, suites green, gates explicit.
 
-- **A — document + history + change protocol.** `lk_revision`,
+- **A — document + history + change protocol.** DONE (2026-07-26,
+  9b4ede9). `lk_revision`,
   `lk_document` (transactions, deltas, subscriptions, pinned
   contracts §3.3), `lk_edit_history`. Weft's `test_document.c`
   ported, plus new tests for every pinned contract, transaction
@@ -673,11 +674,13 @@ Each stage one commit, suites green, gates explicit.
   reentrancy assert), undo/redo through the notification path.
   Gate: ported + new tests green; zero UI files touched.
 - **B — substrate + widget.** Two commits:
-  - **B1 (core)**: `UIV_RESOURCE` + `lk_resources` on `lk_ui`
+  - **B1 (core)**: DONE (2026-07-26, 8445f8c). `UIV_RESOURCE` +
+    `lk_resources` on `lk_ui`
     (+ dump format), `LK_ROP_DRAW_RUN` + render-list byte arena +
     SDL consumer. Gate: resource-table tests (stale ref, wrong
     type, dump), render-list arena tests.
-  - **B2 (editor)**: `lk_editor` + command layer + `UIK_EDITOR`
+  - **B2 (editor)**: DONE (2026-07-26, 31c752d). `lk_editor` +
+    command layer + `UIK_EDITOR`
     vtable + `UIP_EDITOR` + anchored viewport + tab segments +
     theme defaults. Gate: headless tests drive typing, motion,
     selection, clipboard, undo, click/drag through
@@ -685,12 +688,21 @@ Each stage one commit, suites green, gates explicit.
     cursor, and render-list shape (runs readable from the arena);
     commands also invoked directly (bypassing events) to prove the
     layer split; demo hand-check.
-- **C — annotations + styled spans.** `lk-annot-store.c` +
+- **C — annotations + styled spans.** DONE (2026-07-26, 93a7cf5).
+  `lk-annot-store.c` +
   ported `test_annot_store.c` (as a document subscriber), span
   snapshot API + boundary-split rendering + staleness policy.
   Gate: ported suite green; span/staleness render-list tests.
-- **D — bindings, DSL, example.** Gate: binding tests for every
-  proc incl. error paths and finalizer/release behavior; example
+- **D — bindings, DSL, example.** DONE (2026-07-27, this change).
+  30 new procs (documents, histories, editors incl.
+  `lk::editor_command` by name + `lk::editor_set_spans`
+  stamp-at-call snapshots, annot stores), opaque wrappers whose
+  dependents retain their dependencies' Lcl values (finalizer
+  order = refcount order; the editor's finalizer releases its
+  resource registration), the `editor` DSL widget + `editor` prop
+  key, and `examples/editor-dsl.lcl`.  Gate: binding tests for
+  every proc incl. error paths and finalizer/release behavior
+  (23 new tests, 92 total); example
   under the dummy driver; docs updated (CLAUDE.md, this file,
   TODO.md).
 

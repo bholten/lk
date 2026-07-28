@@ -9719,6 +9719,7 @@ static void test_dump_kind_names(void) {
   lk_ix sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
   lk_ix dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
   lk_ix op = lk_tree_add_node_s(t, lk_str_c("op"), UIK_OPTION);
+  lk_ix ed = lk_tree_add_node_s(t, lk_str_c("ed"), UIK_EDITOR);
   test_buf buf;
 
   BEGIN_TEST("dump: names for all widget kinds");
@@ -9730,6 +9731,7 @@ static void test_dump_kind_names(void) {
   lk_tree_append_child(t, sv, sc);
   lk_tree_append_child(t, sh, dd);
   lk_tree_append_child(t, dd, op);
+  lk_tree_append_child(t, sv, ed);
 
   memset(&buf, 0, sizeof(buf));
   lk_tree_dump(t, test_buf_write, &buf);
@@ -9740,6 +9742,7 @@ static void test_dump_kind_names(void) {
   CHECK(strstr(buf.buf, "scroll") != NULL);
   CHECK(strstr(buf.buf, "dropdown") != NULL);
   CHECK(strstr(buf.buf, "option") != NULL);
+  CHECK(strstr(buf.buf, "(editor") != NULL);
   CHECK(strstr(buf.buf, "unknown") == NULL);
 
   END_TEST();
