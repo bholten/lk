@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <lcl.h>
+#include <lk-editor.h>
 #include <lk.h>
 #include "lcl-lk.h"
 
@@ -2323,6 +2324,842 @@ static void test_dsl_props_dict_merge(void) {
   END_TEST();
 }
 
+/* ============================================================================
+ * Editor track (stage D): documents, histories, editors, annot stores.
+ * ============================================================================
+ */
+
+/* Eval an expression and check its int result. */
+static void check_int(lcl_interp *interp, const char *src, long expect) {
+  lcl_value *r = NULL;
+
+  eval_ok(interp, src, &r);
+  if (r) {
+    long v = -99999;
+    CHECK(lcl_value_to_int(r, &v) == LCL_OK);
+    if (v != expect) {
+      if (g_cur_ok)
+        printf("FAIL\n");
+      printf("    %s => %ld, expected %ld\n", src, v, expect);
+      g_cur_ok = 0;
+    }
+    lcl_ref_dec(r);
+  }
+}
+
+/* Eval an expression and check its string result. */
+static void check_str(lcl_interp *interp, const char *src, const char *expect) {
+  lcl_value *r = NULL;
+
+  eval_ok(interp, src, &r);
+  if (r) {
+    const char *s = lcl_value_to_string(r);
+    if (!s || strcmp(s, expect) != 0) {
+      if (g_cur_ok)
+        printf("FAIL\n");
+      printf("    %s => \"%s\", expected \"%s\"\n", src, s ? s : "(null)",
+             expect);
+      g_cur_ok = 0;
+    }
+    lcl_ref_dec(r);
+  }
+}
+
+static void test_doc_new_read(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: new/text/len/line_count");
+  interp = make_interp();
+
+  eval_ok(interp, "let d [lk::doc_new \"hello\nworld\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  check_str(interp, "lk::doc_text $d", "hello\nworld");
+  check_int(interp, "lk::doc_len $d", 11);
+  check_int(interp, "lk::doc_line_count $d", 2);
+
+  /* The empty document is one empty line. */
+  r = NULL;
+  eval_ok(interp, "let d0 [lk::doc_new]", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "lk::doc_len $d0", 0);
+  check_int(interp, "lk::doc_line_count $d0", 1);
+  check_str(interp, "lk::doc_text $d0", "");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_revision_string(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: revision is a stable \"hi:lo\" token");
+  interp = make_interp();
+
+  eval_ok(interp, "let d [lk::doc_new \"abc\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  /* Reading does not advance it; comparing from script works. */
+  check_int(interp,
+            "let r1 [lk::doc_revision $d]\n"
+            "let r2 [lk::doc_revision $d]\n"
+            "== $r1 $r2",
+            1);
+
+  /* One committed edit advances it exactly once. */
+  check_int(interp,
+            "lk::doc_insert $d 0 \"x\"\n"
+            "let r3 [lk::doc_revision $d]\n"
+            "== $r1 $r3",
+            0);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_insert_delete(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: insert/delete edit the contents");
+  interp = make_interp();
+
+  eval_ok(interp, "let d [lk::doc_new \"hello world\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  check_str(interp,
+            "lk::doc_insert $d 5 \",\"\n"
+            "lk::doc_text $d",
+            "hello, world");
+  check_str(interp,
+            "lk::doc_delete $d 0 7\n"
+            "lk::doc_text $d",
+            "world");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_mutation_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: rejected mutations and bad handles error");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"abc\"]\n"
+          "let ui [lk::ui_create]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* insert past the end / delete at the end are rejected by the C
+   * contract; the binding turns the rejection into a hard error. */
+  eval_expect_err(interp, "lk::doc_insert $d 99 \"x\"",
+                  "lk::doc_insert", "rejected", NULL);
+  eval_expect_err(interp, "lk::doc_delete $d 3 1",
+                  "lk::doc_delete", "rejected", NULL);
+  eval_expect_err(interp, "lk::doc_insert $d -1 \"x\"",
+                  "lk::doc_insert", "non-negative", NULL);
+
+  /* Arity and wrong opaque type. */
+  eval_expect_err(interp, "lk::doc_insert $d 0", "lk::doc_insert",
+                  "3 arguments", NULL);
+  eval_expect_err(interp, "lk::doc_text $ui", "expected lk_document opaque",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::doc_text", "lk::doc_text", "1 argument", NULL);
+
+  /* The rejected calls left the document untouched. */
+  check_str(interp, "lk::doc_text $d", "abc");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_transact_groups(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: transact groups 3 edits into one undo step");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"base\"]\n"
+          "let h [lk::history_new $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_str(interp,
+            "lk::doc_transact $d {\n"
+            "    lk::doc_insert $d 0 \"A\"\n"
+            "    lk::doc_insert $d 1 \"B\"\n"
+            "    lk::doc_insert $d 6 \"C\"\n"
+            "}\n"
+            "lk::doc_text $d",
+            "ABbaseC");
+
+  /* One undo step reverts all three edits. */
+  check_int(interp, "lk::history_can_undo $h", 1);
+  check_int(interp, "lk::history_undo $h $d", 1);
+  check_str(interp, "lk::doc_text $d", "base");
+  check_int(interp, "lk::history_can_undo $h", 0);
+  check_int(interp, "lk::history_can_redo $h", 1);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_transact_error_propagates(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: transact commits then propagates a body error");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"base\"]\n"
+          "let h [lk::history_new $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* The body errors after one successful edit: the commit still runs
+   * (the partial edit stays applied, as one transaction), then the
+   * body's error propagates to the caller. */
+  eval_expect_err(interp,
+                  "lk::doc_transact $d {\n"
+                  "    lk::doc_insert $d 0 \"X\"\n"
+                  "    error \"boom\"\n"
+                  "}",
+                  "boom", NULL, NULL);
+
+  check_str(interp, "lk::doc_text $d", "Xbase");
+  check_int(interp, "lk::history_undo $h $d", 1);
+  check_str(interp, "lk::doc_text $d", "base");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_subscribe_deltas(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: subscriber receives delta dicts (insert + delete)");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello\"]\n"
+          "var got ()\n"
+          "let sid [lk::doc_subscribe $d [lambda {deltas} {\n"
+          "    set! got $deltas\n"
+          "}]]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* Insert: one delta with the inserted bytes, nothing deleted. */
+  r = NULL;
+  eval_ok(interp, "lk::doc_insert $d 2 \"XY\"", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "len $got", 1);
+  check_int(interp, "get [get $got 0] start", 2);
+  check_int(interp, "get [get $got 0] inserted_len", 2);
+  check_str(interp, "get [get $got 0] inserted", "XY");
+  check_int(interp, "get [get $got 0] deleted_len", 0);
+  check_str(interp, "get [get $got 0] deleted", "");
+  check_int(interp, "get [get $got 0] origin", 0);
+
+  /* Delete: the removed bytes were copied into the delta dict. */
+  r = NULL;
+  eval_ok(interp, "lk::doc_delete $d 2 2", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "len $got", 1);
+  check_int(interp, "get [get $got 0] start", 2);
+  check_int(interp, "get [get $got 0] deleted_len", 2);
+  check_str(interp, "get [get $got 0] deleted", "XY");
+  check_int(interp, "get [get $got 0] inserted_len", 0);
+
+  /* A transaction delivers all its deltas in one notification. */
+  r = NULL;
+  eval_ok(interp,
+          "lk::doc_transact $d {\n"
+          "    lk::doc_insert $d 0 \"a\"\n"
+          "    lk::doc_insert $d 1 \"b\"\n"
+          "}",
+          &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "len $got", 2);
+  check_str(interp, "get [get $got 1] inserted", "b");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_unsubscribe(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: unsubscribe stops callbacks; unknown id errors");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello\"]\n"
+          "var count 0\n"
+          "let sid [lk::doc_subscribe $d [lambda {deltas} {\n"
+          "    set! count [+ $count 1]\n"
+          "}]]\n"
+          "lk::doc_insert $d 0 \"x\"\n"
+          "lk::doc_unsubscribe $d $sid\n"
+          "lk::doc_insert $d 0 \"y\"",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "$count", 1);
+  eval_expect_err(interp, "lk::doc_unsubscribe $d 999",
+                  "unknown subscription id", NULL, NULL);
+  eval_expect_err(interp, "lk::doc_subscribe $d 42", "expected callable",
+                  NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_history_undo_redo(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("history: undo/redo round-trip, empty-stack returns 0");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"one\"]\n"
+          "let h [lk::history_new $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "lk::history_can_undo $h", 0);
+  check_int(interp, "lk::history_undo $h $d", 0);
+
+  check_str(interp,
+            "lk::doc_insert $d 3 \" two\"\n"
+            "lk::doc_text $d",
+            "one two");
+  check_int(interp, "lk::history_undo $h $d", 1);
+  check_str(interp, "lk::doc_text $d", "one");
+  check_int(interp, "lk::history_can_redo $h", 1);
+  check_int(interp, "lk::history_redo $h $d", 1);
+  check_str(interp, "lk::doc_text $d", "one two");
+  check_int(interp, "lk::history_can_redo $h", 0);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_history_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("history: arity and wrong-opaque errors");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"x\"]\n"
+          "let h [lk::history_new]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  eval_expect_err(interp, "lk::history_undo $h", "lk::history_undo",
+                  "2 arguments", NULL);
+  eval_expect_err(interp, "lk::history_undo $d $d",
+                  "expected lk_edit_history opaque", NULL, NULL);
+  eval_expect_err(interp, "lk::history_can_undo $d",
+                  "expected lk_edit_history opaque", NULL, NULL);
+  eval_expect_err(interp, "lk::history_new $h", "expected lk_document opaque",
+                  NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_new_basic(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: new returns opaque, cursor starts at 0");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"hello\"]\n"
+          "let h [lk::history_new]\n"
+          "let e [lk::editor_new $ui $d $h]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "opaque? $e", 1);
+  check_int(interp, "lk::editor_cursor $e", 0);
+
+  /* Without a history the editor still works (undo just no-ops). */
+  r = NULL;
+  eval_ok(interp, "let e2 [lk::editor_new $ui $d]", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "lk::editor_command $e2 undo", 0);
+
+  /* Errors: arity, wrong opaques, foreign-doc history. */
+  eval_expect_err(interp, "lk::editor_new $ui", "lk::editor_new",
+                  "2 or 3 arguments", NULL);
+  eval_expect_err(interp, "lk::editor_new $d $d", "expected lk_ui opaque",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::editor_new $ui $ui",
+                  "expected lk_document opaque", NULL, NULL);
+  eval_expect_err(interp,
+                  "let d2 [lk::doc_new \"other\"]\n"
+                  "let h2 [lk::history_new $d2]\n"
+                  "lk::editor_new $ui $d $h2",
+                  "different", "document", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_cursor_selection(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: set_cursor / cursor / selection");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"hello world\"]\n"
+          "let e [lk::editor_new $ui $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_str(interp,
+            "lk::editor_set_cursor $e 5\n"
+            "",
+            "");
+  check_int(interp, "lk::editor_cursor $e", 5);
+
+  /* Past-the-end clamps to the document length. */
+  check_str(interp, "lk::editor_set_cursor $e 999", "");
+  check_int(interp, "lk::editor_cursor $e", 11);
+
+  /* No selection -> empty list; select_all -> (0 len). */
+  check_int(interp, "len [lk::editor_selection $e]", 0);
+  check_int(interp, "lk::editor_command $e select_all", 1);
+  check_int(interp, "len [lk::editor_selection $e]", 2);
+  check_int(interp, "get [lk::editor_selection $e] 0", 0);
+  check_int(interp, "get [lk::editor_selection $e] 1", 11);
+
+  eval_expect_err(interp, "lk::editor_set_cursor $e nope",
+                  "non-negative integer", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_command_drives_doc(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: commands drive document + cursor + undo");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"world\"]\n"
+          "let h [lk::history_new $d]\n"
+          "let e [lk::editor_new $ui $d $h]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* insert_text at the cursor, cursor follows. */
+  check_int(interp, "lk::editor_command $e insert_text \"hello \"", 1);
+  check_str(interp, "lk::doc_text $d", "hello world");
+  check_int(interp, "lk::editor_cursor $e", 6);
+
+  /* Motion, plus the optional \"select\" flag extending a selection. */
+  check_int(interp, "lk::editor_command $e move_left", 1);
+  check_int(interp, "lk::editor_cursor $e", 5);
+  check_int(interp, "lk::editor_command $e move_left select", 1);
+  check_int(interp, "get [lk::editor_selection $e] 0", 4);
+  check_int(interp, "get [lk::editor_selection $e] 1", 5);
+  check_int(interp, "lk::editor_command $e move_doc_end", 1);
+  check_int(interp, "lk::editor_cursor $e", 11);
+  check_int(interp, "len [lk::editor_selection $e]", 0);
+
+  /* delete_backward eats one codepoint. */
+  check_int(interp, "lk::editor_command $e delete_backward", 1);
+  check_str(interp, "lk::doc_text $d", "hello worl");
+
+  /* undo/redo through the same verb the keyboard uses. */
+  check_int(interp, "lk::editor_command $e undo", 1);
+  check_str(interp, "lk::doc_text $d", "hello world");
+  check_int(interp, "lk::editor_command $e redo", 1);
+  check_str(interp, "lk::doc_text $d", "hello worl");
+
+  /* set_cursor command with the extend flag keeps the anchor. */
+  check_int(interp, "lk::editor_command $e set_cursor 0", 1);
+  check_int(interp, "lk::editor_command $e set_cursor 5 extend", 1);
+  check_int(interp, "get [lk::editor_selection $e] 1", 5);
+
+  /* scroll_lines takes a signed count and never errors on ints. */
+  r = NULL;
+  eval_ok(interp, "lk::editor_command $e scroll_lines 2", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  eval_ok(interp, "lk::editor_command $e scroll_lines -2", &r);
+  if (r) lcl_ref_dec(r);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_command_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: unknown command lists known commands");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"abc\"]\n"
+          "let e [lk::editor_new $ui $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* Unknown command errors name the known-command list. */
+  eval_expect_err(interp, "lk::editor_command $e frobnicate",
+                  "unknown command 'frobnicate'", "insert_text",
+                  "scroll_lines");
+  eval_expect_err(interp, "lk::editor_command $e frobnicate", "select_all",
+                  "move_doc_end", NULL);
+
+  /* Malformed per-command args. */
+  eval_expect_err(interp, "lk::editor_command $e insert_text",
+                  "insert_text expects the text", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e move_left sideways",
+                  "\"select\" flag", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e set_cursor nope",
+                  "set_cursor pos", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e set_cursor 3 shift",
+                  "\"extend\"", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e scroll_lines many",
+                  "signed line count", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e select_all now",
+                  "takes no arguments", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e", "lk::editor_command",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $d insert_text x",
+                  "expected lk_editor opaque", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_set_spans(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: set_spans accepts span dicts and clears");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"hello world again\"]\n"
+          "let e [lk::editor_new $ui $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* fg-only, bg + underline, all three. */
+  check_str(interp,
+            "lk::editor_set_spans $e $d ( #{start 0 end 5 fg (255 0 0)} "
+            "#{start 6 end 11 bg (0 0 80) underline 1} "
+            "#{start 12 end 17 fg (1 2 3) bg (4 5 6 128)} )",
+            "");
+
+  /* Empty list clears. */
+  check_str(interp, "lk::editor_set_spans $e $d ()", "");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_set_spans_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: set_spans rejects malformed span dicts");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"hello world\"]\n"
+          "let e [lk::editor_new $ui $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  eval_expect_err(interp, "lk::editor_set_spans $e $d #{start 0 end 2}",
+                  "must be a list", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_set_spans $e $d ( #{end 2} )",
+                  "missing 'start'", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_set_spans $e $d ( #{start 2 end 2} )",
+                  "end must be an integer > start", NULL, NULL);
+  eval_expect_err(interp,
+                  "lk::editor_set_spans $e $d ( #{start 0 end 2 color (1 2 3)} )",
+                  "unknown span key", "underline", NULL);
+  eval_expect_err(interp,
+                  "lk::editor_set_spans $e $d ( #{start 0 end 2 fg (1 2)} )",
+                  "fg must be", NULL, NULL);
+  eval_expect_err(interp,
+                  "lk::editor_set_spans $e $d "
+                  "( #{start 4 end 8} #{start 0 end 2} )",
+                  "sorted and non-overlapping", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_set_spans $e $d", "3 arguments", NULL,
+                  NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_lifetime(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  /* The lifetime guarantee (docs/editor.md section 5/11): the editor
+   * wrapper retains the document and history VALUES, so dropping every
+   * script handle to them cannot destroy the document while the editor
+   * still uses it.  Under the naive scheme (doc finalizer fires as
+   * soon as the script refs drop) the insert below would be a
+   * use-after-free on the destroyed piece table. */
+  BEGIN_TEST("editor: outlives dropped doc/history handles");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "proc mk {ui} {\n"
+          "    let d [lk::doc_new \"ephemeral\"]\n"
+          "    let h [lk::history_new $d]\n"
+          "    return [lk::editor_new $ui $d $h]\n"
+          "}\n"
+          "var e [mk $ui]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* d and h went out of scope with mk's frame; only the editor keeps
+   * them alive.  The editor must keep working: */
+  check_int(interp, "lk::editor_command $e insert_text \"still \"", 1);
+  check_int(interp, "lk::editor_cursor $e", 6);
+  check_int(interp, "lk::editor_command $e undo", 1);
+  check_int(interp, "lk::editor_cursor $e", 0);
+
+  /* Now drop the editor too: its finalizer releases the resource
+   * registration, destroys the editor (unsubscribing from the still-
+   * live doc), and only then lets the doc/history finalizers run. */
+  r = NULL;
+  eval_ok(interp, "set! e 0", &r);
+  if (r) lcl_ref_dec(r);
+
+  /* Interp still healthy afterwards. */
+  check_int(interp, "+ 1 1", 2);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_annot_store_basics(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot: store new/attach/add/span/meta");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello world\"]\n"
+          "let s [lk::annot_store_new]\n"
+          "lk::annot_attach $s $d\n"
+          "lk::annot_layer_register $s \"marks\"\n"
+          "let a [lk::annot_add $s 0 5 \"marks\" #{kind word note \"greeting\"}]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "$a", 1);
+  check_int(interp, "get [lk::annot_span $s $a] 0", 0);
+  check_int(interp, "get [lk::annot_span $s $a] 1", 5);
+  check_str(interp, "lk::annot_meta $s $a kind", "word");
+  check_str(interp, "lk::annot_meta $s $a note", "greeting");
+
+  /* Absent meta key reads as "" (the record still exists). */
+  check_str(interp, "lk::annot_meta $s $a missing", "");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_annot_queries(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot: in_range/at/by_layer with layer filters");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello world again\"]\n"
+          "let s [lk::annot_store_new]\n"
+          "lk::annot_attach $s $d\n"
+          "let a1 [lk::annot_add $s 0 5 \"x\"]\n"
+          "let a2 [lk::annot_add $s 6 11 \"y\"]\n"
+          "let a3 [lk::annot_add $s 12 17 \"x\"]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "len [lk::annot_in_range $s 0 100]", 3);
+  check_int(interp, "len [lk::annot_in_range $s 0 100 x]", 2);
+  check_int(interp, "len [lk::annot_in_range $s 0 6]", 1);
+  check_int(interp, "len [lk::annot_at $s 7]", 1);
+  check_int(interp, "get [lk::annot_at $s 7] 0", 2);
+  check_int(interp, "len [lk::annot_at $s 7 x]", 0);
+  check_int(interp, "len [lk::annot_by_layer $s x]", 2);
+  check_int(interp, "len [lk::annot_by_layer $s nothere]", 0);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_annot_anchor_tracking(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot: anchors track document edits via subscription");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello world\"]\n"
+          "let s [lk::annot_store_new]\n"
+          "lk::annot_attach $s $d\n"
+          "let a [lk::annot_add $s 6 11 \"w\"]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* Insert before the annotation: both ends shift right. */
+  r = NULL;
+  eval_ok(interp, "lk::doc_insert $d 0 \"say: \"", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "get [lk::annot_span $s $a] 0", 11);
+  check_int(interp, "get [lk::annot_span $s $a] 1", 16);
+
+  /* Delete across the middle: the span shrinks. */
+  r = NULL;
+  eval_ok(interp, "lk::doc_delete $d 11 2", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "get [lk::annot_span $s $a] 0", 11);
+  check_int(interp, "get [lk::annot_span $s $a] 1", 14);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_annot_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot: remove + error paths");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello\"]\n"
+          "let s [lk::annot_store_new]\n"
+          "lk::annot_attach $s $d\n"
+          "let a [lk::annot_add $s 0 5 \"m\"]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "lk::annot_remove $s $a", 1);
+  check_int(interp, "lk::annot_remove $s $a", 0);
+  eval_expect_err(interp, "lk::annot_span $s $a", "no such annotation", NULL,
+                  NULL);
+  eval_expect_err(interp, "lk::annot_meta $s $a kind", "no such annotation",
+                  NULL, NULL);
+
+  /* Bad ranges, bad meta, re-attach, wrong opaque, arity. */
+  eval_expect_err(interp, "lk::annot_add $s 5 5 \"m\"",
+                  "end must be an integer > start", NULL, NULL);
+  eval_expect_err(interp, "lk::annot_add $s 0 5 \"m\" nope",
+                  "meta must be a dict", NULL, NULL);
+  eval_expect_err(interp, "lk::annot_attach $s $d", "already attached", NULL,
+                  NULL);
+  eval_expect_err(interp, "lk::annot_span $d 1", "expected lk_annot_store",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::annot_add $s", "lk::annot_add", "arguments",
+                  NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_editor_widget(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+  lk_ui *ui;
+
+  /* `editor "e" #{editor $ed focusable 1}` builds a UIK_EDITOR node
+   * whose UIP_EDITOR prop carries the typed resource ref — resolvable
+   * back to the lk_editor through the ui's resource table. */
+  BEGIN_TEST("dsl: editor widget carries the resource prop");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hi\"]\n"
+          "let ed [lk::editor_new $u $d]\n"
+          "editor e1 #{editor $ed focusable 1 w 300 h 200}",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  ui = dsl_ui(interp);
+  CHECK(t != NULL && ui != NULL);
+  if (t && ui) {
+    lk_ix n = dsl_find(t, "e1");
+
+    CHECK(n != 0);
+    CHECK(lk_node_kind_get(t, n) == (lk_u16)UIK_EDITOR);
+    CHECK(lk_node_has_prop(t, n, UIP_EDITOR) == 1);
+    CHECK(lk_node_prop_bool(t, n, UIP_FOCUSABLE) == 1);
+    CHECK(lk_node_prop_i32(t, n, UIP_W, -1) == 300);
+
+    /* The ref resolves to a live lk_editor of the right type. */
+    CHECK(lk_editor_from_node(lk_ui_resources(ui), t, n) != NULL);
+  }
+
+  /* Typo'd resource value is a hard error at the binding layer. */
+  eval_expect_err(interp, "editor e2 #{editor 42}",
+                  "editor prop expects an lk_editor opaque", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_unknown_prop_lists_editor(void) {
+  lcl_interp *interp;
+
+  /* The DSL's known-prop list now includes `editor`. */
+  BEGIN_TEST("dsl: unknown-prop error lists editor among known keys");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_expect_err(interp, "label w_ed #{bogus 1}", "unknown prop 'bogus'",
+                  "(known:", "editor");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -2406,6 +3243,31 @@ int main(void) {
   test_dsl_props_dict_variable();
   test_dsl_props_dict_merge();
   test_dsl_frame_view_rebuild();
+
+  /* Editor track (stage D): documents, histories, editors, annots */
+  test_doc_new_read();
+  test_doc_revision_string();
+  test_doc_insert_delete();
+  test_doc_mutation_errors();
+  test_doc_transact_groups();
+  test_doc_transact_error_propagates();
+  test_doc_subscribe_deltas();
+  test_doc_unsubscribe();
+  test_history_undo_redo();
+  test_history_errors();
+  test_editor_new_basic();
+  test_editor_cursor_selection();
+  test_editor_command_drives_doc();
+  test_editor_command_errors();
+  test_editor_set_spans();
+  test_editor_set_spans_errors();
+  test_editor_lifetime();
+  test_annot_store_basics();
+  test_annot_queries();
+  test_annot_anchor_tracking();
+  test_annot_errors();
+  test_dsl_editor_widget();
+  test_dsl_unknown_prop_lists_editor();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

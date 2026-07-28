@@ -776,6 +776,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
   case UIK_OPTION: wr_cstr(wr, ud, "option"); break;
   case UIK_SPLIT_H: wr_cstr(wr, ud, "split_h"); break;
   case UIK_SPLIT_V: wr_cstr(wr, ud, "split_v"); break;
+  case UIK_EDITOR: wr_cstr(wr, ud, "editor"); break;
 
   default: wr_cstr(wr, ud, "unknown"); break;
   }

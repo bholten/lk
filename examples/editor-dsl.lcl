@@ -1,0 +1,160 @@
+;; editor-dsl.lcl — Multi-line editor over an application-owned document.
+;;
+;; Demonstrates:
+;;   - lk::doc_new / lk::history_new / lk::editor_new: the document,
+;;     its undo history, and one editor view live in the application
+;;     environment; the tree only references the editor via the
+;;     `editor` prop (a typed resource ref)
+;;   - Live status labels: the view body re-evals every frame, so
+;;     lk::doc_line_count / lk::doc_revision / lk::editor_cursor
+;;     inline in label text stay current for free
+;;   - Buttons driving lk::editor_command — scripts invoke the same
+;;     verbs the keyboard does (undo, redo, select_all, move_doc_start)
+;;   - An annotation store attached to the document; TODO markers and
+;;     one underlined phrase annotated at startup, projected into
+;;     styled spans by a producer proc that re-runs in the view body
+;;     (every edit re-produces, and anchors track the edits)
+
+let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+
+;; The document: a self-referential lk sampler.  UTF-8, literal tabs,
+;; and TODO markers included on purpose.
+let src {;; lk-editor.lcl — this demo, viewed in the widget it demonstrates.
+;;
+;; The buffer you are reading lives in an lk_document — a piece table
+;; lifted from weft: immutable original buffer, append-only add
+;; buffer, line index.  The editor on screen is one lk_editor view
+;; over it: cursor, selection, anchored viewport.  Neither lives in
+;; the UI tree; the tree just presents them.
+;;
+;; Try it: type, select, cut and paste, drag the divider, press
+;; Ctrl+Z — or click the Undo button, which invokes the very same
+;; editor command.  Undo steps are document transactions, so the
+;; buttons and the keys share one history.
+;;
+;; UTF-8 survives verbatim: naïve café ← → ↑ ↓ … die Möwe flog übers
+;; Ufer, καλημέρα κόσμε, こんにちは世界.
+;;
+;; Literal tabs render via segment-wise tab-stop expansion:
+;;	tab	stops	line	up
+;;	one	two	three	four
+;;
+;; A code-shaped sample, tabs and all:
+;; proc greet (name)
+;;	let msg "hello, $name"
+;;	puts $msg
+;;	return $msg
+;;
+;; TODO teach the status column to show line:col, not a byte offset
+;; TODO wire Ctrl+G goto-line as an app-level overlay
+;;
+;; The highlighted TODO plates above are annotations: semantic ranges
+;; in an annot store attached to the document.  Their anchors move
+;; with your edits — type before one and watch it follow.  A producer
+;; proc projects them into styled spans each frame; staleness is
+;; impossible because re-eval re-produces.
+;; TODO ship it ✓
+}
+
+var doc [lk::doc_new $src]
+var hist [lk::history_new $doc]
+var store [lk::annot_store_new]
+var ed {}
+
+lk::annot_attach $store $doc
+lk::annot_layer_register $store "todo"
+lk::annot_layer_register $store "emphasis"
+
+;; Startup annotations, in ascending position order (the span
+;; producer relies on record order == position order).  The
+;; underlined phrase sits in the opening lines, before the first
+;; TODO marker.
+let emph_at [String::find $src "piece table"]
+if [>= $emph_at 0] {
+    lk::annot_add $store $emph_at [+ $emph_at [String::length "piece table"]] "emphasis" #{style emph}
+}
+
+;; Annotate every TODO marker.
+var scan_base 0
+var scan_rest $src
+var scanning 1
+while $scanning {
+    let i [String::find $scan_rest "TODO"]
+    if [< $i 0] {
+        set! scanning 0
+    } else {
+        let at [+ $scan_base $i]
+        lk::annot_add $store $at [+ $at 4] "todo" #{style todo note "open item"}
+        set! scan_base [+ $at 4]
+        set! scan_rest [String::range $scan_rest [+ $i 4] [String::length $scan_rest]]
+    }
+}
+
+;; Span producer: query the store over the whole document and rebuild
+;; the editor's span snapshot.  Called from the view body, so it
+;; re-runs after every edit — the snapshot is always stamped with the
+;; current revision, and the anchors have already tracked the change.
+proc produce_spans {} {
+    var spans ()
+    foreach id [lk::annot_in_range $store 0 [lk::doc_len $doc]] {
+        let sp [lk::annot_span $store $id]
+        if [== [lk::annot_meta $store $id "style"] todo] {
+            set! spans [List::push $spans #{start [get $sp 0] end [get $sp 1] fg (255 214 102) bg (82 62 18)}]
+        } else {
+            set! spans [List::push $spans #{start [get $sp 0] end [get $sp 1] fg (130 200 255) underline 1}]
+        }
+    }
+    lk::editor_set_spans $ed $doc $spans
+}
+
+app "lk editor" #{font $font font_size 15 width 960 height 620} {
+
+    theme {
+        rule window #{bg (24 26 32)}
+        rule * #{fg (205 210 220)}
+        rule editor #{bg (28 31 40) padding 8}
+        rule split_h #{border_color (70 75 90)}
+        rule column #{padding 16 gap 8}
+        rule button #{bg (50 55 70) padding 8 border_width 1 border_color (80 85 100)}
+        rule button #{state hovered} #{bg (70 75 90) border_color (120 125 150)}
+        rule button #{state focused} #{border_color (80 140 220)}
+        rule label #{tag dim} #{fg (125 132 148)}
+    }
+
+    translator pointer_down action Action
+
+    on Action [lambda {cmd} {
+        let verb [get [get $cmd args] 0]
+        if [== $verb undo] { lk::editor_command $ed undo }
+        if [== $verb redo] { lk::editor_command $ed redo }
+        if [== $verb select_all] { lk::editor_command $ed select_all }
+        if [== $verb go_top] { lk::editor_command $ed move_doc_start }
+    }]
+
+    ;; The editor registers in the window ui's resource table; the
+    ;; `editor` prop below carries the typed ref every frame.
+    set! ed [lk::editor_new $lk_dsl::_ui $doc $hist]
+
+    view {
+        produce_spans
+
+        split_h "main" #{split_ratio 720} {
+            editor "src" #{editor $ed focusable 1}
+
+            column "side" {
+                label "s_title" #{text "lk-editor.lcl"}
+                label "s_lines" #{text "lines: [lk::doc_line_count $doc]"}
+                label "s_bytes" #{text "bytes: [lk::doc_len $doc]"}
+                label "s_rev" #{text "rev: [lk::doc_revision $doc]"}
+                label "s_cursor" #{text "cursor @ [lk::editor_cursor $ed]"}
+                label "s_hint" #{tag dim text "(live — type in the left pane)"}
+                spacer "s_flex"
+                button "b_undo" #{text "Undo" focusable 1 tooltip "Same verb as Ctrl+Z"
+                                 present (action (undo))}
+                button "b_redo" #{text "Redo" focusable 1 present (action (redo))}
+                button "b_all" #{text "Select all" focusable 1 present (action (select_all))}
+                button "b_top" #{text "Jump to top" focusable 1 present (action (go_top))}
+            }
+        }
+    }
+}

@@ -1,11 +1,12 @@
 /*
  * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
  *
- * Exposes 35 procs in the "lk" namespace (29 core + 6 SDL) for
+ * Exposes 65 procs in the "lk" namespace (59 core + 6 SDL) for
  * building UI trees, managing frames, commands, translators, state,
- * focus, overlays, interning, and windows/fonts.  SDL procs (window_*
- * and register_font) are conditionally compiled when LK_HAVE_SDL is
- * set.
+ * focus, overlays, interning, windows/fonts, and the editor track
+ * (documents, edit histories, editors, annotation stores).  SDL procs
+ * (window_* and register_font) are conditionally compiled when
+ * LK_HAVE_SDL is set.
  *
  * C89 (matches lk + lcl).
  */
@@ -16,6 +17,8 @@
 
 #include "lcl-lk.h"
 #include <lcl.h>
+#include <lk-annot-store.h>
+#include <lk-editor.h>
 #include <lk.h>
 
 /* ============================================================================
@@ -25,6 +28,10 @@
 
 #define LK_UI_TYPE "lk_ui"
 #define LK_TREE_TYPE "lk_tree"
+#define LK_DOC_TYPE "lk_document"
+#define LK_HIST_TYPE "lk_edit_history"
+#define LK_EDITOR_TYPE "lk_editor"
+#define LK_ANNOT_TYPE "lk_annot_store"
 
 #ifdef LK_HAVE_SDL
 #include "lk-sdl.h"
@@ -54,6 +61,7 @@ static const str_enum kind_table[] = {
     {"option",     UIK_OPTION    },
     {"split_h",    UIK_SPLIT_H   },
     {"split_v",    UIK_SPLIT_V   },
+    {"editor",     UIK_EDITOR    },
     {NULL,         0             }
 };
 
@@ -70,7 +78,40 @@ static const str_enum prop_table[] = {
     {"hidden",      UIP_HIDDEN     },
     {"tooltip",     UIP_TOOLTIP    },
     {"split_ratio", UIP_SPLIT_RATIO},
+    {"editor",      UIP_EDITOR     },
     {NULL,          0              }
+};
+
+/* Editor command names, mirroring lk_editor_cmd_id (LK_ED_* with the
+ * prefix stripped and lowercased).  Kept in enum order so the joined
+ * known-commands list reads naturally in error messages. */
+static const str_enum ed_cmd_table[] = {
+    {"insert_text",          LK_ED_INSERT_TEXT         },
+    {"delete_backward",      LK_ED_DELETE_BACKWARD     },
+    {"delete_forward",       LK_ED_DELETE_FORWARD      },
+    {"delete_word_backward", LK_ED_DELETE_WORD_BACKWARD},
+    {"delete_word_forward",  LK_ED_DELETE_WORD_FORWARD },
+    {"move_left",            LK_ED_MOVE_LEFT           },
+    {"move_right",           LK_ED_MOVE_RIGHT          },
+    {"move_up",              LK_ED_MOVE_UP             },
+    {"move_down",            LK_ED_MOVE_DOWN           },
+    {"move_word_left",       LK_ED_MOVE_WORD_LEFT      },
+    {"move_word_right",      LK_ED_MOVE_WORD_RIGHT     },
+    {"move_line_start",      LK_ED_MOVE_LINE_START     },
+    {"move_line_end",        LK_ED_MOVE_LINE_END       },
+    {"move_doc_start",       LK_ED_MOVE_DOC_START      },
+    {"move_doc_end",         LK_ED_MOVE_DOC_END        },
+    {"move_page_up",         LK_ED_MOVE_PAGE_UP        },
+    {"move_page_down",       LK_ED_MOVE_PAGE_DOWN      },
+    {"select_all",           LK_ED_SELECT_ALL          },
+    {"cut",                  LK_ED_CUT                 },
+    {"copy",                 LK_ED_COPY                },
+    {"paste",                LK_ED_PASTE               },
+    {"undo",                 LK_ED_UNDO                },
+    {"redo",                 LK_ED_REDO                },
+    {"set_cursor",           LK_ED_SET_CURSOR          },
+    {"scroll_lines",         LK_ED_SCROLL_LINES        },
+    {NULL,                   0                         }
 };
 
 static const str_enum overlay_kind_table[] = {
@@ -217,6 +258,111 @@ static int parse_mods(const char *s, lk_u8 *out) {
 }
 
 /* ============================================================================
+ * Editor-track wrappers (documents, histories, editors, annot stores)
+ *
+ * Lifetime scheme: dependents retain their dependencies' Lcl values.
+ * A history/editor/annot-store wrapper holds an lcl_ref_inc'd
+ * reference to the document value it uses (and the editor to the ui
+ * and history values too), so the referenced opaque can never be
+ * finalized while a dependent is alive — GC order becomes refcount
+ * order, and the C contract "destroy dependents before the document"
+ * holds no matter when the script drops its own handles.  Dependent
+ * finalizers destroy their own C object (which unsubscribes) and only
+ * then release the retained values.
+ * ============================================================================
+ */
+
+/* One script-side document subscription (lk::doc_subscribe). */
+struct lcl_doc_sub {
+  lk_u32 id;
+  lcl_interp *interp;
+  lcl_value *handler; /* retained */
+  struct lcl_doc_sub *next;
+};
+
+struct lcl_lk_doc {
+  lk_document *doc;
+  struct lcl_doc_sub *subs; /* live lk::doc_subscribe bridges */
+};
+
+struct lcl_lk_history {
+  lk_edit_history *hist;
+  lk_document *doc;   /* attached document, NULL until attached */
+  lcl_value *doc_val; /* retained once attached */
+};
+
+struct lcl_lk_editor {
+  lk_editor *ed;
+  lk_ui *ui;           /* for lk_editor_command + resource release */
+  lk_resource_ref ref; /* registration in the ui's resource table */
+  lcl_value *ui_val;   /* retained */
+  lcl_value *doc_val;  /* retained */
+  lcl_value *hist_val; /* retained, NULL when no history was given */
+};
+
+struct lcl_lk_annot {
+  lk_annot_store *store;
+  lcl_value *doc_val; /* retained once attached, NULL before */
+};
+
+/* ---- Live-ui registry ----
+ *
+ * Value retention cannot cover one case: a ui destroyed explicitly
+ * (lk::ui_destroy, lk::window_destroy, or the window finalizer for
+ * window-owned uis) while an editor value still exists.  The editor
+ * finalizer must then skip lk_resource_release (the table died with
+ * the ui).  This registry tracks every lk_ui* the bindings handed
+ * out ownership-wise; editors consult it before touching their ui. */
+
+static lk_ui **g_live_uis = NULL;
+static int g_live_ui_count = 0;
+static int g_live_ui_cap = 0;
+
+static void live_ui_add(lk_ui *ui) {
+  if (!ui) {
+    return;
+  }
+
+  if (g_live_ui_count == g_live_ui_cap) {
+    int cap = g_live_ui_cap ? g_live_ui_cap * 2 : 8;
+    lk_ui **grown = (lk_ui **)realloc(g_live_uis, sizeof(*grown) * cap);
+
+    if (!grown) {
+      return; /* untracked ui: editors will conservatively skip release */
+    }
+
+    g_live_uis = grown;
+    g_live_ui_cap = cap;
+  }
+
+  g_live_uis[g_live_ui_count++] = ui;
+}
+
+static void live_ui_remove(lk_ui *ui) {
+  int i;
+
+  for (i = 0; i < g_live_ui_count; i++) {
+    if (g_live_uis[i] == ui) {
+      g_live_uis[i] = g_live_uis[--g_live_ui_count];
+
+      return;
+    }
+  }
+}
+
+static int live_ui_check(const lk_ui *ui) {
+  int i;
+
+  for (i = 0; i < g_live_ui_count; i++) {
+    if (g_live_uis[i] == ui) {
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+/* ============================================================================
  * Finalizers
  * ============================================================================
  */
@@ -235,7 +381,71 @@ static void ui_finalizer(void *ptr) {
     ui->cmd_handler_ud = NULL;
   }
 
+  live_ui_remove(ui);
   lk_ui_destroy(ui);
+}
+
+static void doc_finalizer(void *ptr) {
+  struct lcl_lk_doc *dw = (struct lcl_lk_doc *)ptr;
+  struct lcl_doc_sub *s = dw->subs;
+
+  /* No dependent can still be subscribed here (they retain the doc
+   * value), so only script subscriptions remain; the listener slots
+   * die with the document. */
+  while (s) {
+    struct lcl_doc_sub *next = s->next;
+
+    lcl_ref_dec(s->handler);
+    free(s);
+    s = next;
+  }
+
+  lk_doc_destroy(dw->doc);
+  free(dw);
+}
+
+static void history_finalizer(void *ptr) {
+  struct lcl_lk_history *hw = (struct lcl_lk_history *)ptr;
+
+  /* Destroy unsubscribes; the doc is still alive because we retain
+   * its value.  Release the retained value only afterwards. */
+  lk_history_destroy(hw->hist);
+
+  if (hw->doc_val) {
+    lcl_ref_dec(hw->doc_val);
+  }
+
+  free(hw);
+}
+
+static void editor_finalizer(void *ptr) {
+  struct lcl_lk_editor *ew = (struct lcl_lk_editor *)ptr;
+
+  if (live_ui_check(ew->ui)) {
+    lk_resource_release(lk_ui_resources(ew->ui), ew->ref);
+  }
+
+  lk_editor_destroy(ew->ed); /* unsubscribes from the (still live) doc */
+
+  if (ew->hist_val) {
+    lcl_ref_dec(ew->hist_val);
+  }
+
+  lcl_ref_dec(ew->doc_val);
+  lcl_ref_dec(ew->ui_val);
+  free(ew);
+}
+
+static void annot_finalizer(void *ptr) {
+  struct lcl_lk_annot *aw = (struct lcl_lk_annot *)ptr;
+
+  lk_annot_store_destroy(aw->store); /* unsubscribes if attached */
+
+  if (aw->doc_val) {
+    lcl_ref_dec(aw->doc_val);
+  }
+
+  free(aw);
 }
 
 /* ============================================================================
@@ -264,6 +474,7 @@ static int c_lk_ui_create(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
+  live_ui_add(ui);
   *out = lcl_opaque_new(ui, LK_UI_TYPE, ui_finalizer);
 
   return LCL_RC_OK;
@@ -286,6 +497,7 @@ static int c_lk_ui_destroy(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
+  live_ui_remove(ui);
   lk_ui_destroy(ui);
 
   /* Prevent double-free via finalizer: clear the opaque pointer.
@@ -606,6 +818,17 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
       return LCL_RC_ERR;
     }
     lv = lk_v_i32((lk_i32)align_val);
+    break;
+  }
+  case UIP_EDITOR: {
+    struct lcl_lk_editor *ew = NULL;
+
+    if (lcl_opaque_get(argv[3], LK_EDITOR_TYPE, (void **)&ew) != LCL_OK) {
+      lcl_set_error(interp, "lk::prop: editor prop expects an lk_editor opaque");
+      return LCL_RC_ERR;
+    }
+
+    lv = lk_v_resource(ew->ref);
     break;
   }
   default:
@@ -1834,6 +2057,10 @@ static void lcl_lk_window_finalizer(void *ptr) {
     ui->cmd_handler_ud = NULL;
   }
 
+  if (ui) {
+    live_ui_remove(ui);
+  }
+
   lk_window_destroy(lw->win);
   free(lw);
 }
@@ -1921,6 +2148,7 @@ static int c_lk_window_create(lcl_interp *interp, int argc, lcl_value **argv,
   lw->interp = interp;
   lw->event_handler = NULL;
 
+  live_ui_add(lk_window_ui(win));
   *out = lcl_opaque_new(lw, LK_WIN_TYPE, lcl_lk_window_finalizer);
 
   return LCL_RC_OK;
@@ -1948,6 +2176,7 @@ static int c_lk_window_destroy(lcl_interp *interp, int argc, lcl_value **argv,
     lw->event_handler = NULL;
   }
 
+  live_ui_remove(lk_window_ui(lw->win));
   lk_window_destroy(lw->win);
   lw->win = NULL;
 
@@ -2302,6 +2531,1771 @@ static int c_lk_clipboard_set(lcl_interp *interp, int argc,
 }
 
 /* ============================================================================
+ * Editor track: documents (10)
+ * ============================================================================
+ */
+
+/* ---- Typed wrapper getters (generic messages, get_lk_window style) ---- */
+
+static struct lcl_lk_doc *get_doc(lcl_interp *interp, lcl_value *val) {
+  struct lcl_lk_doc *dw = NULL;
+
+  if (lcl_opaque_get(val, LK_DOC_TYPE, (void **)&dw) != LCL_OK) {
+    lcl_set_error(interp, "expected lk_document opaque");
+
+    return NULL;
+  }
+
+  return dw;
+}
+
+static struct lcl_lk_history *get_history(lcl_interp *interp, lcl_value *val) {
+  struct lcl_lk_history *hw = NULL;
+
+  if (lcl_opaque_get(val, LK_HIST_TYPE, (void **)&hw) != LCL_OK) {
+    lcl_set_error(interp, "expected lk_edit_history opaque");
+
+    return NULL;
+  }
+
+  return hw;
+}
+
+static struct lcl_lk_editor *get_editor(lcl_interp *interp, lcl_value *val) {
+  struct lcl_lk_editor *ew = NULL;
+
+  if (lcl_opaque_get(val, LK_EDITOR_TYPE, (void **)&ew) != LCL_OK) {
+    lcl_set_error(interp, "expected lk_editor opaque");
+
+    return NULL;
+  }
+
+  return ew;
+}
+
+static struct lcl_lk_annot *get_annot(lcl_interp *interp, lcl_value *val) {
+  struct lcl_lk_annot *aw = NULL;
+
+  if (lcl_opaque_get(val, LK_ANNOT_TYPE, (void **)&aw) != LCL_OK) {
+    lcl_set_error(interp, "expected lk_annot_store opaque");
+
+    return NULL;
+  }
+
+  return aw;
+}
+
+/* Lcl string from a non-terminated byte run (delta bytes are only
+ * valid during the notification; this copies them into the value). */
+static lcl_value *lcl_string_from_bytes(const char *p, lk_u32 len) {
+  char *buf;
+  lcl_value *v;
+
+  if (!p || len == 0) {
+    return lcl_string_new("");
+  }
+
+  buf = (char *)malloc(len + 1);
+
+  if (!buf) {
+    return lcl_string_new("");
+  }
+
+  memcpy(buf, p, len);
+  buf[len] = '\0';
+  v = lcl_string_new(buf);
+  free(buf);
+
+  return v;
+}
+
+/* lk::doc_new [?text] -> opaque<lk_document> */
+static int c_lk_doc_new(lcl_interp *interp, int argc, lcl_value **argv,
+                        lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  lk_document *doc;
+
+  if (argc > 1) {
+    lcl_set_error(interp, "lk::doc_new: expected 0 or 1 arguments (?text)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (argc == 1) {
+    const char *text = lcl_value_to_string(argv[0]);
+    doc = lk_doc_from_str(NULL, NULL, NULL, text, (lk_u32)strlen(text));
+  } else {
+    doc = lk_doc_new(NULL, NULL, NULL);
+  }
+
+  if (!doc) {
+    lcl_set_error(interp, "lk::doc_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = (struct lcl_lk_doc *)malloc(sizeof(*dw));
+
+  if (!dw) {
+    lk_doc_destroy(doc);
+    lcl_set_error(interp, "lk::doc_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  dw->doc = doc;
+  dw->subs = NULL;
+
+  *out = lcl_opaque_new(dw, LK_DOC_TYPE, doc_finalizer);
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_text [doc] -> string (the whole contents) */
+static int c_lk_doc_text(lcl_interp *interp, int argc, lcl_value **argv,
+                         lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  lk_u32 n;
+  char *buf;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::doc_text: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  n = lk_doc_len(dw->doc);
+  buf = (char *)malloc(n + 1);
+
+  if (!buf) {
+    lcl_set_error(interp, "lk::doc_text: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  lk_doc_get_text(dw->doc, 0, buf, n);
+  buf[n] = '\0';
+  *out = lcl_string_new(buf);
+  free(buf);
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_len [doc] -> int */
+static int c_lk_doc_len(lcl_interp *interp, int argc, lcl_value **argv,
+                        lcl_value **out) {
+  struct lcl_lk_doc *dw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::doc_len: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_doc_len(dw->doc));
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_line_count [doc] -> int */
+static int c_lk_doc_line_count(lcl_interp *interp, int argc, lcl_value **argv,
+                               lcl_value **out) {
+  struct lcl_lk_doc *dw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::doc_line_count: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_doc_line_count(dw->doc));
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_revision [doc] -> "hi:lo" (e.g. "0:42").
+ *
+ * The lk_revision {hi,lo} pair encoded as a deterministic string —
+ * equality-comparable from script ([== $r1 $r2]); nothing more.  Do
+ * not do arithmetic on it. */
+static int c_lk_doc_revision(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  lk_revision rev;
+  char buf[32];
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::doc_revision: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  rev = lk_doc_revision(dw->doc);
+  sprintf(buf, "%lu:%lu", (unsigned long)rev.hi, (unsigned long)rev.lo);
+  *out = lcl_string_new(buf);
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_insert [doc, pos, text] -> "" */
+static int c_lk_doc_insert(lcl_interp *interp, int argc, lcl_value **argv,
+                           lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  long pos;
+  const char *text;
+
+  if (argc != 3) {
+    lcl_set_error(interp, "lk::doc_insert: expected 3 arguments (doc, pos, text)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+    lcl_set_error(interp, "lk::doc_insert: pos must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  text = lcl_value_to_string(argv[2]);
+
+  if (!lk_doc_insert(dw->doc, (lk_u32)pos, text, (lk_u32)strlen(text))) {
+    lcl_set_error(interp,
+                  "lk::doc_insert: rejected (pos out of range, empty text, "
+                  "or mutation from inside a notification)");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_delete [doc, pos, len] -> "" */
+static int c_lk_doc_delete(lcl_interp *interp, int argc, lcl_value **argv,
+                           lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  long pos;
+  long len;
+
+  if (argc != 3) {
+    lcl_set_error(interp, "lk::doc_delete: expected 3 arguments (doc, pos, len)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+    lcl_set_error(interp, "lk::doc_delete: pos must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[2], &len) != LCL_OK || len < 0) {
+    lcl_set_error(interp, "lk::doc_delete: len must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if (!lk_doc_delete(dw->doc, (lk_u32)pos, (lk_u32)len)) {
+    lcl_set_error(interp,
+                  "lk::doc_delete: rejected (pos out of range, zero length, "
+                  "or mutation from inside a notification)");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_transact [doc, body] -> ""
+ *
+ * Brackets the body in one lk_doc_begin/lk_doc_commit transaction:
+ * every lk::doc_insert/lk::doc_delete inside becomes one committed
+ * transaction — one notification, one undo step.  The commit runs
+ * even if the body errors (edits made before the error stay applied,
+ * as one transaction), then the body's error propagates.  Nesting
+ * doc_transact on the same document is a programming error (the C
+ * layer debug-asserts nested begin). */
+static int c_lk_doc_transact(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  const char *body;
+  lcl_value *r = NULL;
+  int rc;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::doc_transact: expected 2 arguments (doc, body)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  body = lcl_value_to_string(argv[1]);
+
+  lk_doc_begin(dw->doc, LK_ORIGIN_NONE);
+  rc = lcl_eval_string(interp, body, &r);
+  lk_doc_commit(dw->doc);
+
+  if (r) {
+    lcl_ref_dec(r);
+  }
+
+  if (rc != LCL_RC_OK) {
+    return LCL_RC_ERR; /* interp error already set by the body */
+  }
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* ---- Document subscription bridge ---- */
+
+static void lcl_doc_sub_bridge(void *ud, const lk_document *d,
+                               const lk_doc_delta *deltas, lk_u32 n) {
+  struct lcl_doc_sub *sub = (struct lcl_doc_sub *)ud;
+  lcl_value *list = lcl_list_new();
+  lcl_value *args[1];
+  lcl_value *result = NULL;
+  lk_u32 i;
+
+  (void)d;
+
+  for (i = 0; i < n; i++) {
+    const lk_doc_delta *dl = &deltas[i];
+    lcl_value *dict = lcl_dict_new();
+    lcl_value *v;
+
+    v = lcl_int_new((long)dl->start);
+    lcl_dict_put(&dict, "start", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)dl->deleted_len);
+    lcl_dict_put(&dict, "deleted_len", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)dl->inserted_len);
+    lcl_dict_put(&dict, "inserted_len", v);
+    lcl_ref_dec(v);
+
+    /* Delta byte pointers are valid only during this notification —
+     * copied into Lcl strings here, so the script may keep them. */
+    v = lcl_string_from_bytes(dl->deleted, dl->deleted_len);
+    lcl_dict_put(&dict, "deleted", v);
+    lcl_ref_dec(v);
+
+    v = lcl_string_from_bytes(dl->inserted, dl->inserted_len);
+    lcl_dict_put(&dict, "inserted", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)dl->origin);
+    lcl_dict_put(&dict, "origin", v);
+    lcl_ref_dec(v);
+
+    lcl_list_push(&list, dict);
+    lcl_ref_dec(dict);
+  }
+
+  args[0] = list;
+  lcl_call_proc(sub->interp, sub->handler, 1, args, &result);
+
+  if (result) {
+    lcl_ref_dec(result);
+  }
+
+  lcl_ref_dec(list);
+}
+
+/* lk::doc_subscribe [doc, proc] -> subscription id (int).
+ * The proc receives ONE argument: a list of delta dicts, each with
+ * start, deleted_len, inserted_len, deleted, inserted, origin. */
+static int c_lk_doc_subscribe(lcl_interp *interp, int argc, lcl_value **argv,
+                              lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  struct lcl_doc_sub *sub;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::doc_subscribe: expected 2 arguments (doc, proc)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (!lcl_is_callable(argv[1])) {
+    lcl_set_error(interp, "lk::doc_subscribe: expected callable");
+
+    return LCL_RC_ERR;
+  }
+
+  sub = (struct lcl_doc_sub *)malloc(sizeof(*sub));
+
+  if (!sub) {
+    lcl_set_error(interp, "lk::doc_subscribe: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  sub->interp = interp;
+  sub->handler = lcl_ref_inc(argv[1]);
+  sub->id = lk_doc_subscribe(dw->doc, lcl_doc_sub_bridge, sub);
+
+  if (sub->id == 0) {
+    lcl_ref_dec(sub->handler);
+    free(sub);
+    lcl_set_error(interp, "lk::doc_subscribe: subscribe failed");
+
+    return LCL_RC_ERR;
+  }
+
+  sub->next = dw->subs;
+  dw->subs = sub;
+
+  *out = lcl_int_new((long)sub->id);
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_unsubscribe [doc, id] -> "" */
+static int c_lk_doc_unsubscribe(lcl_interp *interp, int argc, lcl_value **argv,
+                                lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  struct lcl_doc_sub **link;
+  long id;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::doc_unsubscribe: expected 2 arguments (doc, id)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
+    lcl_set_error(interp, "lk::doc_unsubscribe: id must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  for (link = &dw->subs; *link; link = &(*link)->next) {
+    if ((*link)->id == (lk_u32)id) {
+      struct lcl_doc_sub *sub = *link;
+
+      *link = sub->next;
+      lk_doc_unsubscribe(dw->doc, sub->id);
+      lcl_ref_dec(sub->handler);
+      free(sub);
+
+      *out = lcl_string_new("");
+
+      return LCL_RC_OK;
+    }
+  }
+
+  lcl_set_error(interp, "lk::doc_unsubscribe: unknown subscription id");
+
+  return LCL_RC_ERR;
+}
+
+/* ============================================================================
+ * Editor track: edit history (5)
+ * ============================================================================
+ */
+
+/* lk::history_new [?doc] -> opaque<lk_edit_history>.
+ * With a doc argument the history attaches immediately (records every
+ * committed transaction).  Without one it stays detached until an
+ * lk::editor_new call wires it to that editor's document. */
+static int c_lk_history_new(lcl_interp *interp, int argc, lcl_value **argv,
+                            lcl_value **out) {
+  struct lcl_lk_history *hw;
+  struct lcl_lk_doc *dw = NULL;
+  lk_edit_history *hist;
+
+  if (argc > 1) {
+    lcl_set_error(interp, "lk::history_new: expected 0 or 1 arguments (?doc)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (argc == 1) {
+    dw = get_doc(interp, argv[0]);
+
+    if (!dw) {
+      return LCL_RC_ERR;
+    }
+  }
+
+  hist = lk_history_new(NULL, NULL, NULL);
+
+  if (!hist) {
+    lcl_set_error(interp, "lk::history_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = (struct lcl_lk_history *)malloc(sizeof(*hw));
+
+  if (!hw) {
+    lk_history_destroy(hist);
+    lcl_set_error(interp, "lk::history_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  hw->hist = hist;
+  hw->doc = NULL;
+  hw->doc_val = NULL;
+
+  if (dw) {
+    lk_history_attach(hist, dw->doc);
+    hw->doc = dw->doc;
+    hw->doc_val = lcl_ref_inc(argv[0]);
+  }
+
+  *out = lcl_opaque_new(hw, LK_HIST_TYPE, history_finalizer);
+
+  return LCL_RC_OK;
+}
+
+/* lk::history_undo [hist, doc] -> 1 if a step was undone, else 0 */
+static int c_lk_history_undo(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_history *hw;
+  struct lcl_lk_doc *dw;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::history_undo: expected 2 arguments (hist, doc)");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = get_history(interp, argv[0]);
+
+  if (!hw) {
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[1]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_history_undo(hw->hist, dw->doc));
+
+  return LCL_RC_OK;
+}
+
+/* lk::history_redo [hist, doc] -> 1 if a step was redone, else 0 */
+static int c_lk_history_redo(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_history *hw;
+  struct lcl_lk_doc *dw;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::history_redo: expected 2 arguments (hist, doc)");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = get_history(interp, argv[0]);
+
+  if (!hw) {
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[1]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_history_redo(hw->hist, dw->doc));
+
+  return LCL_RC_OK;
+}
+
+/* lk::history_can_undo [hist] -> 0/1 */
+static int c_lk_history_can_undo(lcl_interp *interp, int argc, lcl_value **argv,
+                                 lcl_value **out) {
+  struct lcl_lk_history *hw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::history_can_undo: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = get_history(interp, argv[0]);
+
+  if (!hw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_history_can_undo(hw->hist));
+
+  return LCL_RC_OK;
+}
+
+/* lk::history_can_redo [hist] -> 0/1 */
+static int c_lk_history_can_redo(lcl_interp *interp, int argc, lcl_value **argv,
+                                 lcl_value **out) {
+  struct lcl_lk_history *hw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::history_can_redo: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = get_history(interp, argv[0]);
+
+  if (!hw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_history_can_redo(hw->hist));
+
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
+ * Editor track: editors (6)
+ * ============================================================================
+ */
+
+/* lk::editor_new [ui, doc, ?hist] -> opaque<lk_editor>.
+ * Registers the editor in the ui's resource table; the wrapper's
+ * finalizer releases the registration before destroying the editor.
+ * A detached history is attached to the document here; a history
+ * already attached to a DIFFERENT document is an error. */
+static int c_lk_editor_new(lcl_interp *interp, int argc, lcl_value **argv,
+                           lcl_value **out) {
+  lk_ui *ui = NULL;
+  struct lcl_lk_doc *dw;
+  struct lcl_lk_history *hw = NULL;
+  struct lcl_lk_editor *ew;
+  lk_editor *ed;
+  lk_resource_ref ref;
+
+  if (argc < 2 || argc > 3) {
+    lcl_set_error(interp,
+                  "lk::editor_new: expected 2 or 3 arguments (ui, doc, ?hist)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::editor_new: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[1]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (argc == 3) {
+    hw = get_history(interp, argv[2]);
+
+    if (!hw) {
+      return LCL_RC_ERR;
+    }
+
+    if (hw->doc && hw->doc != dw->doc) {
+      lcl_set_error(interp,
+                    "lk::editor_new: history is attached to a different "
+                    "document");
+
+      return LCL_RC_ERR;
+    }
+  }
+
+  ed = lk_editor_new(NULL, NULL, NULL, dw->doc, hw ? hw->hist : NULL);
+
+  if (!ed) {
+    lcl_set_error(interp, "lk::editor_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  ref = lk_resource_register(lk_ui_resources(ui), lk_editor_type(), ed,
+                             "lcl-editor");
+
+  if (ref.id == 0) {
+    lk_editor_destroy(ed);
+    lcl_set_error(interp, "lk::editor_new: resource registration failed");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = (struct lcl_lk_editor *)malloc(sizeof(*ew));
+
+  if (!ew) {
+    lk_resource_release(lk_ui_resources(ui), ref);
+    lk_editor_destroy(ed);
+    lcl_set_error(interp, "lk::editor_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  /* Attach a still-detached history to this document (v1: one history
+   * per document; the attach is recorded on the history wrapper so a
+   * second editor over the same doc+hist does not re-subscribe). */
+  if (hw && !hw->doc) {
+    lk_history_attach(hw->hist, dw->doc);
+    hw->doc = dw->doc;
+    hw->doc_val = lcl_ref_inc(argv[1]);
+  }
+
+  ew->ed = ed;
+  ew->ui = ui;
+  ew->ref = ref;
+  ew->ui_val = lcl_ref_inc(argv[0]);
+  ew->doc_val = lcl_ref_inc(argv[1]);
+  ew->hist_val = hw ? lcl_ref_inc(argv[2]) : NULL;
+
+  *out = lcl_opaque_new(ew, LK_EDITOR_TYPE, editor_finalizer);
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_cursor [editor] -> byte offset (int) */
+static int c_lk_editor_cursor(lcl_interp *interp, int argc, lcl_value **argv,
+                              lcl_value **out) {
+  struct lcl_lk_editor *ew;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::editor_cursor: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_editor_cursor(ew->ed));
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_set_cursor [editor, pos] -> "" */
+static int c_lk_editor_set_cursor(lcl_interp *interp, int argc,
+                                  lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  long pos;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::editor_set_cursor: expected 2 arguments (editor, pos)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+    lcl_set_error(interp,
+                  "lk::editor_set_cursor: pos must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  lk_editor_set_cursor(ew->ed, (lk_u32)pos);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_selection [editor] -> (start end) or () when none */
+static int c_lk_editor_selection(lcl_interp *interp, int argc,
+                                 lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  lk_u32 start;
+  lk_u32 end;
+  lcl_value *list;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::editor_selection: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  list = lcl_list_new();
+
+  if (lk_editor_selection(ew->ed, &start, &end)) {
+    lcl_value *v;
+
+    v = lcl_int_new((long)start);
+    lcl_list_push(&list, v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)end);
+    lcl_list_push(&list, v);
+    lcl_ref_dec(v);
+  }
+
+  *out = list;
+
+  return LCL_RC_OK;
+}
+
+/* Joined command-name list for lk::editor_command error messages. */
+static const char *ed_cmd_known(void) {
+  static char buf[512];
+  static int built = 0;
+
+  if (!built) {
+    const str_enum *e;
+    char *p = buf;
+
+    for (e = ed_cmd_table; e->name; e++) {
+      if (e != ed_cmd_table) {
+        strcpy(p, ", ");
+        p += 2;
+      }
+
+      strcpy(p, e->name);
+      p += strlen(e->name);
+    }
+
+    *p = '\0';
+    built = 1;
+  }
+
+  return buf;
+}
+
+/* lk::editor_command [editor, cmd, ?args...] -> 1 if the command did
+ * anything, else 0.
+ *
+ * cmd is an LK_ED_* name with the prefix stripped and lowercased
+ * ("insert_text", "move_left", "select_all", "undo", ...).  Per-
+ * command args: insert_text takes the text; set_cursor takes pos and
+ * an optional literal "extend"; scroll_lines takes a signed line
+ * count; motion commands accept an optional literal "select" flag
+ * (extends the selection); everything else takes no args.  Unknown
+ * commands and malformed args are hard errors. */
+static int c_lk_editor_command(lcl_interp *interp, int argc, lcl_value **argv,
+                               lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  const char *cmd_str;
+  int cmd_val;
+  int extra;
+  lk_editor_cmd_arg arg;
+
+  if (argc < 2) {
+    lcl_set_error(
+        interp, "lk::editor_command: expected (editor, command, ?args...?)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  cmd_str = lcl_value_to_string(argv[1]);
+
+  if (!lookup_enum(ed_cmd_table, cmd_str, &cmd_val)) {
+    static char err[640];
+
+    sprintf(err, "lk::editor_command: unknown command '%.48s' (known: %s)",
+            cmd_str, ed_cmd_known());
+    lcl_set_error(interp, err);
+
+    return LCL_RC_ERR;
+  }
+
+  memset(&arg, 0, sizeof(arg));
+  extra = argc - 2;
+
+  switch (cmd_val) {
+  case LK_ED_INSERT_TEXT:
+    if (extra != 1) {
+      lcl_set_error(interp, "lk::editor_command: insert_text expects the text");
+
+      return LCL_RC_ERR;
+    }
+
+    arg.text.ptr = lcl_value_to_string(argv[2]);
+    arg.text.len = (lk_u32)strlen(arg.text.ptr);
+    break;
+
+  case LK_ED_SET_CURSOR: {
+    long pos;
+
+    if (extra < 1 || extra > 2) {
+      lcl_set_error(interp,
+                    "lk::editor_command: set_cursor expects pos ?\"extend\"?");
+
+      return LCL_RC_ERR;
+    }
+
+    if (lcl_value_to_int(argv[2], &pos) != LCL_OK || pos < 0) {
+      lcl_set_error(
+          interp,
+          "lk::editor_command: set_cursor pos must be a non-negative integer");
+
+      return LCL_RC_ERR;
+    }
+
+    arg.set_cursor.pos = (lk_u32)pos;
+
+    if (extra == 2) {
+      if (strcmp(lcl_value_to_string(argv[3]), "extend") != 0) {
+        lcl_set_error(
+            interp,
+            "lk::editor_command: set_cursor trailing flag must be \"extend\"");
+
+        return LCL_RC_ERR;
+      }
+
+      arg.set_cursor.extend = 1;
+    }
+    break;
+  }
+
+  case LK_ED_SCROLL_LINES: {
+    long lines;
+
+    if (extra != 1 || lcl_value_to_int(argv[2], &lines) != LCL_OK) {
+      lcl_set_error(
+          interp,
+          "lk::editor_command: scroll_lines expects a signed line count");
+
+      return LCL_RC_ERR;
+    }
+
+    arg.lines = (lk_i32)lines;
+    break;
+  }
+
+  default:
+    if (cmd_val >= LK_ED_MOVE_LEFT && cmd_val <= LK_ED_MOVE_PAGE_DOWN) {
+      /* Motion command: optional literal "select" flag. */
+      if (extra > 1 ||
+          (extra == 1 && strcmp(lcl_value_to_string(argv[2]), "select") != 0)) {
+        lcl_set_error(interp,
+                      "lk::editor_command: motion commands take at most a "
+                      "\"select\" flag");
+
+        return LCL_RC_ERR;
+      }
+
+      if (extra == 1) {
+        arg.select = 1;
+      }
+    } else if (extra != 0) {
+      lcl_set_error(interp, "lk::editor_command: command takes no arguments");
+
+      return LCL_RC_ERR;
+    }
+    break;
+  }
+
+  *out = lcl_int_new(
+      (long)lk_editor_command(ew->ed, ew->ui, (lk_editor_cmd_id)cmd_val, &arg));
+
+  return LCL_RC_OK;
+}
+
+/* Parse one span dict (#{start N end N ?fg (r g b ?a?)? ?bg ...?
+ * ?underline 1?}) into *sp.  Returns 1 on success, 0 with the interp
+ * error set. */
+static int span_from_dict(lcl_interp *interp, lcl_value *dict,
+                          lk_edit_span *sp) {
+  lcl_value *v;
+  long a;
+  long b;
+
+  if (lcl_value_type_of(dict) != LCL_DICT) {
+    lcl_set_error(interp,
+                  "lk::editor_set_spans: each span must be a dict "
+                  "(#{start N end N ?fg (r g b)? ?bg (r g b)? ?underline 1?})");
+
+    return 0;
+  }
+
+  /* Unknown keys are hard errors (DSL v2 philosophy). */
+  {
+    lcl_value *keys = NULL;
+
+    if (lcl_dict_keys(dict, &keys) == LCL_OK && keys) {
+      size_t i;
+      size_t nk = lcl_list_len(keys);
+
+      for (i = 0; i < nk; i++) {
+        lcl_value *kv = NULL;
+
+        if (lcl_list_get(keys, i, &kv) == LCL_OK && kv) {
+          const char *k = lcl_value_to_string(kv);
+
+          if (strcmp(k, "start") != 0 && strcmp(k, "end") != 0 &&
+              strcmp(k, "fg") != 0 && strcmp(k, "bg") != 0 &&
+              strcmp(k, "underline") != 0) {
+            lcl_ref_dec(kv);
+            lcl_ref_dec(keys);
+            lcl_set_error(interp,
+                          "lk::editor_set_spans: unknown span key (known: "
+                          "start, end, fg, bg, underline)");
+
+            return 0;
+          }
+
+          lcl_ref_dec(kv);
+        }
+      }
+
+      lcl_ref_dec(keys);
+    }
+  }
+
+  if (lcl_dict_get(dict, "start", &v) != LCL_OK) {
+    lcl_set_error(interp, "lk::editor_set_spans: span is missing 'start'");
+
+    return 0;
+  }
+
+  if (lcl_value_to_int(v, &a) != LCL_OK || a < 0) {
+    lcl_ref_dec(v);
+    lcl_set_error(interp,
+                  "lk::editor_set_spans: span start must be a non-negative "
+                  "integer");
+
+    return 0;
+  }
+
+  lcl_ref_dec(v);
+
+  if (lcl_dict_get(dict, "end", &v) != LCL_OK) {
+    lcl_set_error(interp, "lk::editor_set_spans: span is missing 'end'");
+
+    return 0;
+  }
+
+  if (lcl_value_to_int(v, &b) != LCL_OK || b <= a) {
+    lcl_ref_dec(v);
+    lcl_set_error(interp,
+                  "lk::editor_set_spans: span end must be an integer > start");
+
+    return 0;
+  }
+
+  lcl_ref_dec(v);
+
+  sp->start = (lk_u32)a;
+  sp->end = (lk_u32)b;
+  sp->flags = 0;
+
+  if (lcl_dict_get(dict, "fg", &v) == LCL_OK) {
+    int ok = parse_color_list(v, &sp->fg);
+
+    lcl_ref_dec(v);
+
+    if (!ok) {
+      lcl_set_error(interp,
+                    "lk::editor_set_spans: fg must be (r g b) or (r g b a)");
+
+      return 0;
+    }
+
+    sp->flags |= LK_SPAN_FG;
+  }
+
+  if (lcl_dict_get(dict, "bg", &v) == LCL_OK) {
+    int ok = parse_color_list(v, &sp->bg);
+
+    lcl_ref_dec(v);
+
+    if (!ok) {
+      lcl_set_error(interp,
+                    "lk::editor_set_spans: bg must be (r g b) or (r g b a)");
+
+      return 0;
+    }
+
+    sp->flags |= LK_SPAN_BG;
+  }
+
+  if (lcl_dict_get(dict, "underline", &v) == LCL_OK) {
+    long u;
+    int ok = (lcl_value_to_int(v, &u) == LCL_OK);
+
+    lcl_ref_dec(v);
+
+    if (!ok) {
+      lcl_set_error(interp, "lk::editor_set_spans: underline expects an int");
+
+      return 0;
+    }
+
+    if (u) {
+      sp->flags |= LK_SPAN_UNDERLINE;
+    }
+  }
+
+  return 1;
+}
+
+/* lk::editor_set_spans [editor, doc, spans] -> ""
+ *
+ * spans is a list of span dicts (see span_from_dict); an empty list
+ * clears.  The snapshot is stamped with the document's CURRENT
+ * revision and the spans' min/max range — a simplification of the
+ * docs/editor.md section 11 snapshot dict that is equivalent for
+ * synchronous script producers (the producer runs and delivers within
+ * one frame, so stamp-at-call == stamp-at-produce).  Spans must be
+ * sorted by start and non-overlapping. */
+static int c_lk_editor_set_spans(lcl_interp *interp, int argc,
+                                 lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  struct lcl_lk_doc *dw;
+  lk_edit_span *spans;
+  lk_edit_span_snapshot snap;
+  size_t n;
+  size_t i;
+
+  if (argc != 3) {
+    lcl_set_error(
+        interp, "lk::editor_set_spans: expected 3 arguments (editor, doc, spans)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[1]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_type_of(argv[2]) != LCL_LIST) {
+    lcl_set_error(interp,
+                  "lk::editor_set_spans: spans must be a list of span dicts");
+
+    return LCL_RC_ERR;
+  }
+
+  n = lcl_list_len(argv[2]);
+
+  if (n == 0) {
+    lk_editor_set_spans(ew->ed, NULL);
+    *out = lcl_string_new("");
+
+    return LCL_RC_OK;
+  }
+
+  spans = (lk_edit_span *)malloc(n * sizeof(*spans));
+
+  if (!spans) {
+    lcl_set_error(interp, "lk::editor_set_spans: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  for (i = 0; i < n; i++) {
+    lcl_value *sv = NULL;
+    int ok;
+
+    memset(&spans[i], 0, sizeof(spans[i]));
+
+    if (lcl_list_get(argv[2], i, &sv) != LCL_OK || !sv) {
+      free(spans);
+      lcl_set_error(interp, "lk::editor_set_spans: bad spans list");
+
+      return LCL_RC_ERR;
+    }
+
+    ok = span_from_dict(interp, sv, &spans[i]);
+    lcl_ref_dec(sv);
+
+    if (!ok) {
+      free(spans);
+
+      return LCL_RC_ERR; /* error set by span_from_dict */
+    }
+
+    if (i > 0 && spans[i].start < spans[i - 1].end) {
+      free(spans);
+      lcl_set_error(
+          interp,
+          "lk::editor_set_spans: spans must be sorted and non-overlapping");
+
+      return LCL_RC_ERR;
+    }
+  }
+
+  snap.revision = lk_doc_revision(dw->doc);
+  snap.range_start = spans[0].start;
+  snap.range_end = spans[n - 1].end;
+  snap.spans = spans;
+  snap.count = (lk_u32)n;
+
+  lk_editor_set_spans(ew->ed, &snap);
+  free(spans);
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
+ * Editor track: annotation stores (10)
+ * ============================================================================
+ */
+
+/* lk::annot_store_new -> opaque<lk_annot_store> */
+static int c_lk_annot_store_new(lcl_interp *interp, int argc, lcl_value **argv,
+                                lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  lk_annot_store *store;
+  (void)argv;
+
+  if (argc != 0) {
+    lcl_set_error(interp, "lk::annot_store_new: expected 0 arguments");
+
+    return LCL_RC_ERR;
+  }
+
+  store = lk_annot_store_new(NULL, NULL, NULL);
+
+  if (!store) {
+    lcl_set_error(interp, "lk::annot_store_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = (struct lcl_lk_annot *)malloc(sizeof(*aw));
+
+  if (!aw) {
+    lk_annot_store_destroy(store);
+    lcl_set_error(interp, "lk::annot_store_new: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  aw->store = store;
+  aw->doc_val = NULL;
+
+  *out = lcl_opaque_new(aw, LK_ANNOT_TYPE, annot_finalizer);
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_attach [store, doc] -> "" (subscribes; anchors then track
+ * every committed transaction).  Re-attaching is an error. */
+static int c_lk_annot_attach(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  struct lcl_lk_doc *dw;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::annot_attach: expected 2 arguments (store, doc)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[1]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (aw->doc_val) {
+    lcl_set_error(interp, "lk::annot_attach: store is already attached");
+
+    return LCL_RC_ERR;
+  }
+
+  lk_annot_store_attach(aw->store, dw->doc);
+  aw->doc_val = lcl_ref_inc(argv[1]);
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_add [store, start, end, layer, ?meta-dict] -> record id.
+ * meta-dict keys/values become the record's metadata (all strings). */
+static int c_lk_annot_add(lcl_interp *interp, int argc, lcl_value **argv,
+                          lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long start;
+  long end;
+  const char *layer;
+  lk_u32 id;
+  const char **keys = NULL;
+  const char **values = NULL;
+  lcl_value **kvals = NULL;
+  lcl_value **vvals = NULL;
+  lcl_value *keys_list = NULL;
+  lk_u32 meta_count = 0;
+
+  if (argc < 4 || argc > 5) {
+    lcl_set_error(interp,
+                  "lk::annot_add: expected 4 or 5 arguments "
+                  "(store, start, end, layer, ?meta-dict)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &start) != LCL_OK || start < 0) {
+    lcl_set_error(interp, "lk::annot_add: start must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[2], &end) != LCL_OK || end <= start) {
+    lcl_set_error(interp, "lk::annot_add: end must be an integer > start");
+
+    return LCL_RC_ERR;
+  }
+
+  layer = lcl_value_to_string(argv[3]);
+
+  if (argc == 5) {
+    size_t nk;
+    size_t i;
+
+    if (lcl_value_type_of(argv[4]) != LCL_DICT) {
+      lcl_set_error(interp, "lk::annot_add: meta must be a dict");
+
+      return LCL_RC_ERR;
+    }
+
+    if (lcl_dict_keys(argv[4], &keys_list) != LCL_OK || !keys_list) {
+      lcl_set_error(interp, "lk::annot_add: bad meta dict");
+
+      return LCL_RC_ERR;
+    }
+
+    nk = lcl_list_len(keys_list);
+
+    if (nk > 0) {
+      keys = (const char **)malloc(nk * sizeof(*keys));
+      values = (const char **)malloc(nk * sizeof(*values));
+      kvals = (lcl_value **)malloc(nk * sizeof(*kvals));
+      vvals = (lcl_value **)malloc(nk * sizeof(*vvals));
+
+      if (!keys || !values || !kvals || !vvals) {
+        free((void *)keys);
+        free((void *)values);
+        free(kvals);
+        free(vvals);
+        lcl_ref_dec(keys_list);
+        lcl_set_error(interp, "lk::annot_add: allocation failed");
+
+        return LCL_RC_ERR;
+      }
+
+      for (i = 0; i < nk; i++) {
+        lcl_value *kv = NULL;
+        lcl_value *vv = NULL;
+
+        if (lcl_list_get(keys_list, i, &kv) != LCL_OK || !kv ||
+            lcl_dict_get(argv[4], lcl_value_to_string(kv), &vv) != LCL_OK) {
+          if (kv) {
+            lcl_ref_dec(kv);
+          }
+
+          continue;
+        }
+
+        kvals[meta_count] = kv;
+        vvals[meta_count] = vv;
+        keys[meta_count] = lcl_value_to_string(kv);
+        values[meta_count] = lcl_value_to_string(vv);
+        meta_count++;
+      }
+    }
+  }
+
+  id = lk_annot_add(aw->store, (lk_u32)start, (lk_u32)end, layer, keys, values,
+                    meta_count);
+
+  /* lk_annot_add copied everything; drop the marshalling refs. */
+  {
+    lk_u32 i;
+
+    for (i = 0; i < meta_count; i++) {
+      lcl_ref_dec(kvals[i]);
+      lcl_ref_dec(vvals[i]);
+    }
+  }
+
+  free((void *)keys);
+  free((void *)values);
+  free(kvals);
+  free(vvals);
+
+  if (keys_list) {
+    lcl_ref_dec(keys_list);
+  }
+
+  if (id == 0) {
+    lcl_set_error(interp, "lk::annot_add: add failed");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)id);
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_remove [store, id] -> 1 if removed, 0 if not found */
+static int c_lk_annot_remove(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long id;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::annot_remove: expected 2 arguments (store, id)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
+    lcl_set_error(interp, "lk::annot_remove: id must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_annot_remove(aw->store, (lk_u32)id));
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_span [store, id] -> (start end); error if the record is
+ * gone. */
+static int c_lk_annot_span(lcl_interp *interp, int argc, lcl_value **argv,
+                           lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long id;
+  lk_u32 start;
+  lk_u32 end;
+  lcl_value *list;
+  lcl_value *v;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::annot_span: expected 2 arguments (store, id)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
+    lcl_set_error(interp, "lk::annot_span: id must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if (!lk_annot_get_span(aw->store, (lk_u32)id, &start, &end)) {
+    lcl_set_error(interp, "lk::annot_span: no such annotation");
+
+    return LCL_RC_ERR;
+  }
+
+  list = lcl_list_new();
+
+  v = lcl_int_new((long)start);
+  lcl_list_push(&list, v);
+  lcl_ref_dec(v);
+
+  v = lcl_int_new((long)end);
+  lcl_list_push(&list, v);
+  lcl_ref_dec(v);
+
+  *out = list;
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_meta [store, id, key] -> value string ("" when the key is
+ * absent); error if the record is gone. */
+static int c_lk_annot_meta(lcl_interp *interp, int argc, lcl_value **argv,
+                           lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long id;
+  const char *val;
+
+  if (argc != 3) {
+    lcl_set_error(interp,
+                  "lk::annot_meta: expected 3 arguments (store, id, key)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
+    lcl_set_error(interp, "lk::annot_meta: id must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if (!lk_annot_get(aw->store, (lk_u32)id)) {
+    lcl_set_error(interp, "lk::annot_meta: no such annotation");
+
+    return LCL_RC_ERR;
+  }
+
+  val = lk_annot_get_meta(aw->store, (lk_u32)id, lcl_value_to_string(argv[2]));
+  *out = lcl_string_new(val ? val : "");
+
+  return LCL_RC_OK;
+}
+
+/* Marshal a query's ids into an Lcl list (frees nothing). */
+static lcl_value *annot_query_to_list(const lk_annot_query *q) {
+  lcl_value *list = lcl_list_new();
+  lk_u32 i;
+
+  for (i = 0; i < q->count; i++) {
+    lcl_value *v = lcl_int_new((long)q->ids[i]);
+
+    lcl_list_push(&list, v);
+    lcl_ref_dec(v);
+  }
+
+  return list;
+}
+
+/* lk::annot_in_range [store, start, end, ?layer] -> list of ids */
+static int c_lk_annot_in_range(lcl_interp *interp, int argc, lcl_value **argv,
+                               lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long start;
+  long end;
+  const char *layer = NULL;
+  lk_annot_query q;
+
+  if (argc < 3 || argc > 4) {
+    lcl_set_error(interp,
+                  "lk::annot_in_range: expected 3 or 4 arguments "
+                  "(store, start, end, ?layer)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &start) != LCL_OK ||
+      lcl_value_to_int(argv[2], &end) != LCL_OK || start < 0 || end < start) {
+    lcl_set_error(interp, "lk::annot_in_range: bad range");
+
+    return LCL_RC_ERR;
+  }
+
+  if (argc == 4) {
+    layer = lcl_value_to_string(argv[3]);
+  }
+
+  lk_annot_query_init(&q);
+  lk_annot_in_range(aw->store, (lk_u32)start, (lk_u32)end, layer, &q);
+  *out = annot_query_to_list(&q);
+  lk_annot_query_free(&q);
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_at [store, pos, ?layer] -> list of ids */
+static int c_lk_annot_at(lcl_interp *interp, int argc, lcl_value **argv,
+                         lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long pos;
+  const char *layer = NULL;
+  lk_annot_query q;
+
+  if (argc < 2 || argc > 3) {
+    lcl_set_error(
+        interp, "lk::annot_at: expected 2 or 3 arguments (store, pos, ?layer)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+    lcl_set_error(interp, "lk::annot_at: pos must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if (argc == 3) {
+    layer = lcl_value_to_string(argv[2]);
+  }
+
+  lk_annot_query_init(&q);
+  lk_annot_at(aw->store, (lk_u32)pos, layer, &q);
+  *out = annot_query_to_list(&q);
+  lk_annot_query_free(&q);
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_by_layer [store, layer] -> list of ids */
+static int c_lk_annot_by_layer(lcl_interp *interp, int argc, lcl_value **argv,
+                               lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  lk_annot_query q;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::annot_by_layer: expected 2 arguments (store, layer)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  lk_annot_query_init(&q);
+  lk_annot_by_layer(aw->store, lcl_value_to_string(argv[1]), &q);
+  *out = annot_query_to_list(&q);
+  lk_annot_query_free(&q);
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_layer_register [store, name] -> "" */
+static int c_lk_annot_layer_register(lcl_interp *interp, int argc,
+                                     lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_annot *aw;
+
+  if (argc != 2) {
+    lcl_set_error(
+        interp, "lk::annot_layer_register: expected 2 arguments (store, name)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  lk_annot_register_layer(aw->store, lcl_value_to_string(argv[1]));
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
  * Registration
  * ============================================================================
  */
@@ -2373,6 +4367,72 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::clipboard_get", c_lk_clipboard_get));
   lcl_ns_def(ns, "clipboard_set",
              lcl_c_proc_new("lk::clipboard_set", c_lk_clipboard_set));
+
+  /* Documents (editor track) */
+  lcl_ns_def(ns, "doc_new", lcl_c_proc_new("lk::doc_new", c_lk_doc_new));
+  lcl_ns_def(ns, "doc_text", lcl_c_proc_new("lk::doc_text", c_lk_doc_text));
+  lcl_ns_def(ns, "doc_len", lcl_c_proc_new("lk::doc_len", c_lk_doc_len));
+  lcl_ns_def(ns, "doc_line_count",
+             lcl_c_proc_new("lk::doc_line_count", c_lk_doc_line_count));
+  lcl_ns_def(ns, "doc_revision",
+             lcl_c_proc_new("lk::doc_revision", c_lk_doc_revision));
+  lcl_ns_def(ns, "doc_insert",
+             lcl_c_proc_new("lk::doc_insert", c_lk_doc_insert));
+  lcl_ns_def(ns, "doc_delete",
+             lcl_c_proc_new("lk::doc_delete", c_lk_doc_delete));
+  lcl_ns_def(ns, "doc_transact",
+             lcl_c_proc_new("lk::doc_transact", c_lk_doc_transact));
+  lcl_ns_def(ns, "doc_subscribe",
+             lcl_c_proc_new("lk::doc_subscribe", c_lk_doc_subscribe));
+  lcl_ns_def(ns, "doc_unsubscribe",
+             lcl_c_proc_new("lk::doc_unsubscribe", c_lk_doc_unsubscribe));
+
+  /* Edit history */
+  lcl_ns_def(ns, "history_new",
+             lcl_c_proc_new("lk::history_new", c_lk_history_new));
+  lcl_ns_def(ns, "history_undo",
+             lcl_c_proc_new("lk::history_undo", c_lk_history_undo));
+  lcl_ns_def(ns, "history_redo",
+             lcl_c_proc_new("lk::history_redo", c_lk_history_redo));
+  lcl_ns_def(ns, "history_can_undo",
+             lcl_c_proc_new("lk::history_can_undo", c_lk_history_can_undo));
+  lcl_ns_def(ns, "history_can_redo",
+             lcl_c_proc_new("lk::history_can_redo", c_lk_history_can_redo));
+
+  /* Editors */
+  lcl_ns_def(ns, "editor_new",
+             lcl_c_proc_new("lk::editor_new", c_lk_editor_new));
+  lcl_ns_def(ns, "editor_cursor",
+             lcl_c_proc_new("lk::editor_cursor", c_lk_editor_cursor));
+  lcl_ns_def(ns, "editor_set_cursor",
+             lcl_c_proc_new("lk::editor_set_cursor", c_lk_editor_set_cursor));
+  lcl_ns_def(ns, "editor_selection",
+             lcl_c_proc_new("lk::editor_selection", c_lk_editor_selection));
+  lcl_ns_def(ns, "editor_command",
+             lcl_c_proc_new("lk::editor_command", c_lk_editor_command));
+  lcl_ns_def(ns, "editor_set_spans",
+             lcl_c_proc_new("lk::editor_set_spans", c_lk_editor_set_spans));
+
+  /* Annotation stores */
+  lcl_ns_def(ns, "annot_store_new",
+             lcl_c_proc_new("lk::annot_store_new", c_lk_annot_store_new));
+  lcl_ns_def(ns, "annot_attach",
+             lcl_c_proc_new("lk::annot_attach", c_lk_annot_attach));
+  lcl_ns_def(ns, "annot_add", lcl_c_proc_new("lk::annot_add", c_lk_annot_add));
+  lcl_ns_def(ns, "annot_remove",
+             lcl_c_proc_new("lk::annot_remove", c_lk_annot_remove));
+  lcl_ns_def(ns, "annot_span",
+             lcl_c_proc_new("lk::annot_span", c_lk_annot_span));
+  lcl_ns_def(ns, "annot_meta",
+             lcl_c_proc_new("lk::annot_meta", c_lk_annot_meta));
+  lcl_ns_def(ns, "annot_in_range",
+             lcl_c_proc_new("lk::annot_in_range", c_lk_annot_in_range));
+  lcl_ns_def(ns, "annot_at", lcl_c_proc_new("lk::annot_at", c_lk_annot_at));
+  lcl_ns_def(ns, "annot_by_layer",
+             lcl_c_proc_new("lk::annot_by_layer", c_lk_annot_by_layer));
+  lcl_ns_def(ns, "annot_layer_register",
+             lcl_c_proc_new("lk::annot_layer_register",
+                            c_lk_annot_layer_register));
 
 #ifdef LK_HAVE_SDL
   /* SDL Window */
