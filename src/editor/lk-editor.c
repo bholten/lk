@@ -809,6 +809,61 @@ static void ed_on_doc(void *ud, const lk_document *d,
    * recomputes it. */
   e->geom.valid = 0;
 
+  /* Keep the styled-span copy usable through this transaction: if it
+   * was current when the transaction began, forward-transform it per
+   * delta — the same position rules the annot store applies to its
+   * default anchors (start stays at an insert point, end moves) — and
+   * restamp, so the frame between the edit and the producer's next
+   * run stays styled instead of blinking unstyled.  The producer
+   * still re-stamps truth next frame.  A copy that was already stale
+   * stays stale (transforming from a wrong base would be wrong). */
+  if (e->span_count > 0 &&
+      lk_revision_equal(e->span_rev, deltas[0].before)) {
+    lk_u32 di;
+    lk_u32 si;
+    lk_u32 w;
+
+    for (di = 0; di < n; di++) {
+      lk_u32 p = deltas[di].start;
+      lk_u32 dl = deltas[di].deleted_len;
+      lk_u32 il = deltas[di].inserted_len;
+
+      for (si = 0; si < e->span_count; si++) {
+        lk_edit_span *sp = &e->spans[si];
+
+        if (dl > 0) {
+          sp->start = sp->start <= p     ? sp->start
+                      : sp->start >= p + dl ? sp->start - dl
+                                            : p;
+          sp->end = sp->end <= p     ? sp->end
+                    : sp->end >= p + dl ? sp->end - dl
+                                        : p;
+        }
+
+        if (il > 0) {
+          if (sp->start > p) {
+            sp->start += il;
+          }
+
+          if (sp->end >= p) {
+            sp->end += il;
+          }
+        }
+      }
+    }
+
+    w = 0;
+
+    for (si = 0; si < e->span_count; si++) {
+      if (e->spans[si].start < e->spans[si].end) {
+        e->spans[w++] = e->spans[si];
+      }
+    }
+
+    e->span_count = w;
+    e->span_rev = deltas[n - 1].after;
+  }
+
   if (deltas[0].origin == LK_ORIGIN_UNDO ||
       deltas[0].origin == LK_ORIGIN_REDO) {
     /* Derive the cursor from the replay (docs/editor.md section 4):

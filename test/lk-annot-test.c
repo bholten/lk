@@ -1151,26 +1151,167 @@ static void test_span_inside_tab_segment(void) {
   END_TEST();
 }
 
-static void test_span_stale_snapshot_ignored(void) {
+static void test_span_forward_transform_on_edit(void) {
   sp_fix f;
   lk_render_list rl;
 
-  BEGIN_TEST("span render: stale snapshot -> unstyled");
+  BEGIN_TEST("span render: current snapshot forward-transforms through edit");
 
   sp_init(&f, "hello world", 400, 80);
   memset(&rl, 0, sizeof(rl));
 
   sp_set_one(&f, 2, 5, LK_SPAN_FG | LK_SPAN_BG);
 
-  /* edit AFTER the snapshot: revision no longer matches */
+  /* The copy was current when this transaction began, so it shifts
+   * with the insert and stays styled -- no per-keystroke blink. */
   CHECK(lk_doc_insert(f.doc, 0, "zz", 2) == 1);
   sp_layout(&f);
 
   CHECK(sp_render(&f, &rl));
 
-  /* identical to no-spans: one run per line, nothing styled */
+  CHECK_EQ(sp_count_runs(&rl), 3);
+  CHECK(sp_run_is(&rl, sp_nth_run(&rl, 0), "zzhe"));
+  CHECK(sp_run_is(&rl, sp_nth_run(&rl, 1), "llo"));
+  CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 1);
+  CHECK(sp_find_fill(&rl, SP_BG) != NULL);
+
+  lk_render_list_destroy(&rl);
+  sp_destroy(&f);
+  END_TEST();
+}
+
+static void test_span_transform_insert_at_start(void) {
+  sp_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("span render: insert at span start grows leftward-inclusively");
+
+  sp_init(&f, "hello world", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  sp_set_one(&f, 2, 5, LK_SPAN_FG);
+
+  /* Insert exactly at the span's start: start stays (LEFT-anchor
+   * rule), end shifts (RIGHT) -- matching what the annot store's
+   * anchors do, so the producer agrees next frame. */
+  CHECK(lk_doc_insert(f.doc, 2, "zz", 2) == 1);
+  sp_layout(&f);
+
+  CHECK(sp_render(&f, &rl));
+
+  CHECK_EQ(sp_count_runs(&rl), 3);
+  CHECK(sp_run_is(&rl, sp_nth_run(&rl, 1), "zzllo"));
+  CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 1);
+
+  lk_render_list_destroy(&rl);
+  sp_destroy(&f);
+  END_TEST();
+}
+
+static void test_span_transform_delete_covering_drops(void) {
+  sp_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("span render: delete covering the span drops it");
+
+  sp_init(&f, "hello world", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  sp_set_one(&f, 2, 5, LK_SPAN_FG | LK_SPAN_BG);
+
+  CHECK(lk_doc_delete(f.doc, 1, 6) == 1);
+  sp_layout(&f);
+
+  CHECK(sp_render(&f, &rl));
+
+  /* Both edges collapsed to the delete point -> degenerate ->
+   * dropped; render is identical to no-spans. */
   CHECK_EQ(sp_count_runs(&rl), 1);
-  CHECK(sp_run_is(&rl, sp_nth_run(&rl, 0), "zzhello world"));
+  CHECK(sp_run_is(&rl, sp_nth_run(&rl, 0), "horld"));
+  CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 0);
+  CHECK(sp_find_fill(&rl, SP_BG) == NULL);
+
+  lk_render_list_destroy(&rl);
+  sp_destroy(&f);
+  END_TEST();
+}
+
+static void test_span_transform_transaction_net(void) {
+  sp_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("span render: multi-op transaction transforms per delta");
+
+  sp_init(&f, "hello world", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  sp_set_one(&f, 2, 5, LK_SPAN_FG);
+
+  /* Insert then delete the same bytes in one bracket: the span rides
+   * both deltas and lands back where it started. */
+  lk_doc_begin(f.doc, 99);
+  CHECK(lk_doc_insert(f.doc, 0, "zz", 2) == 1);
+  CHECK(lk_doc_delete(f.doc, 0, 2) == 1);
+  lk_doc_commit(f.doc);
+  sp_layout(&f);
+
+  CHECK(sp_render(&f, &rl));
+
+  CHECK_EQ(sp_count_runs(&rl), 3);
+  CHECK(sp_run_is(&rl, sp_nth_run(&rl, 1), "llo"));
+  CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 1);
+
+  lk_render_list_destroy(&rl);
+  sp_destroy(&f);
+  END_TEST();
+}
+
+static void test_span_truly_stale_ignored(void) {
+  sp_fix f;
+  lk_render_list rl;
+  lk_edit_span sp;
+  lk_edit_span_snapshot snap;
+  lk_revision old_rev;
+
+  BEGIN_TEST("span render: stale-base snapshot stays ignored");
+
+  sp_init(&f, "hello world", 400, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* Stamp a snapshot with a revision that predates an edit: the
+   * transform guard (span_rev == delta.before) can never fire for
+   * it, so it is ignored at render, before and after further
+   * edits. */
+  old_rev = lk_doc_revision(f.doc);
+  CHECK(lk_doc_insert(f.doc, 0, "zz", 2) == 1);
+
+  memset(&sp, 0, sizeof(sp));
+  sp.start = 2;
+  sp.end = 5;
+  sp.flags = LK_SPAN_FG | LK_SPAN_BG;
+  sp.fg = SP_FG;
+  sp.bg = SP_BG;
+
+  memset(&snap, 0, sizeof(snap));
+  snap.revision = old_rev;
+  snap.range_start = 0;
+  snap.range_end = lk_doc_len(f.doc);
+  snap.spans = &sp;
+  snap.count = 1;
+  lk_editor_set_spans(f.ed, &snap);
+
+  sp_layout(&f);
+  CHECK(sp_render(&f, &rl));
+  CHECK_EQ(sp_count_runs(&rl), 1);
+  CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 0);
+
+  /* A further edit must not transform-from-wrong-base either. */
+  CHECK(lk_doc_insert(f.doc, 0, "q", 1) == 1);
+  sp_layout(&f);
+  lk_render_list_destroy(&rl);
+  memset(&rl, 0, sizeof(rl));
+  CHECK(sp_render(&f, &rl));
+  CHECK_EQ(sp_count_runs(&rl), 1);
   CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 0);
   CHECK(sp_find_fill(&rl, SP_BG) == NULL);
 
@@ -1384,14 +1525,20 @@ static void test_span_producer_end_to_end(void) {
         CHECK(col_eq(sp_nth_run(&rl, 2)->color, SP_FG));
         CHECK(sp_find_fill(&rl, SP_FG) != NULL); /* underline */
 
-        /* now edit: prepend "zz" -- the snapshot goes stale and the
-         * next frame renders unstyled */
+        /* now edit: prepend "zz".  The editor forward-transforms its
+         * span copy through the delta, so the in-between frame
+         * renders EXACTLY what the producer will re-derive from the
+         * transformed anchors next round -- assert that agreement
+         * directly (same expectations as the round-1 block). */
         CHECK(lk_doc_insert(f.doc, 0, "zz", 2) == 1);
         sp_layout(&f);
         CHECK(sp_render(&f, &rl));
-        CHECK_EQ(sp_count_runs(&rl), 1);
-        CHECK_EQ(sp_count_runs_colored(&rl, SP_FG2), 0);
-        CHECK(sp_find_fill(&rl, SP_FG) == NULL);
+        CHECK_EQ(sp_count_runs(&rl), 3);
+        CHECK(sp_run_is(&rl, sp_nth_run(&rl, 0), "zzabc"));
+        CHECK(col_eq(sp_nth_run(&rl, 0)->color, SP_FG2));
+        CHECK(sp_run_is(&rl, sp_nth_run(&rl, 2), "def"));
+        CHECK(col_eq(sp_nth_run(&rl, 2)->color, SP_FG));
+        CHECK(sp_find_fill(&rl, SP_FG) != NULL); /* underline */
       } else {
         /* re-produced after the edit.  The "kw" annotation started
          * at 0 with a LEFT-bias anchor, so inserting AT 0 leaves it
@@ -1456,7 +1603,11 @@ void lk_annot_run_tests(void) {
   test_span_underline();
   test_span_across_lines();
   test_span_inside_tab_segment();
-  test_span_stale_snapshot_ignored();
+  test_span_forward_transform_on_edit();
+  test_span_transform_insert_at_start();
+  test_span_transform_delete_covering_drops();
+  test_span_transform_transaction_net();
+  test_span_truly_stale_ignored();
   test_span_partial_viewport_coverage();
   test_span_utf8_boundary_clamp();
   test_span_replace_and_clear();
