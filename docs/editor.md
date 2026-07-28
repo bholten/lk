@@ -578,12 +578,21 @@ typedef struct lk_edit_span_snapshot {
 void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap);
 ```
 
-The editor copies the snapshot. Staleness policy (pinned): a
-snapshot whose revision no longer matches the document is **ignored
-at render** (unstyled text for a frame beats misplaced styling; the
-producer re-runs off the same change notification that made it
-stale). A snapshot not covering the visible range styles what it
-covers. Render splits each visible line's runs at span boundaries —
+The editor copies the snapshot. Staleness policy (pinned, amended
+post-D after the typing-flicker report): when a transaction commits
+and the copy was current as of that transaction's start, the editor
+**forward-transforms** its span copy through the deltas it already
+observes as a subscriber — the same position rules the annot store
+applies to its default anchors (start stays at an insert point, end
+moves; degenerate spans drop) — and restamps it, so the frame
+between an edit and the producer's next run stays styled instead of
+blinking unstyled once per keystroke. A copy that was already stale
+when the transaction began is **ignored at render** (transforming
+from a wrong base would style the wrong bytes; unstyled beats
+misplaced). The producer still re-stamps truth on its next run, and
+the transform agrees with it by construction since both apply the
+same anchor rules. A snapshot not covering the visible range styles
+what it covers. Render splits each visible line's runs at span boundaries —
 the §7 tab machinery generalized — emitting bg FILL_RECT, DRAW_RUN
 with span fg, underline as 1-px FILL_RECT.
 
