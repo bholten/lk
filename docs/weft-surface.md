@@ -439,6 +439,48 @@ line to prove configurability. Acme's L/M/R meanings live HERE
 and only here. Gate: runs headless; gesture paths driven through
 the harness where possible; hand-check for feel.
 
+**S3 — DONE 2026-07-29.**  Landing notes:
+
+- Shaping decisions (Brennan, 2026-07-29): simple panes — one
+  `split_h`, two editors (no Emacs-style pane control); and execute
+  evaluates INTO THE CLICKED PANE, current-weft style — the result
+  inserts after the executed line as `=> ...` (`!! ...` on error),
+  annotated in an `output` layer, NOT into a separate output
+  document.  The insertion is an ordinary transaction: undo removes
+  it, anchors below shift.
+- 568 lines (~350 code; the rest is the header doc plus the two
+  in-buffer texts) — over the ~300 target, carrying per-pane status
+  rows, save, flash messages, and an io-less fallback beyond the
+  original sketch.
+- Foreign-file plumbing replaces the left pane wholesale:
+  `_make_pane` builds a fresh doc/history/store/editor and swaps the
+  refs in a `panes` dict the view body re-reads every frame; the old
+  editor is refcount-released and its stale resource ref renders as
+  an empty pane for at most the frame in flight.
+- Error-safe execute: stdlib `catch` (`catch {eval $code} res err`)
+  absorbs both runtime and parse errors.  Two Lcl facts recorded: a
+  single bare word self-evaluates (so word-execute of a non-proc
+  echoes, never errors), and `catch $code` would leak parse errors —
+  the `catch {eval $code}` form is required.
+- Gesture wiring: plumb rides the S1 editor offer path (matcher-dict
+  translator `#{button secondary}` on ptype `plumb`); LOOK and
+  EXECUTE act in the app `event_handler` on middle/secondary clicks
+  the editor leaves unconsumed (pinned §1.5 contract); Ctrl+F/Ctrl+S
+  are keybindings scoped to a `buf` presentation on each editor node
+  whose pvalue names the pane — which is also how the app knows the
+  active pane.
+- Producer: per-doc `scan_rev` cache, drop-and-readd layers, colon
+  candidates found by `lk::doc_find` (C-speed) with only the colon
+  neighborhood walked in script; plumb values are `#{file .. line
+  ..}` dicts.
+- Gate: a scratchpad harness (45 checks) evals the example up to the
+  `app` call and drives scanner positions + presentation-value
+  contents, word extraction, execute (word/selection/echo/error/
+  parse-error), look wrap-around cycling, and the plumb pane-swap
+  headlessly through `lcl_lk_main`; all seven examples run headless
+  (exit 124); suites 420/420 core, 102/102 Lcl, no C changes.
+  Hand-check only: gesture feel, visuals, search-bar/save flow.
+
 **Horizon** (unscheduled): tree-sitter as producer; annot
 persistence (with §1.4's per-type serialization decision);
 output-record/inline-block design per §4; keyboard activation +
