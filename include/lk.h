@@ -132,6 +132,14 @@ typedef enum lk_prop_key {
                  background only and ignore events.  See
                  docs/editor.md sections 5 and 7. */
 
+  UIP_GROW, /* i32 >= 0: weighted growth in a ROW/COLUMN stack.  The
+               child's share of leftover main-axis space, distributed
+               largest-remainder (docs/grow-layout.md).  Presence
+               matters: absent != 0 -- a bare unsized SPACER keeps its
+               legacy weight of 1, grow 0 pins it.  An explicit
+               main-axis size is the basis; the child still grows.
+               Clamped to [0, 4096] at distribution time. */
+
   UIP__COUNT
 } lk_prop_key;
 
@@ -192,7 +200,11 @@ typedef enum lk_align {
   LK_ALIGN_START = 0,
   LK_ALIGN_CENTER,
   LK_ALIGN_END,
-  LK_ALIGN_STRETCH /* default behavior for cross-axis */
+  LK_ALIGN_STRETCH /* fill the cross axis.  NOT the resolved default
+                      (that is START); WINDOW gets STRETCH from the
+                      default theme.  The styleless layout fallback
+                      (cfg->styles == NULL) still assumes STRETCH for
+                      stacks, for backwards compat. */
 } lk_align;
 
 typedef enum lk_value_tag {

@@ -149,11 +149,15 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   s.fg = mk_color(220, 220, 220, 255);
   lk_theme_add_rule(th, 0, 0, 0, &s, LK_SF_FG);
 
-  /* WINDOW */
+  /* WINDOW -- align STRETCH: a root's child should fill the client
+   * area (docs/grow-layout.md section 4).  ROW/COLUMN keep the
+   * resolved default of START and opt in per node. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(30, 30, 30, 255);
   s.padding = 0;
-  lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
+  s.align = (lk_u8)LK_ALIGN_STRETCH;
+  lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING | LK_SF_ALIGN);
 
   /* COLUMN */
   memset(&s, 0, sizeof(s));
@@ -374,7 +378,10 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
       apply_rule(&styles[n], &set_mask, rule);
     }
 
-    /* Tree prop overrides */
+    /* Tree prop overrides -- presence-gated (lk_node_has_prop), so an
+     * absent prop never clobbers a theme-sourced value and an explicit
+     * zero (e.g. align start) still beats the theme.  Resolution order:
+     * explicit prop > theme rule > engine fallback (zeroed style). */
     if (lk_node_has_prop(t, n, UIP_PADDING)) {
       styles[n].padding = lk_node_prop_i32(t, n, UIP_PADDING, 0);
       set_mask |= LK_SF_PADDING;

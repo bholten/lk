@@ -1874,6 +1874,66 @@ static void test_dsl_props_tooltip_split_ratio(void) {
   END_TEST();
 }
 
+static void test_dsl_prop_grow(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: grow prop lands as UIP_GROW");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "spacer g_sp #{grow 2}\n"
+    "editor g_ed_zero #{grow 0}",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix sp = dsl_find(t, "g_sp");
+    lk_ix ez = dsl_find(t, "g_ed_zero");
+    CHECK(sp != 0 && ez != 0);
+    CHECK(lk_node_prop_i32(t, sp, UIP_GROW, -1) == 2);
+    /* grow 0 is present-and-zero, not absent */
+    CHECK(lk_node_has_prop(t, ez, UIP_GROW) == 1);
+    CHECK(lk_node_prop_i32(t, ez, UIP_GROW, -1) == 0);
+  }
+
+  /* the unknown-prop known-keys list now advertises grow */
+  eval_expect_err(interp, "label g_bad #{bogus 1}", "unknown prop 'bogus'",
+                  "grow", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_prop_grow_negative_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("grow: negative values hard-error in bindings");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp, "let gn [lk::node $t \"g_neg\" \"spacer\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  /* raw binding: negative and non-integer both error, naming the
+   * constraint */
+  eval_expect_err(interp, "lk::prop $t $gn \"grow\" -1", "grow", ">= 0",
+                  NULL);
+  eval_expect_err(interp, "lk::prop $t $gn \"grow\" \"lots\"", "grow",
+                  "integer", NULL);
+
+  /* DSL negative grow reaches the same binding error */
+  eval_expect_err(interp, "spacer g_neg2 #{grow -3}", "grow", ">= 0", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_dsl_tag(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -3871,6 +3931,8 @@ int main(void) {
   test_dsl_props_layout();
   test_dsl_props_bools();
   test_dsl_props_tooltip_split_ratio();
+  test_dsl_prop_grow();
+  test_prop_grow_negative_errors();
   test_dsl_tag();
   test_dsl_present_scalar();
   test_dsl_present_multiarg();
