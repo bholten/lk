@@ -545,11 +545,16 @@ shipping.
   `ui->overlays` with per-kind dispatch, and subtree-content overlays
   (`content_root_id` + `UIP_HIDDEN`) are the anchored-subtree shape
   `layers.md` §7 called for.  See `docs/overlays.md`.
-- **`LK_EVENT_VALUE_CHANGED` re-enters `lk_event_route` mid-dispatch.**
-  Widgets synthesize it by recursively calling the router from inside
-  their own event handlers.  Cleaner: a small pending-event queue on
-  `lk_ui` drained after the outer route completes (matches the design's
-  "commands are returned as a queue" shape).
+- ~~**`LK_EVENT_VALUE_CHANGED` re-enters `lk_event_route` mid-dispatch.**~~
+  Resolved (polish F2): synthetic emissions (`VALUE_CHANGED`,
+  `FOCUS_CHANGED`) now go through a pending queue on `lk_ui`
+  (`lk_event_enqueue`), drained FIFO at the end of the OUTERMOST
+  `lk_event_route` call — re-entrant routes never double-drain, and
+  events enqueued during a drain join the same loop (safety cap 64
+  dispatches per drain; overflow dropped and counted in
+  `ui->pending_dropped`).  `lk_ui_flush_events` drains outside
+  routing (the SDL run loop calls it after `end_frame` and after the
+  event-poll loop).
 - **Widget-private state keys are a public flat enum.**  `LKS_*` keys are
   encapsulated by convention only; the dropdown `-value` gap (above)
   forces hosts to poke `LKS_SELECTED_INDEX` directly — the one live

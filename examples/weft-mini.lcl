@@ -248,7 +248,6 @@ proc _word_at {doc pos} {
 ;; LOOK: search-next for the clicked word from the cursor, wrapping;
 ;; repeated clicks on the same word cycle through its occurrences.
 proc _look {side pos} {
-    set! active $side
     lk::focus_set $ui "ed_$side"
 
     let doc [pane_get $side doc]
@@ -278,7 +277,6 @@ proc _look {side pos} {
 ;; every annotation anchored below shifts and survives — the
 ;; substrate, not this file, keeps them true.
 proc _execute {side pos} {
-    set! active $side
     lk::focus_set $ui "ed_$side"
 
     let doc [pane_get $side doc]
@@ -319,7 +317,6 @@ proc _goto_line {side ln} {
     ;; re-anchor path brings the line into view
     lk::editor_command [pane_get $side ed] set_cursor [lk::doc_line_start $doc [- $l 1]]
     lk::focus_set $ui "ed_$side"
-    set! active $side
 }
 
 ;; PLUMB: the handler receives a typed location value.  Own file ->
@@ -499,10 +496,9 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
         _plumb_open [get $v file] [get $v line]
     }]
 
-    ;; The buf presentation's arg names the pane, so Ctrl+F opens the
-    ;; search row in whichever pane owns the keyboard focus.
+    ;; active already tracks the focused pane (focus_changed below), so
+    ;; Ctrl+F just opens the search row in it.
     on SearchOpen [lambda {cmd} {
-        set! active [get [get $cmd args] 0]
         set! search_open 1
         lk::focus_set $ui "search_in"
     }]
@@ -534,7 +530,16 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
     ;; Middle and secondary clicks the editor does not consume bubble
     ;; here (primary never does - the editor owns it).  Button ints:
     ;; 1 = primary, 2 = middle, 3 = secondary.
+    ;;
+    ;; focus_changed drives the active pane: the app never infers
+    ;; focus from gestures — whenever an editor gains keyboard focus
+    ;; (click, LOOK, plumb, Tab, SearchClose) active follows it.
     event_handler [lambda {ev node} {
+        if [== [get $ev type] focus_changed] {
+            if [== [get $ev next_id] ed_left] { set! active left }
+            if [== [get $ev next_id] ed_right] { set! active right }
+            return 0
+        }
         if [not [== [get $ev type] pointer_down]] { return 0 }
         if [not [== [get $ev phase] target]] { return 0 }
         if [not [has? $ev target_id]] { return 0 }

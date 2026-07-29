@@ -46,6 +46,8 @@
 #define ED_FALLBACK_PAGE_LINES 20
 #define ED_TAB_SIZE 4
 #define ED_MAX_SEL_RECTS 3
+#define ED_SCROLL_BAR_W 6   /* the lk-scroll.c SCROLL_BAR_W convention */
+#define ED_SCROLL_THUMB_MIN 8
 
 /* One visible VISUAL ROW extracted into the vis scratch (a whole
  * document line when wrapping is off). */
@@ -99,6 +101,13 @@ typedef struct ed_geom {
   lk_i32 cursor_x, cursor_y;
   lk_rect sel_rects[ED_MAX_SEL_RECTS];
   lk_u32 sel_count;
+  /* Scrollbar extent (docs/editor-wrap.md section 6 model): total
+   * visual rows over the whole document and the pixel offset of the
+   * viewport top within that extent — exact rows for wrap-measured
+   * lines, estimator rows otherwise (arithmetic only, no backend
+   * calls).  Consumed by the overlay scrollbar in render. */
+  lk_u32 sb_total_rows;
+  lk_u32 sb_top_px;
   lk_u16 font_id, font_size;
   const lk_text_backend *tb; /* backend this snapshot was built with
                                 (lk_editor_pos_at resolves against the
@@ -2601,6 +2610,32 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   e->vp.top_byte = lk_doc_line_start(e->doc, al) +
                    ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
 
+  /* Scrollbar extent: total visual rows and the rows above the
+   * resolved anchor, exact-or-estimated per line (the scroll-extent
+   * edge is the one sanctioned estimate consumer; cheap arithmetic,
+   * no backend calls). */
+  {
+    lk_u32 li;
+    lk_u32 sb_total = 0;
+    unsigned long sb_rows_before = 0;
+    unsigned long sb_top;
+
+    for (li = 0; li < lcount; li++) {
+      lk_u32 rows_n = ed_rows_or_est(e, li);
+
+      if (li < al) {
+        sb_rows_before += (unsigned long)rows_n;
+      }
+
+      sb_total += rows_n;
+    }
+
+    sb_top = (sb_rows_before + (unsigned long)ar) * (unsigned long)line_h +
+             (unsigned long)e->vp.y_offset;
+    e->geom.sb_total_rows = sb_total;
+    e->geom.sb_top_px = (lk_u32)sb_top;
+  }
+
   /* Horizontal scroll (NONE mode only, docs/editor-wrap.md section
    * 4): follow the cursor with a ~2-space margin, then soft-clamp
    * against the widest MEASURED visible line (documented: lines
@@ -3025,6 +3060,73 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
       cmd.rect.w = 1;
       cmd.rect.h = e->geom.line_h;
       cmd.color = style->fg;
+      lk_render_list_push(out, cmd);
+    }
+  }
+
+  /* Overlay scrollbar (v1, non-interactive — wheel scrolls; the
+   * scroll widget's bar does not drag either).  Drawn last inside the
+   * node clip so it overlays text and cursor (the lk-scroll.c feel,
+   * where the bar paints over the content edge), and reserving NO
+   * width: a bar that reserved width would change the wrap width,
+   * changing the row count, changing the overflow that decides
+   * whether the bar exists — a feedback loop this overlay style
+   * deliberately avoids.  Geometry comes from the section-6
+   * scroll-extent model stamped by layout (sb_total_rows /
+   * sb_top_px: exact rows for measured lines, estimator rows
+   * otherwise).  Hidden when the content fits; wrap NONE horizontal
+   * overflow gets no horizontal bar in v1. */
+  {
+    lk_i32 line_h = e->geom.line_h;
+    lk_i32 track_h = e->geom.rect.h;
+    unsigned long total_px =
+        (unsigned long)e->geom.sb_total_rows * (unsigned long)line_h;
+
+    if (track_h > 0 && line_h > 0 && total_px > (unsigned long)track_h) {
+      unsigned long top_px = (unsigned long)e->geom.sb_top_px;
+      unsigned long max_top = total_px - (unsigned long)track_h;
+      lk_i32 bar_x = rect->x + rect->w - ED_SCROLL_BAR_W;
+      lk_i32 thumb_h = (lk_i32)(((unsigned long)track_h *
+                                 (unsigned long)track_h) /
+                                total_px);
+      lk_i32 thumb_y;
+
+      if (thumb_h < ED_SCROLL_THUMB_MIN) {
+        thumb_h = ED_SCROLL_THUMB_MIN;
+      }
+
+      if (thumb_h > track_h) {
+        thumb_h = track_h;
+      }
+
+      /* Estimator drift can put the anchor past the derived extent;
+       * clamp so the thumb never leaves the track. */
+      if (top_px > max_top) {
+        top_px = max_top;
+      }
+
+      thumb_y = e->geom.rect.y +
+                (lk_i32)((top_px * (unsigned long)(track_h - thumb_h)) /
+                         max_top);
+
+      /* Track */
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_FILL_RECT;
+      cmd.rect.x = bar_x;
+      cmd.rect.y = e->geom.rect.y;
+      cmd.rect.w = ED_SCROLL_BAR_W;
+      cmd.rect.h = track_h;
+      cmd.color = style->scrollbar_track;
+      lk_render_list_push(out, cmd);
+
+      /* Thumb */
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_FILL_RECT;
+      cmd.rect.x = bar_x;
+      cmd.rect.y = thumb_y;
+      cmd.rect.w = ED_SCROLL_BAR_W;
+      cmd.rect.h = thumb_h;
+      cmd.color = style->scrollbar_thumb;
       lk_render_list_push(out, cmd);
     }
   }

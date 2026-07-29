@@ -563,6 +563,12 @@ typedef enum lk_event_type {
    * (text input buffer mutation, dropdown selection change, ...).
    * data.value_changed.str_id carries the new value as an interned string. */
   LK_EVENT_VALUE_CHANGED,
+  /* Synthetic — enqueued whenever effective keyboard focus changes
+   * (lk_focus_set/clear/next/prev and the end-of-frame focus GC).
+   * data.focus carries the previous and new focused node ids (0 =
+   * none).  Delivered from the pending queue: at the end of the
+   * outermost lk_event_route call, or via lk_ui_flush_events. */
+  LK_EVENT_FOCUS_CHANGED,
   LK_EVENT__COUNT
 } lk_event_type;
 
@@ -642,6 +648,9 @@ typedef struct lk_event {
     struct {
       lk_u32 str_id; /* interned new value */
     } value_changed;
+    struct {
+      lk_node_id prev_id, next_id; /* 0 = no focus */
+    } focus;
   } data;
 } lk_event;
 
@@ -833,6 +842,20 @@ typedef struct lk_ui {
   lk_overlay *overlays;
   lk_u32 overlay_count;
   lk_u32 overlay_cap;
+
+  /* Pending synthetic-event queue (FIFO).  Synthetic emissions
+   * (VALUE_CHANGED, FOCUS_CHANGED) enqueue here instead of
+   * re-entering lk_event_route mid-dispatch; the queue drains at the
+   * end of the OUTERMOST lk_event_route call, or explicitly via
+   * lk_ui_flush_events for mutations outside any routing (host API
+   * calls between frames, the end-of-frame focus GC).  pending_dropped
+   * counts events discarded by the per-drain safety cap (see
+   * lk_event_enqueue). */
+  lk_event *pending;
+  lk_u32 pending_count;
+  lk_u32 pending_cap;
+  lk_u32 route_depth;     /* lk_event_route re-entrancy depth */
+  lk_u32 pending_dropped; /* debug counter, never reset by lk */
 } lk_ui;
 
 typedef struct lk_ui_cfg {
@@ -1247,6 +1270,22 @@ void lk_event_init_pointer(lk_event *ev, lk_u8 type, lk_i32 x, lk_i32 y,
 void lk_event_init_key(lk_event *ev, lk_u8 type, lk_u16 keycode, lk_u8 mods);
 
 void lk_event_route(lk_ui *ui, lk_event *event);
+
+/* Append a synthetic event to the pending queue (copied by value).
+ * Queued events run the normal tier sequence when the queue drains:
+ * at the end of the outermost lk_event_route call, or via
+ * lk_ui_flush_events.  Events enqueued DURING a drain append and
+ * drain in the same loop, bounded by a safety cap of 64 dispatches
+ * per drain — overflow is dropped and counted in ui->pending_dropped.
+ * Returns 1 on success, 0 on allocation failure or NULL args. */
+int lk_event_enqueue(lk_ui *ui, const lk_event *ev);
+
+/* Drain the pending synthetic-event queue outside of routing — for
+ * mutations that happen outside any event (focus changes from the
+ * end_frame GC or host API calls between frames).  t is the tree to
+ * route against (NULL falls back to lk_ui_tree).  A no-op while an
+ * lk_event_route call is in progress (the outermost route drains). */
+void lk_ui_flush_events(lk_ui *ui, const lk_tree *t);
 
 void lk_ui_set_event_handler(lk_ui *ui, lk_event_handler_fn fn, void *ud);
 

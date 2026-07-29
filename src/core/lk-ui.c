@@ -526,6 +526,10 @@ void lk_ui_destroy(lk_ui *ui) {
     ui_dealloc(ui, ui->overlays);
   }
 
+  if (ui->pending) {
+    ui_dealloc(ui, ui->pending);
+  }
+
   ui->dealloc(ui->alloc_ud, ui);
 }
 
@@ -586,9 +590,21 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
 
   /* Clear focus if the focused node was removed.  A node that is
    * REMOVED and ADDED in the same changeset merely moved to a new
-   * parent — keep focus in that case. */
+   * parent — keep focus in that case.  The clear is an effective
+   * focus change, so it enqueues FOCUS_CHANGED like the lk_focus_*
+   * functions; the host drains it via lk_ui_flush_events (end_frame
+   * itself never routes). */
   if (ui->focused_id != 0 &&
       cs_id_removed_not_readded(&ui->changeset, ui->focused_id)) {
+    lk_event fev;
+
+    memset(&fev, 0, sizeof(fev));
+    fev.type = LK_EVENT_FOCUS_CHANGED;
+    fev.target = ui->prev->root; /* clear: no focused node to target */
+    fev.data.focus.prev_id = ui->focused_id;
+    fev.data.focus.next_id = 0;
+    lk_event_enqueue(ui, &fev);
+
     ui->focused_id = 0;
   }
 

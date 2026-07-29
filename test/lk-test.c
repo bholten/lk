@@ -10625,6 +10625,581 @@ static void test_dump_kind_names(void) {
   lk_tree_destroy(t);
 }
 
+/* ---- Synthetic event queue + FOCUS_CHANGED (polish F2) ---- */
+
+/* Shared recorder: user handlers log events at TARGET phase into
+ * these arrays; each test resets synq_reset() first. */
+#define SYNQ_LOG_MAX 80
+static lk_u8 g_synq_type[SYNQ_LOG_MAX];
+static lk_ix g_synq_target[SYNQ_LOG_MAX];
+static lk_u32 g_synq_str[SYNQ_LOG_MAX];
+static lk_node_id g_synq_prev[SYNQ_LOG_MAX];
+static lk_node_id g_synq_next[SYNQ_LOG_MAX];
+static lk_u32 g_synq_count;
+
+static void synq_reset(void) {
+  g_synq_count = 0;
+}
+
+static void synq_log(const lk_event *event) {
+  if (g_synq_count >= SYNQ_LOG_MAX) {
+    return;
+  }
+
+  g_synq_type[g_synq_count] = event->type;
+  g_synq_target[g_synq_count] = event->target;
+  g_synq_str[g_synq_count] = 0;
+  g_synq_prev[g_synq_count] = 0;
+  g_synq_next[g_synq_count] = 0;
+
+  if (event->type == LK_EVENT_VALUE_CHANGED) {
+    g_synq_str[g_synq_count] = event->data.value_changed.str_id;
+  }
+
+  if (event->type == LK_EVENT_FOCUS_CHANGED) {
+    g_synq_prev[g_synq_count] = event->data.focus.prev_id;
+    g_synq_next[g_synq_count] = event->data.focus.next_id;
+  }
+
+  g_synq_count++;
+}
+
+/* Plain recording handler (never consumes). */
+static int synq_record_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  (void)node_ix;
+  (void)ud;
+
+  if (event->phase == LK_PHASE_TARGET) {
+    synq_log(event);
+  }
+
+  return 0;
+}
+
+/* Text-input widget wrapper for the ordering test: stamps a shared
+ * sequence counter when the TEXT dispatch enters and exits. */
+static lk_widget_def g_synq_ti_orig;
+static int g_synq_seq;
+static int g_synq_text_enter;
+static int g_synq_text_exit;
+static int g_synq_vc_seq;
+
+static int synq_wrap_ti_event(lk_ui *ui, const lk_tree *t, lk_ix n,
+                              lk_event *ev) {
+  int r;
+
+  if (ev->type == LK_EVENT_TEXT) {
+    g_synq_text_enter = g_synq_seq++;
+  }
+
+  r = g_synq_ti_orig.event(ui, t, n, ev);
+
+  if (ev->type == LK_EVENT_TEXT) {
+    g_synq_text_exit = g_synq_seq++;
+  }
+
+  return r;
+}
+
+static int synq_vc_seq_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  (void)node_ix;
+  (void)ud;
+
+  if (event->phase == LK_PHASE_TARGET &&
+      event->type == LK_EVENT_VALUE_CHANGED && g_synq_vc_seq < 0) {
+    g_synq_vc_seq = g_synq_seq++;
+  }
+
+  return 0;
+}
+
+static void test_queue_value_changed_after_route(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_widget_def wrapped;
+
+  BEGIN_TEST("queue: VALUE_CHANGED after originating event");
+
+  ui = make_text_input_ui("ab", &ti);
+  lk_state_set(lk_ui_state(ui), lk_intern_id(ui->intern, lk_str_c("ti")),
+               LKS_CURSOR_POS, lk_v_i32(1));
+  lk_ui_flush_events(ui, NULL); /* drop the focus event from setup */
+
+  g_synq_ti_orig = *lk_widget_get(UIK_TEXT_INPUT);
+  wrapped = g_synq_ti_orig;
+  wrapped.event = synq_wrap_ti_event;
+  lk_widget_register(UIK_TEXT_INPUT, &wrapped);
+
+  g_synq_seq = 0;
+  g_synq_text_enter = -1;
+  g_synq_text_exit = -1;
+  g_synq_vc_seq = -1;
+  lk_ui_set_event_handler(ui, synq_vc_seq_handler, NULL);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_TEXT;
+  ev.target = ti;
+  ev.data.text.buf[0] = 'x';
+  ev.data.text.len = 1;
+  lk_event_route(ui, &ev);
+
+  /* The synthetic VALUE_CHANGED must run AFTER the originating TEXT
+   * dispatch completed — queued, not interleaved. */
+  CHECK(g_synq_text_enter == 0);
+  CHECK(g_synq_text_exit == 1);
+  CHECK(g_synq_vc_seq == 2);
+
+  lk_widget_register(UIK_TEXT_INPUT, &g_synq_ti_orig);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* FIFO test handler: receiving "a" enqueues "b" then "c". */
+static int synq_fifo_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  lk_ui *ui = (lk_ui *)ud;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET) {
+    return 0;
+  }
+
+  synq_log(event);
+
+  if (event->type == LK_EVENT_VALUE_CHANGED &&
+      event->data.value_changed.str_id ==
+          lk_intern_id(ui->intern, lk_str_c("a"))) {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_VALUE_CHANGED;
+    ev.target = event->target;
+    ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("b"));
+    lk_event_enqueue(ui, &ev);
+    ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("c"));
+    lk_event_enqueue(ui, &ev);
+  }
+
+  return 0;
+}
+
+static void test_queue_nested_fifo(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: nested emissions drain FIFO");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_fifo_handler, ui);
+
+  /* Enqueue "a" and route an unrelated event: the drain at its end
+   * processes "a"; the handler's nested enqueues of "b" and "c"
+   * append and drain in the same loop. */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("a"));
+  lk_event_enqueue(ui, &ev);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_POINTER_DOWN;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  lk_event_route(ui, &ev);
+
+  CHECK_EQ(g_synq_count, 4u); /* pointer_down + a + b + c */
+  if (g_synq_count == 4) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_POINTER_DOWN);
+    CHECK_EQ(g_synq_str[1], lk_intern_id(ui->intern, lk_str_c("a")));
+    CHECK_EQ(g_synq_str[2], lk_intern_id(ui->intern, lk_str_c("b")));
+    CHECK_EQ(g_synq_str[3], lk_intern_id(ui->intern, lk_str_c("c")));
+  }
+
+  CHECK_EQ(ui->pending_count, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Re-entrancy handler: on KEY_DOWN enqueue a synthetic, then call
+ * lk_event_route re-entrantly with KEY_UP.  The nested route must NOT
+ * drain — the synthetic arrives after the whole outer dispatch. */
+static int synq_reentrant_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  lk_ui *ui = (lk_ui *)ud;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET) {
+    return 0;
+  }
+
+  synq_log(event);
+
+  if (event->type == LK_EVENT_KEY_DOWN) {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_VALUE_CHANGED;
+    ev.target = event->target;
+    ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("q"));
+    lk_event_enqueue(ui, &ev);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_UP;
+    ev.target = event->target;
+    lk_event_route(ui, &ev); /* nested */
+  }
+
+  return 0;
+}
+
+static void test_queue_reentrant_no_double_drain(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: re-entrant route drains once");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_reentrant_handler, ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.key.keycode = LKK_SPACE;
+  lk_event_route(ui, &ev);
+
+  /* Order: KEY_DOWN, nested KEY_UP, THEN the queued synthetic —
+   * exactly once (a double drain would dispatch it inside the nested
+   * route as well). */
+  CHECK_EQ(g_synq_count, 3u);
+  if (g_synq_count == 3) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_KEY_DOWN);
+    CHECK_EQ((unsigned)g_synq_type[1], (unsigned)LK_EVENT_KEY_UP);
+    CHECK_EQ((unsigned)g_synq_type[2], (unsigned)LK_EVENT_VALUE_CHANGED);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_queue_flush_outside_routing(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: flush_events drains outside routing");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("v"));
+  CHECK(lk_event_enqueue(ui, &ev) == 1);
+
+  /* Nothing dispatched until the flush */
+  CHECK_EQ(g_synq_count, 0u);
+  CHECK_EQ(ui->pending_count, 1u);
+
+  lk_ui_flush_events(ui, NULL);
+  CHECK_EQ(g_synq_count, 1u);
+  CHECK_EQ(ui->pending_count, 0u);
+
+  /* Second flush is a no-op */
+  lk_ui_flush_events(ui, NULL);
+  CHECK_EQ(g_synq_count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Self-feeding handler: every received synthetic enqueues another. */
+static int synq_feeder_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  lk_ui *ui = (lk_ui *)ud;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET ||
+      event->type != LK_EVENT_VALUE_CHANGED) {
+    return 0;
+  }
+
+  synq_log(event);
+
+  {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_VALUE_CHANGED;
+    ev.target = event->target;
+    ev.data.value_changed.str_id = event->data.value_changed.str_id;
+    lk_event_enqueue(ui, &ev);
+  }
+
+  return 0;
+}
+
+static void test_queue_drain_cap(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w;
+  lk_event ev;
+
+  BEGIN_TEST("queue: drain cap stops self-feeding handler");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_tree_set_root(t, w);
+  lk_ui_end_frame(ui);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_feeder_handler, ui);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_VALUE_CHANGED;
+  ev.target = lk_tree_root(lk_ui_tree(ui));
+  ev.data.value_changed.str_id = lk_intern_id(ui->intern, lk_str_c("loop"));
+  lk_event_enqueue(ui, &ev);
+  lk_ui_flush_events(ui, NULL);
+
+  /* 64 dispatches, the one overflow event dropped and counted */
+  CHECK_EQ(g_synq_count, 64u);
+  CHECK_EQ(ui->pending_dropped, 1u);
+  CHECK_EQ(ui->pending_count, 0u);
+
+  /* The queue is usable again afterwards */
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+  synq_reset();
+  lk_event_enqueue(ui, &ev);
+  lk_ui_flush_events(ui, NULL);
+  CHECK_EQ(g_synq_count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* Two focusable buttons under a window. */
+static lk_ui *make_two_button_ui(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t = lk_ui_begin_frame(ui);
+  lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+  lk_ix b2 = lk_tree_add_node_s(t, lk_str_c("b2"), UIK_BUTTON);
+
+  lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, b2, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, b1);
+  lk_tree_append_child(t, w, b2);
+  lk_ui_end_frame(ui);
+
+  return ui;
+}
+
+static void test_focus_changed_set_and_redundant(void) {
+  lk_ui *ui = make_two_button_ui();
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_node_id id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+  lk_node_id id2 = lk_intern_id(ui->intern, lk_str_c("b2"));
+
+  BEGIN_TEST("focus_changed: set fires, redundant set doesn't");
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  CHECK(lk_focus_set(ui, cur, id1) == 1);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 1u);
+  if (g_synq_count >= 1) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_FOCUS_CHANGED);
+    CHECK_EQ(g_synq_prev[0], 0u);
+    CHECK_EQ(g_synq_next[0], id1);
+    CHECK_EQ((unsigned)g_synq_target[0],
+             (unsigned)lk_tree_find_by_id(cur, id1));
+  }
+
+  CHECK(lk_focus_set(ui, cur, id2) == 1);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 2u);
+  if (g_synq_count >= 2) {
+    CHECK_EQ(g_synq_prev[1], id1);
+    CHECK_EQ(g_synq_next[1], id2);
+  }
+
+  /* Redundant set: no event */
+  CHECK(lk_focus_set(ui, cur, id2) == 1);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 2u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_clear(void) {
+  lk_ui *ui = make_two_button_ui();
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_node_id id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+
+  BEGIN_TEST("focus_changed: clear fires with next=0");
+
+  lk_focus_set(ui, cur, id1);
+  lk_ui_flush_events(ui, cur);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+  lk_focus_clear(ui);
+  lk_ui_flush_events(ui, cur);
+
+  CHECK_EQ(g_synq_count, 1u);
+  if (g_synq_count >= 1) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_FOCUS_CHANGED);
+    CHECK_EQ(g_synq_prev[0], id1);
+    CHECK_EQ(g_synq_next[0], 0u);
+    CHECK_EQ((unsigned)g_synq_target[0], (unsigned)lk_tree_root(cur));
+  }
+
+  /* Clear with no focus: no event */
+  lk_focus_clear(ui);
+  lk_ui_flush_events(ui, cur);
+  CHECK_EQ(g_synq_count, 1u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_next_prev(void) {
+  lk_ui *ui = make_two_button_ui();
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_node_id id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+  lk_node_id id2 = lk_intern_id(ui->intern, lk_str_c("b2"));
+
+  BEGIN_TEST("focus_changed: next/prev fire with ids");
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  CHECK_EQ(lk_focus_next(ui, cur), id1); /* none -> b1 */
+  CHECK_EQ(lk_focus_next(ui, cur), id2); /* b1 -> b2 */
+  CHECK_EQ(lk_focus_prev(ui, cur), id1); /* b2 -> b1 */
+  lk_ui_flush_events(ui, cur);
+
+  CHECK_EQ(g_synq_count, 3u);
+  if (g_synq_count >= 3) {
+    CHECK_EQ(g_synq_prev[0], 0u);
+    CHECK_EQ(g_synq_next[0], id1);
+    CHECK_EQ(g_synq_prev[1], id1);
+    CHECK_EQ(g_synq_next[1], id2);
+    CHECK_EQ(g_synq_prev[2], id2);
+    CHECK_EQ(g_synq_next[2], id1);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_end_frame_gc(void) {
+  lk_ui *ui = make_two_button_ui();
+  lk_node_id id2 = lk_intern_id(ui->intern, lk_str_c("b2"));
+
+  BEGIN_TEST("focus_changed: end_frame GC clear fires");
+
+  lk_focus_set(ui, lk_ui_tree(ui), id2);
+  lk_ui_flush_events(ui, NULL);
+
+  synq_reset();
+  lk_ui_set_event_handler(ui, synq_record_handler, NULL);
+
+  /* Rebuild without b2: the GC clears focus and enqueues the event;
+   * the host drains it via flush after end_frame. */
+  {
+    lk_tree *t = lk_ui_begin_frame(ui);
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+
+    lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, b1);
+    lk_ui_end_frame(ui);
+  }
+
+  CHECK_EQ(g_synq_count, 0u); /* end_frame itself never routes */
+  lk_ui_flush_events(ui, NULL);
+
+  CHECK_EQ(g_synq_count, 1u);
+  if (g_synq_count >= 1) {
+    CHECK_EQ((unsigned)g_synq_type[0], (unsigned)LK_EVENT_FOCUS_CHANGED);
+    CHECK_EQ(g_synq_prev[0], id2);
+    CHECK_EQ(g_synq_next[0], 0u);
+    CHECK_EQ((unsigned)g_synq_target[0],
+             (unsigned)lk_tree_root(lk_ui_tree(ui)));
+  }
+
+  CHECK_EQ(ui->focused_id, 0u);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_focus_changed_translator(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_node_id id1;
+  const lk_command_queue *q;
+
+  BEGIN_TEST("focus_changed: translator emits command");
+
+  t = lk_ui_begin_frame(ui);
+  {
+    lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+    lk_ix b1 = lk_tree_add_node_s(t, lk_str_c("b1"), UIK_BUTTON);
+
+    lk_tree_add_prop(t, b1, UIP_FOCUSABLE, lk_v_bool(1));
+    lk_tree_add_presentation_s(t, b1, "pane", lk_v_i32(7));
+    lk_tree_set_root(t, w);
+    lk_tree_append_child(t, w, b1);
+  }
+  lk_ui_end_frame(ui);
+
+  lk_ui_add_translator_s(ui, LK_EVENT_FOCUS_CHANGED, "pane", 0, 0, 0, 0,
+                         "Activate");
+
+  id1 = lk_intern_id(ui->intern, lk_str_c("b1"));
+  CHECK(lk_focus_set(ui, lk_ui_tree(ui), id1) == 1);
+  lk_ui_flush_events(ui, NULL);
+
+  q = lk_ui_commands(ui);
+  CHECK_EQ(q->count, 1u);
+  if (q->count >= 1) {
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("Activate")));
+    CHECK_EQ(q->cmds[0].args[0].tag, UIV_I32);
+    CHECK(q->cmds[0].args[0].as.i == 7);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 int main(void) {
   printf("lk diff tests:\n");
 
@@ -10989,6 +11564,19 @@ int main(void) {
   test_capture_api();
   test_capture_end_frame_gc();
   test_dump_kind_names();
+
+  /* synthetic event queue + FOCUS_CHANGED (polish F2) */
+  printf("\nlk synthetic event queue tests:\n");
+  test_queue_value_changed_after_route();
+  test_queue_nested_fifo();
+  test_queue_reentrant_no_double_drain();
+  test_queue_flush_outside_routing();
+  test_queue_drain_cap();
+  test_focus_changed_set_and_redundant();
+  test_focus_changed_clear();
+  test_focus_changed_next_prev();
+  test_focus_changed_end_frame_gc();
+  test_focus_changed_translator();
 
   /* document + edit history (editor track, stage A) */
   lk_document_run_tests();

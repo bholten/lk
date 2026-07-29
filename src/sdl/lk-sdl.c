@@ -727,6 +727,10 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     lk_ui_end_frame(win->ui);
     cur = lk_ui_tree(win->ui);
 
+    /* Drain synthetic events from between-frame mutations (end_frame
+     * focus GC, host API calls made from the frame callback). */
+    lk_ui_flush_events(win->ui, cur);
+
     if (!cur || cur->root == 0) {
       /* Poll events even with empty tree to handle quit */
       while (SDL_PollEvent(&sdl_ev)) {
@@ -922,6 +926,10 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
         }
       }
     }
+
+    /* Drain synthetic events from the built-in behaviors above
+     * (click-to-focus, tab cycling run outside lk_event_route). */
+    lk_ui_flush_events(win->ui, cur);
 
     if (!win->running) {
       break;

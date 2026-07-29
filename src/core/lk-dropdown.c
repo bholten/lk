@@ -304,6 +304,9 @@ static void render_option(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
 /* ---- Event handling ---- */
 
+/* Enqueued, not routed: the event runs its tier sequence after the
+ * originating event completes (drained at the end of the outermost
+ * lk_event_route call). */
 static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n,
                                 lk_u32 new_value_id) {
   lk_event ev;
@@ -312,7 +315,7 @@ static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n,
   ev.type = LK_EVENT_VALUE_CHANGED;
   ev.target = n;
   ev.data.value_changed.str_id = new_value_id;
-  lk_event_route(ui, &ev);
+  lk_event_enqueue(ui, &ev);
 }
 
 static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {

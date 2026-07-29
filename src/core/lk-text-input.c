@@ -119,7 +119,9 @@ static lk_i32 get_sel_end(const lk_state *state, lk_node_id nid,
 
 /* Emit a synthetic VALUE_CHANGED event carrying the current buffer contents.
  * Called at every buffer-mutation site so user handlers/translators can
- * react without polling state. */
+ * react without polling state.  Enqueued, not routed: the event runs
+ * its tier sequence after the originating event completes (drained at
+ * the end of the outermost lk_event_route call). */
 static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n) {
   lk_state *st = lk_ui_state(ui);
   lk_node_id nid = t->nodes[n].id;
@@ -134,7 +136,7 @@ static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n) {
   ev.type = LK_EVENT_VALUE_CHANGED;
   ev.target = n;
   ev.data.value_changed.str_id = v.as.str_id;
-  lk_event_route(ui, &ev);
+  lk_event_enqueue(ui, &ev);
 }
 
 /* Ensure LKS_TEXT_BUF is initialized from UIP_TEXT on first interaction. */

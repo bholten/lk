@@ -154,6 +154,7 @@ static const str_enum event_table[] = {
     {"window_resize", LK_EVENT_WINDOW_RESIZE},
     {"window_close",  LK_EVENT_WINDOW_CLOSE },
     {"value_changed", LK_EVENT_VALUE_CHANGED},
+    {"focus_changed", LK_EVENT_FOCUS_CHANGED},
     {NULL,            0                     }
 };
 
@@ -2015,19 +2016,11 @@ static int c_lk_intern_id(lcl_interp *interp, int argc, lcl_value **argv,
 }
 
 /* ============================================================================
- * SDL Window procs (5) — compiled only when LK_HAVE_SDL is set
+ * Event marshaling — shared by the SDL event-handler bridge and the
+ * headless tests (lcl_lk_event_to_dict is deliberately non-static so
+ * a host driving lk_event_route itself can reuse the marshal).
  * ============================================================================
  */
-
-#ifdef LK_HAVE_SDL
-
-/* ---- Wrapper struct: holds lk_window + Lcl event handler ---- */
-
-struct lcl_lk_window {
-  lk_window *win;
-  lcl_interp *interp;
-  lcl_value *event_handler; /* NULL if not set */
-};
 
 /* ---- Enum-to-string reverse tables ---- */
 
@@ -2043,6 +2036,7 @@ static const char *event_type_str(lk_u8 t) {
   case LK_EVENT_WINDOW_RESIZE: return "window_resize";
   case LK_EVENT_WINDOW_CLOSE: return "window_close";
   case LK_EVENT_VALUE_CHANGED: return "value_changed";
+  case LK_EVENT_FOCUS_CHANGED: return "focus_changed";
   default: return "unknown";
   }
 }
@@ -2058,7 +2052,9 @@ static const char *event_phase_str(lk_u8 p) {
 
 /* ---- Marshal lk_event to Lcl dict ---- */
 
-static lcl_value *event_to_dict(const lk_event *ev, const lk_intern *intern) {
+lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern);
+
+lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
   lcl_value *dict = lcl_dict_new();
   lcl_value *v;
 
@@ -2145,11 +2141,48 @@ static lcl_value *event_to_dict(const lk_event *ev, const lk_intern *intern) {
     break;
   }
 
+  case LK_EVENT_FOCUS_CHANGED: {
+    /* Node-id STRINGS resolved from the intern table (the
+     * target_id/node_id convention); 0 = no focus -> empty string. */
+    const char *ps =
+        ev->data.focus.prev_id
+            ? lk_intern_cstr(intern, ev->data.focus.prev_id)
+            : NULL;
+    const char *ns =
+        ev->data.focus.next_id
+            ? lk_intern_cstr(intern, ev->data.focus.next_id)
+            : NULL;
+
+    v = lcl_string_new(ps ? ps : "");
+    lcl_dict_put(&dict, "prev_id", v);
+    lcl_ref_dec(v);
+
+    v = lcl_string_new(ns ? ns : "");
+    lcl_dict_put(&dict, "next_id", v);
+    lcl_ref_dec(v);
+    break;
+  }
+
   default: break;
   }
 
   return dict;
 }
+
+/* ============================================================================
+ * SDL Window procs (5) — compiled only when LK_HAVE_SDL is set
+ * ============================================================================
+ */
+
+#ifdef LK_HAVE_SDL
+
+/* ---- Wrapper struct: holds lk_window + Lcl event handler ---- */
+
+struct lcl_lk_window {
+  lk_window *win;
+  lcl_interp *interp;
+  lcl_value *event_handler; /* NULL if not set */
+};
 
 /* ---- C event handler bridge ---- */
 
@@ -2165,7 +2198,7 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
     return 0;
   }
 
-  ev_dict = event_to_dict(event, lk_ui_intern(lk_window_ui(lw->win)));
+  ev_dict = lcl_lk_event_to_dict(event, lk_ui_intern(lk_window_ui(lw->win)));
 
   /* Add target_id and node_id string fields so scripts can identify nodes */
   cur = lk_ui_tree(lk_window_ui(lw->win));
