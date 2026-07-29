@@ -111,7 +111,18 @@ static const str_enum ed_cmd_table[] = {
     {"redo",                 LK_ED_REDO                },
     {"set_cursor",           LK_ED_SET_CURSOR          },
     {"scroll_lines",         LK_ED_SCROLL_LINES        },
+    {"move_row_start",       LK_ED_MOVE_ROW_START      },
+    {"move_row_end",         LK_ED_MOVE_ROW_END        },
     {NULL,                   0                         }
+};
+
+/* Wrap-mode names, mirroring lk_editor_wrap_mode.  "word" is a valid
+ * name but the engine rejects it until word wrap is implemented. */
+static const str_enum wrap_mode_table[] = {
+    {"none",      LK_EDITOR_WRAP_NONE     },
+    {"character", LK_EDITOR_WRAP_CHARACTER},
+    {"word",      LK_EDITOR_WRAP_WORD     },
+    {NULL,        0                       }
 };
 
 static const str_enum overlay_kind_table[] = {
@@ -2531,7 +2542,7 @@ static int c_lk_clipboard_set(lcl_interp *interp, int argc,
 }
 
 /* ============================================================================
- * Editor track: documents (10)
+ * Editor track: documents (14)
  * ============================================================================
  */
 
@@ -2727,6 +2738,199 @@ static int c_lk_doc_line_count(lcl_interp *interp, int argc, lcl_value **argv,
   }
 
   *out = lcl_int_new((long)lk_doc_line_count(dw->doc));
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_pos_to_line [doc, pos] -> 0-based line index.
+ *
+ * pos at or past the document end resolves to the last line
+ * (mirroring the C API); the 1-based display line is script-side
+ * arithmetic. */
+static int c_lk_doc_pos_to_line(lcl_interp *interp, int argc, lcl_value **argv,
+                                lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  long pos;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::doc_pos_to_line: expected 2 arguments (doc, pos)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+    lcl_set_error(interp,
+                  "lk::doc_pos_to_line: pos must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_doc_pos_to_line(dw->doc, (lk_u32)pos));
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_line_start [doc, line] -> byte offset of the line's start.
+ *
+ * line is 0-based.  Out-of-range lines are hard errors (the C API's
+ * silent 0 is indistinguishable from line 0's start). */
+static int c_lk_doc_line_start(lcl_interp *interp, int argc, lcl_value **argv,
+                               lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  long line;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::doc_line_start: expected 2 arguments (doc, line)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &line) != LCL_OK || line < 0) {
+    lcl_set_error(interp,
+                  "lk::doc_line_start: line must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if ((lk_u32)line >= lk_doc_line_count(dw->doc)) {
+    lcl_set_error(interp, "lk::doc_line_start: line out of range");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_doc_line_start(dw->doc, (lk_u32)line));
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_line_end [doc, line] -> byte offset of the line's end (its
+ * \n, exclusive; the document length for the last line).
+ *
+ * line is 0-based; out-of-range lines are hard errors. */
+static int c_lk_doc_line_end(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  long line;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::doc_line_end: expected 2 arguments (doc, line)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &line) != LCL_OK || line < 0) {
+    lcl_set_error(interp,
+                  "lk::doc_line_end: line must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if ((lk_u32)line >= lk_doc_line_count(dw->doc)) {
+    lcl_set_error(interp, "lk::doc_line_end: line out of range");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_doc_line_end(dw->doc, (lk_u32)line));
+
+  return LCL_RC_OK;
+}
+
+/* lk::doc_char_col [doc, pos] -> 1-based CHARACTER column.
+ *
+ * Column definition (docs/editor-wrap.md section 8, pinned): the
+ * 1-based codepoint count from the line start to pos.  A tab counts
+ * as ONE character; this is never a byte column and never a
+ * visual/tab-expanded column (that is a different, future notion).
+ * Script-side counting cannot be exact (String::length is
+ * byte-based), hence this proc.
+ *
+ * Implementation: count UTF-8 lead bytes ((b & 0xC0) != 0x80)
+ * between lk_doc_line_start(pos's line) and pos via chunked
+ * lk_doc_get_text reads -- public API only, no core internals.
+ * pos must be in [0, doc len] (codepoint-boundary alignment is the
+ * caller's business; the cursor always is). */
+static int c_lk_doc_char_col(lcl_interp *interp, int argc, lcl_value **argv,
+                             lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  long pos;
+  lk_u32 at;
+  lk_u32 col;
+  char buf[256];
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::doc_char_col: expected 2 arguments (doc, pos)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+    lcl_set_error(interp,
+                  "lk::doc_char_col: pos must be a non-negative integer");
+
+    return LCL_RC_ERR;
+  }
+
+  if ((lk_u32)pos > lk_doc_len(dw->doc)) {
+    lcl_set_error(interp, "lk::doc_char_col: pos out of range");
+
+    return LCL_RC_ERR;
+  }
+
+  at = lk_doc_line_start(dw->doc, lk_doc_pos_to_line(dw->doc, (lk_u32)pos));
+  col = 1;
+
+  while (at < (lk_u32)pos) {
+    lk_u32 want = (lk_u32)pos - at;
+    lk_u32 got;
+    lk_u32 i;
+
+    if (want > (lk_u32)sizeof(buf)) {
+      want = (lk_u32)sizeof(buf);
+    }
+
+    got = lk_doc_get_text(dw->doc, at, buf, want);
+
+    if (got == 0) {
+      break; /* defensive: cannot happen for in-range pos */
+    }
+
+    for (i = 0; i < got; i++) {
+      if (((unsigned char)buf[i] & 0xC0u) != 0x80u) {
+        col++;
+      }
+    }
+
+    at += got;
+  }
+
+  *out = lcl_int_new((long)col);
 
   return LCL_RC_OK;
 }
@@ -3212,7 +3416,7 @@ static int c_lk_history_can_redo(lcl_interp *interp, int argc, lcl_value **argv,
 }
 
 /* ============================================================================
- * Editor track: editors (6)
+ * Editor track: editors (8)
  * ============================================================================
  */
 
@@ -3407,6 +3611,96 @@ static int c_lk_editor_selection(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* lk::editor_wrap [editor, mode] -> ""
+ *
+ * mode is "none" | "character" | "word" (docs/editor-wrap.md section
+ * 5).  An unknown name and a mode the engine rejects (word, until
+ * word wrap is implemented) are both hard errors listing the
+ * supported modes, DSL-v2 style. */
+static int c_lk_editor_wrap(lcl_interp *interp, int argc, lcl_value **argv,
+                            lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  const char *mode_str;
+  int mode_val;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "lk::editor_wrap: expected 2 arguments (editor, mode)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  mode_str = lcl_value_to_string(argv[1]);
+
+  if (!lookup_enum(wrap_mode_table, mode_str, &mode_val)) {
+    static char err[160];
+
+    sprintf(err,
+            "lk::editor_wrap: unknown mode '%.48s' "
+            "(supported: none, character)",
+            mode_str);
+    lcl_set_error(interp, err);
+
+    return LCL_RC_ERR;
+  }
+
+  if (!lk_editor_set_wrap_mode(ew->ed, (lk_editor_wrap_mode)mode_val)) {
+    static char err[160];
+
+    sprintf(err,
+            "lk::editor_wrap: mode '%.48s' is not implemented yet "
+            "(supported: none, character)",
+            mode_str);
+    lcl_set_error(interp, err);
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_wrap_get [editor] -> the mode name ("none" | "character"
+ * | "word") */
+static int c_lk_editor_wrap_get(lcl_interp *interp, int argc,
+                                lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  int mode;
+  const str_enum *e;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::editor_wrap_get: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  mode = (int)lk_editor_wrap_mode_get(ew->ed);
+
+  for (e = wrap_mode_table; e->name; e++) {
+    if (e->value == mode) {
+      *out = lcl_string_new(e->name);
+
+      return LCL_RC_OK;
+    }
+  }
+
+  lcl_set_error(interp, "lk::editor_wrap_get: unmapped wrap mode");
+
+  return LCL_RC_ERR;
+}
+
 /* Joined command-name list for lk::editor_command error messages. */
 static const char *ed_cmd_known(void) {
   static char buf[512];
@@ -3541,7 +3835,12 @@ static int c_lk_editor_command(lcl_interp *interp, int argc, lcl_value **argv,
   }
 
   default:
-    if (cmd_val >= LK_ED_MOVE_LEFT && cmd_val <= LK_ED_MOVE_PAGE_DOWN) {
+    /* Motion range: LK_ED_MOVE_LEFT..MOVE_PAGE_DOWN are contiguous;
+     * the visual-row pair was appended after the v1 enum tail
+     * (recorded transaction origins must not shift), so it sits
+     * outside that range and is matched explicitly. */
+    if ((cmd_val >= LK_ED_MOVE_LEFT && cmd_val <= LK_ED_MOVE_PAGE_DOWN) ||
+        cmd_val == LK_ED_MOVE_ROW_START || cmd_val == LK_ED_MOVE_ROW_END) {
       /* Motion command: optional literal "select" flag. */
       if (extra > 1 ||
           (extra == 1 && strcmp(lcl_value_to_string(argv[2]), "select") != 0)) {
@@ -4374,6 +4673,14 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def(ns, "doc_len", lcl_c_proc_new("lk::doc_len", c_lk_doc_len));
   lcl_ns_def(ns, "doc_line_count",
              lcl_c_proc_new("lk::doc_line_count", c_lk_doc_line_count));
+  lcl_ns_def(ns, "doc_pos_to_line",
+             lcl_c_proc_new("lk::doc_pos_to_line", c_lk_doc_pos_to_line));
+  lcl_ns_def(ns, "doc_line_start",
+             lcl_c_proc_new("lk::doc_line_start", c_lk_doc_line_start));
+  lcl_ns_def(ns, "doc_line_end",
+             lcl_c_proc_new("lk::doc_line_end", c_lk_doc_line_end));
+  lcl_ns_def(ns, "doc_char_col",
+             lcl_c_proc_new("lk::doc_char_col", c_lk_doc_char_col));
   lcl_ns_def(ns, "doc_revision",
              lcl_c_proc_new("lk::doc_revision", c_lk_doc_revision));
   lcl_ns_def(ns, "doc_insert",
@@ -4408,6 +4715,10 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::editor_set_cursor", c_lk_editor_set_cursor));
   lcl_ns_def(ns, "editor_selection",
              lcl_c_proc_new("lk::editor_selection", c_lk_editor_selection));
+  lcl_ns_def(ns, "editor_wrap",
+             lcl_c_proc_new("lk::editor_wrap", c_lk_editor_wrap));
+  lcl_ns_def(ns, "editor_wrap_get",
+             lcl_c_proc_new("lk::editor_wrap_get", c_lk_editor_wrap_get));
   lcl_ns_def(ns, "editor_command",
              lcl_c_proc_new("lk::editor_command", c_lk_editor_command));
   lcl_ns_def(ns, "editor_set_spans",

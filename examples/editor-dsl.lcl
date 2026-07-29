@@ -5,12 +5,19 @@
 ;;     its undo history, and one editor view live in the application
 ;;     environment; the tree only references the editor via the
 ;;     `editor` prop (a typed resource ref)
-;;   - Live status labels: the view body re-evals every frame, so
-;;     lk::doc_line_count / lk::doc_revision / lk::editor_cursor
-;;     inline in label text stay current for free
+;;   - Character wrap, opted into explicitly: lk::editor_wrap $ed
+;;     character (the default is none, with horizontal follow-cursor)
+;;   - Live status labels: the view body re-evals every frame, so the
+;;     line:col position (lk::doc_pos_to_line + lk::doc_char_col — a
+;;     1-based CHARACTER column, codepoints not bytes) stays current
+;;     for free
 ;;   - Buttons driving lk::editor_command — scripts invoke the same
 ;;     verbs the keyboard does (undo, redo, select_all, move_doc_start)
-;;   - An annotation store attached to the document; TODO markers and
+;;   - Ctrl+G goto-line as pure app-level composition: a keybinding, a
+;;     modal overlay (hidden content subtree), a text_input, and
+;;     lk::editor_command set_cursor at lk::doc_line_start — RETURN
+;;     jumps, ESC dismisses (core), scroll-to-cursor does the rest
+;;   - An annotation store attached to the document; a TODO marker and
 ;;     one underlined phrase annotated at startup, projected into
 ;;     styled spans by a producer proc that re-runs in the view body
 ;;     (every edit re-produces, and anchors track the edits)
@@ -18,7 +25,7 @@
 let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 
 ;; The document: a self-referential lk sampler.  UTF-8, literal tabs,
-;; and TODO markers included on purpose.
+;; and a TODO marker included on purpose.
 let src {;; lk-editor.lcl — this demo, viewed in the widget it demonstrates.
 ;;
 ;; The buffer you are reading lives in an lk_document — a piece table
@@ -30,7 +37,10 @@ let src {;; lk-editor.lcl — this demo, viewed in the widget it demonstrates.
 ;; Try it: type, select, cut and paste, drag the divider, press
 ;; Ctrl+Z — or click the Undo button, which invokes the very same
 ;; editor command.  Undo steps are document transactions, so the
-;; buttons and the keys share one history.
+;; buttons and the keys share one history.  Press Ctrl+G to jump to
+;; a line by number.  Long lines wrap in pixels, not columns — drag
+;; the divider and watch this paragraph reflow while the status
+;; column keeps showing your line:col.
 ;;
 ;; UTF-8 survives verbatim: naïve café ← → ↑ ↓ … die Möwe flog übers
 ;; Ufer, καλημέρα κόσμε, こんにちは世界.
@@ -45,13 +55,10 @@ let src {;; lk-editor.lcl — this demo, viewed in the widget it demonstrates.
 ;;	puts $msg
 ;;	return $msg
 ;;
-;; TODO teach the status column to show line:col, not a byte offset
-;; TODO wire Ctrl+G goto-line as an app-level overlay
-;;
-;; The highlighted TODO plates above are annotations: semantic ranges
-;; in an annot store attached to the document.  Their anchors move
-;; with your edits — type before one and watch it follow.  A producer
-;; proc projects them into styled spans each frame; staleness is
+;; The highlighted TODO plate below is an annotation: a semantic range
+;; in an annot store attached to the document.  Its anchors move
+;; with your edits — type before it and watch it follow.  A producer
+;; proc projects it into styled spans each frame; staleness is
 ;; impossible because re-eval re-produces.
 ;; TODO ship it ✓
 }
@@ -60,6 +67,7 @@ var doc [lk::doc_new $src]
 var hist [lk::history_new $doc]
 var store [lk::annot_store_new]
 var ed {}
+var goto_val ""
 
 lk::annot_attach $store $doc
 lk::annot_layer_register $store "todo"
@@ -119,9 +127,21 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
         rule button #{state hovered} #{bg (70 75 90) border_color (120 125 150)}
         rule button #{state focused} #{border_color (80 140 220)}
         rule label #{tag dim} #{fg (125 132 148)}
+        rule text_input #{bg (35 40 50) padding 6 border_width 1 border_color (60 65 80)}
+        rule text_input #{state focused} #{border_color (80 140 220)}
+        rule column #{tag dialog} #{bg (40 45 58) padding 16 gap 10 border_width 1 border_color (90 95 115)}
     }
 
     translator pointer_down action Action
+    translator value_changed goto_edit GotoEdit
+
+    ;; Ctrl+G opens the goto dialog.  The keybinding is ptype-scoped to
+    ;; the editor's own `buf` presentation, so it fires whenever the
+    ;; editor (or anything under it) is the key target — and not from
+    ;; inside the dialog itself.  RETURN is scoped to the goto input's
+    ;; presentation the same way; ESC dismissal comes from core.
+    keybinding g ctrl buf GotoOpen
+    keybinding return "" goto_edit GotoSubmit
 
     on Action [lambda {cmd} {
         let verb [get [get $cmd args] 0]
@@ -131,22 +151,49 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
         if [== $verb go_top] { lk::editor_command $ed move_doc_start }
     }]
 
+    on GotoOpen [lambda {cmd} {
+        set! goto_val ""
+        lk::overlay_push $lk_dsl::_ui #{kind modal anchor center owner_id src content_root_id goto_box}
+        lk::focus_set $lk_dsl::_ui goto_line
+    }]
+
+    on GotoEdit [lambda {cmd} {
+        set! goto_val [get $cmd source_value]
+    }]
+
+    on GotoSubmit [lambda {cmd} {
+        if [number? $goto_val] {
+            var ln [int $goto_val]
+            let lc [lk::doc_line_count $doc]
+            if [< $ln 1] { set! ln 1 }
+            if [> $ln $lc] { set! ln $lc }
+            ;; set_cursor requests scroll-to-cursor: the distant
+            ;; re-anchor path brings the target line into view.
+            lk::editor_command $ed set_cursor [lk::doc_line_start $doc [- $ln 1]]
+        }
+        lk::overlay_pop $lk_dsl::_ui
+        lk::focus_set $lk_dsl::_ui src
+    }]
+
     ;; The editor registers in the window ui's resource table; the
-    ;; `editor` prop below carries the typed ref every frame.
+    ;; `editor` prop below carries the typed ref every frame.  Wrap is
+    ;; an explicit opt-in — the default mode is none.
     set! ed [lk::editor_new $lk_dsl::_ui $doc $hist]
+    lk::editor_wrap $ed character
 
     view {
         produce_spans
+        let cpos [lk::editor_cursor $ed]
 
         split_h "main" #{split_ratio 720} {
-            editor "src" #{editor $ed focusable 1}
+            editor "src" #{editor $ed focusable 1 present (buf (src))}
 
             column "side" {
                 label "s_title" #{text "lk-editor.lcl"}
                 label "s_lines" #{text "lines: [lk::doc_line_count $doc]"}
                 label "s_bytes" #{text "bytes: [lk::doc_len $doc]"}
                 label "s_rev" #{text "rev: [lk::doc_revision $doc]"}
-                label "s_cursor" #{text "cursor @ [lk::editor_cursor $ed]"}
+                label "s_pos" #{text "pos: [+ [lk::doc_pos_to_line $doc $cpos] 1]:[lk::doc_char_col $doc $cpos]"}
                 label "s_hint" #{tag dim text "(live — type in the left pane)"}
                 spacer "s_flex"
                 button "b_undo" #{text "Undo" focusable 1 tooltip "Same verb as Ctrl+Z"
@@ -154,6 +201,15 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
                 button "b_redo" #{text "Redo" focusable 1 present (action (redo))}
                 button "b_all" #{text "Select all" focusable 1 present (action (select_all))}
                 button "b_top" #{text "Jump to top" focusable 1 present (action (go_top))}
+
+                ;; Goto-line dialog: hidden in the main pass, laid out
+                ;; centered by the modal overlay when pushed (Ctrl+G).
+                column "goto_box" #{hidden 1 tag dialog} {
+                    label "goto_msg" #{text "Go to line (1-[lk::doc_line_count $doc]):"}
+                    text_input "goto_line" #{text $goto_val w 140 focusable 1
+                                             present (goto_edit (goto))}
+                    label "goto_hint" #{tag dim text "RETURN jumps — ESC cancels"}
+                }
             }
         }
     }

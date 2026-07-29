@@ -267,7 +267,8 @@ for a second consumer.
 
 ## 9. Staging and gates
 
-- **W1 — wrap engine + horizontal scroll** (`src/editor/` + the
+- **W1 — wrap engine + horizontal scroll.** DONE (2026-07-28,
+  e02bf4e). (`src/editor/` + the
   delta-contract pin in `lk-document.h` + tests). Internal build
   order (each layer tested against the one visible-row
   representation before the next): (1) relative-offset cache +
@@ -292,13 +293,19 @@ for a second consumer.
   far outside the window measures O(viewport), asserted by
   construction not timing); wrap-off degenerate equivalence;
   horizontal follow-cursor and SHIFT+WHEEL in NONE mode.
-- **W2 — bindings + example + docs**: `lk::editor_wrap`/`_get`,
+- **W2 — bindings + example + docs.** DONE (2026-07-28, this
+  change): `lk::editor_wrap`/`_get`,
   doc-proc audit + `lk::doc_char_col` if needed, example gains
   explicit `character` wrap + line:col + Ctrl+G overlay; CLAUDE.md,
   editor.md §13 entry, this doc DONE-marked. Gate: binding tests
   incl. error paths; all examples exit 124 under the dummy driver;
   hand-check on a real display (typing, dragging the divider while
   wrapped, Ctrl+G to the last line, wrap-off horizontal follow).
+  The audit found none of `doc_pos_to_line`/`doc_line_start`/
+  `doc_line_end` existed in stage D — all three bound; and
+  script-side codepoint counting cannot be exact (`String::length`
+  is `strlen`), so `lk::doc_char_col` was added with the §8 column
+  definition pinned at the proc.
 - **Deferred**: word wrap (one fit-policy function, §2); wrap-width
   override; gutter/line numbers; horizontal scrollbar rendering;
   backend metric generations + cluster-caret `index_at_x`
