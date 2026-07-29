@@ -259,7 +259,15 @@ proc _look {side pos} {
 
     var hit [lk::doc_find $doc $needle [+ [lk::editor_cursor $ed] 1]]
     if [< $hit 0] { set! hit [lk::doc_find $doc $needle 0] }
-    if [>= $hit 0] { lk::editor_command $ed set_cursor $hit }
+
+    if [>= $hit 0] {
+        ;; Select the match (cursor to start, extend to end) so the
+        ;; find is visible via the ordinary selection highlight —
+        ;; and typing replaces it, the editor convention.
+        lk::editor_command $ed set_cursor $hit
+        lk::editor_command $ed set_cursor [+ $hit [String::length $needle]] extend
+    }
+
     return 1
 }
 
@@ -516,7 +524,13 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
         let ed [pane_get $active ed]
         var hit [lk::doc_find $doc $search_val [+ [lk::editor_cursor $ed] 1]]
         if [< $hit 0] { set! hit [lk::doc_find $doc $search_val 0] }
-        if [>= $hit 0] { lk::editor_command $ed set_cursor $hit }
+
+        if [>= $hit 0] {
+            ;; Select the match so the find is highlighted (and typing
+            ;; replaces it) — same convention as LOOK.
+            lk::editor_command $ed set_cursor $hit
+            lk::editor_command $ed set_cursor [+ $hit [String::length $search_val]] extend
+        }
     }]
 
     on SearchClose [lambda {cmd} {
