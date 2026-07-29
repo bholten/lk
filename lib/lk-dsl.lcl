@@ -243,16 +243,57 @@ namespace lk_dsl {
     }
 
     ;; ---- Translator ----
-    ;; translator <event_type> <ptype> ?<kind_filter>? <cmd_name>
+    ;; translator <event_type> ?matcher-dict? <ptype> ?<kind_filter>? <cmd_name>
+    ;; A dict anywhere in the trailing args is the matcher (DSL v2
+    ;; style): keys `button` (primary|middle|secondary) and `mods`
+    ;; ("ctrl", "ctrl+shift", ...); unknown keys hard-error.  The
+    ;; positional forms are unchanged:
+    ;;   translator pointer_down item Select
+    ;;   translator pointer_down action button DoIt
+    ;;   translator pointer_down #{button middle} action Execute
     ;; keybinding <keycode> <mods> <cmd_name>
     ;; keybinding <keycode> <mods> <ptype> <cmd_name>
-    proc translator {event_type ptype *rest} {
-        if [== [len $rest] 1] {
-            ;; 3-arg form: translator event ptype cmd
-            lk::add_translator $_ui $event_type $ptype "" "" "" [get $rest 0]
+    proc translator {event_type *rest} {
+        var button ""
+        var mods ""
+        var seen_dict 0
+        var pos ()
+
+        foreach a $rest {
+            if [dict? $a] {
+                if [== $seen_dict 1] {
+                    error "translator $event_type: more than one matcher dict"
+                }
+                set! seen_dict 1
+
+                foreach k [Dict::keys $a] {
+                    if [== $k button] {
+                        set! button [get $a $k]
+                    } else {
+                        if [== $k mods] {
+                            set! mods [get $a $k]
+                        } else {
+                            error "translator $event_type: unknown matcher key '$k' (known: button, mods)"
+                        }
+                    }
+                }
+            } else {
+                set! pos [List::push $pos $a]
+            }
+        }
+
+        let np [len $pos]
+
+        if [== $np 2] {
+            ;; translator event ?matcher? ptype cmd
+            lk::add_translator $_ui $event_type [get $pos 0] "" "" $mods [get $pos 1] $button
         } else {
-            ;; 4-arg form: translator event ptype kind cmd
-            lk::add_translator $_ui $event_type $ptype [get $rest 0] "" "" [get $rest 1]
+            if [== $np 3] {
+                ;; translator event ?matcher? ptype kind cmd
+                lk::add_translator $_ui $event_type [get $pos 0] [get $pos 1] "" $mods [get $pos 2] $button
+            } else {
+                error "translator $event_type: expected ?matcher-dict? ptype ?kind? cmd"
+            }
         }
     }
 

@@ -3400,6 +3400,336 @@ static void test_dsl_unknown_prop_lists_editor(void) {
   END_TEST();
 }
 
+/* ============================================================================
+ * Range presentations (weft-surface track, S1)
+ * ============================================================================
+ */
+
+static void test_add_translator_button_arg(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("add_translator: optional 8th button arg");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    /* 7-arg form still works (examples run unmodified) */
+    "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C0\"\n"
+    "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C1\" \"primary\"\n"
+    "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"ctrl\" \"C2\" \"middle\"\n"
+    "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C3\" \"secondary\"\n"
+    "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C4\" \"\"\n"
+    "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C5\" 0",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+  if (ui) {
+    CHECK(ui->translator_count == 6);
+    if (ui->translator_count == 6) {
+      CHECK(ui->translators[0].button == 0);
+      CHECK(ui->translators[1].button == (lk_u8)LK_POINTER_BUTTON_PRIMARY);
+      CHECK(ui->translators[2].button == (lk_u8)LK_POINTER_BUTTON_MIDDLE);
+      CHECK(ui->translators[2].mods == LK_MOD_CTRL);
+      CHECK(ui->translators[3].button == (lk_u8)LK_POINTER_BUTTON_SECONDARY);
+      CHECK(ui->translators[4].button == 0);
+      CHECK(ui->translators[5].button == 0);
+    }
+  }
+
+  eval_expect_err(interp,
+                  "lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" "
+                  "\"\" \"C6\" \"wheel-click\"",
+                  "unknown button", "primary", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+/* Full pipeline in script: store + presentations + editor source +
+ * button translator; the pointer event is driven through
+ * lk_event_route from the C fixture (there is no event-synthesis
+ * proc); the handler-visible command dict is asserted from script. */
+static void test_lcl_presentation_pipeline(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+  lk_rect rects[16];
+  lk_layout_cfg cfg;
+  lk_ix node = 0;
+
+  BEGIN_TEST("pipeline: annot_present -> click -> hit dict");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let doc [lk::doc_new \"hello file.c:12 world\"]\n"
+    "let ed [lk::editor_new $ui $doc]\n"
+    "let s [lk::annot_store_new]\n"
+    "lk::annot_attach $s $doc\n"
+    "let a [lk::annot_add $s 6 15 \"links\"]\n"
+    "lk::annot_layer_priority $s \"links\" 3\n"
+    "lk::annot_present $ui $s $a \"loc\" #{path \"file.c\" line 12}\n"
+    "lk::editor_presentations $ed $s",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  eval_ok(interp,
+    "lk::add_translator $ui \"pointer_down\" \"loc\" \"\" \"\" \"\" \"Open\" \"middle\"\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let e [lk::node $t \"ed\" \"editor\"]\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $e\n"
+    "lk::prop $t $e \"editor\" $ed\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+
+  if (ui) {
+    lk_event ev;
+
+    lk_ui_set_text_backend(ui, lk_text_backend_stub());
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 640;
+    cfg.viewport_h = 480;
+    cfg.state = lk_ui_state(ui);
+    CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects) == 1);
+
+    node = lk_tree_find_by_id(lk_ui_tree(ui),
+                              lk_intern_cid(ui->intern, "ed"));
+    CHECK(node != 0);
+
+    /* middle-click at byte 8 (inside [6,15)): 8 px stub chars */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = node;
+    ev.data.pointer.x = rects[node].x + 8 * 8 + 3;
+    ev.data.pointer.y = rects[node].y + 8;
+    ev.data.pointer.button = (lk_u8)LK_POINTER_BUTTON_MIDDLE;
+    lk_event_route(ui, &ev);
+    CHECK(ev.handled == 1);
+  }
+
+  /* script-side assertions on the marshaled command */
+  eval_ok(interp,
+    "let cmds [lk::commands $ui]\n"
+    "let c [get $cmds 0]\n"
+    "let h [get $c hit]\n"
+    "let lc [get $h locus]",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  {
+    static const struct {
+      const char *src;
+      const char *want;
+    } checks[] = {
+      {"len $cmds", "1"},
+      {"get $c name", "Open"},
+      {"get $h ptype", "loc"},
+      {"get $h locus_kind", "editor-range"},
+      {"get [get $h value] path", "file.c"},
+      {"get [get $h value] line", "12"},
+      {"get $lc annot_id", "1"},
+      {"get $lc start", "6"},
+      {"get $lc end", "15"},
+      {"get $lc pos", "8"},
+      /* pinned: translated click moved no cursor */
+      {"lk::editor_cursor $ed", "0"},
+      /* the hit's revision matches the doc now... */
+      {"== [get $lc rev] [lk::doc_revision $doc]", "1"},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
+      eval_ok(interp, checks[i].src, &r);
+      if (r) {
+        const char *got = lcl_value_to_string(r);
+        if (strcmp(got, checks[i].want) != 0) {
+          if (g_cur_ok) printf("FAIL\n");
+          printf("    %s -> '%s', want '%s'\n", checks[i].src, got,
+                 checks[i].want);
+          g_cur_ok = 0;
+        }
+        lcl_ref_dec(r);
+        r = NULL;
+      }
+    }
+  }
+
+  /* ...and goes stale detectably after an edit (script-visible) */
+  eval_ok(interp,
+    "lk::doc_insert $doc 0 \"x\"\n"
+    "== [get $lc rev] [lk::doc_revision $doc]",
+    &r);
+  if (r) {
+    CHECK(strcmp(lcl_value_to_string(r), "0") == 0);
+    lcl_ref_dec(r);
+    r = NULL;
+  }
+
+  /* removing the annotation releases the wrapped value (hook path)
+   * and ends the candidacy: the next click bubbles unhandled */
+  eval_ok(interp, "lk::clear_commands $ui\nlk::annot_remove $s $a", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  if (ui && node) {
+    lk_event ev;
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = node;
+    ev.data.pointer.x = rects[node].x + 8 * 8 + 3;
+    ev.data.pointer.y = rects[node].y + 8;
+    ev.data.pointer.button = (lk_u8)LK_POINTER_BUTTON_MIDDLE;
+    lk_event_route(ui, &ev);
+    CHECK(ev.handled == 0);
+    CHECK(lk_ui_commands(ui)->count == 0);
+  }
+
+  /* lk::editor_pos_at against the same layout snapshot */
+  eval_ok(interp, "lk::editor_pos_at $ed 67 8", &r);
+  if (r) {
+    long v = -2;
+    lcl_value_to_int(r, &v);
+    /* x=67 -> nearest boundary 8 (still valid: the edit above
+     * invalidated geometry, so accept -1 or 8?  No: pos_at needs a
+     * live snapshot — relayout first happened before the edit; the
+     * edit invalidated it, so this returns -1.  Assert exactly that,
+     * then relayout and assert the position. */
+    CHECK(v == -1);
+    lcl_ref_dec(r);
+    r = NULL;
+  }
+
+  if (ui) {
+    CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects) == 1);
+  }
+
+  eval_ok(interp, "lk::editor_pos_at $ed 67 8", &r);
+  if (r) {
+    long v = -2;
+    lcl_value_to_int(r, &v);
+    CHECK(v == 8);
+    lcl_ref_dec(r);
+    r = NULL;
+  }
+
+  eval_ok(interp, "lk::editor_pos_at $ed -5 -5", &r);
+  if (r) {
+    long v = -2;
+    lcl_value_to_int(r, &v);
+    CHECK(v == -1);
+    lcl_ref_dec(r);
+    r = NULL;
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_annot_present_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot_present: error paths");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let doc [lk::doc_new \"hello\"]\n"
+    "let s [lk::annot_store_new]\n"
+    "lk::annot_attach $s $doc\n"
+    "let a [lk::annot_add $s 0 5 \"l\"]",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  eval_expect_err(interp, "lk::annot_present $ui $s 999 \"t\" 1",
+                  "no such annotation", NULL, NULL);
+  eval_expect_err(interp, "lk::annot_present $ui $s $a \"\" 1",
+                  "ptype must be non-empty", NULL, NULL);
+  eval_expect_err(interp, "lk::annot_present $ui $s", "expected 5 arguments",
+                  NULL, NULL);
+
+  /* binding a second ui is rejected */
+  eval_ok(interp,
+    "lk::annot_present $ui $s $a \"t\" 1\n"
+    "let ui2 [lk::ui_create]",
+    &r);
+  if (r) lcl_ref_dec(r);
+  eval_expect_err(interp, "lk::annot_present $ui2 $s $a \"t\" 2",
+                  "bound to a different ui", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_translator_matcher_dict(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("dsl: translator matcher dict");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "translator pointer_down #{button middle} action Execute\n"
+    "translator pointer_down #{button secondary mods ctrl} loc button Look\n"
+    "translator pointer_down item Select",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  ui = dsl_ui(interp);
+  CHECK(ui != NULL);
+  if (ui) {
+    CHECK(ui->translator_count == 3);
+    if (ui->translator_count == 3) {
+      const lk_translator *tr = ui->translators;
+
+      CHECK(tr[0].ptype == lk_intern_cid(ui->intern, "action"));
+      CHECK(tr[0].button == (lk_u8)LK_POINTER_BUTTON_MIDDLE);
+      CHECK(tr[0].mods == 0);
+      CHECK(tr[0].command_name == lk_intern_cid(ui->intern, "Execute"));
+
+      /* dict + kind filter compose */
+      CHECK(tr[1].ptype == lk_intern_cid(ui->intern, "loc"));
+      CHECK(tr[1].node_kind == (lk_u16)UIK_BUTTON);
+      CHECK(tr[1].button == (lk_u8)LK_POINTER_BUTTON_SECONDARY);
+      CHECK(tr[1].mods == LK_MOD_CTRL);
+
+      /* positional form unchanged */
+      CHECK(tr[2].button == 0);
+      CHECK(tr[2].ptype == lk_intern_cid(ui->intern, "item"));
+    }
+  }
+
+  /* error paths: unknown matcher key, two dicts, bad shape */
+  eval_expect_err(interp,
+                  "translator pointer_down #{buttn middle} action Go",
+                  "unknown matcher key 'buttn'", "button, mods", NULL);
+  eval_expect_err(interp,
+                  "translator pointer_down #{button middle} #{mods ctrl} action Go",
+                  "more than one matcher dict", NULL, NULL);
+  eval_expect_err(interp, "translator pointer_down action",
+                  "expected ?matcher-dict? ptype ?kind? cmd", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -3512,6 +3842,12 @@ int main(void) {
   test_annot_errors();
   test_dsl_editor_widget();
   test_dsl_unknown_prop_lists_editor();
+
+  /* Range presentations (weft-surface track, S1) */
+  test_add_translator_button_arg();
+  test_lcl_presentation_pipeline();
+  test_annot_present_errors();
+  test_dsl_translator_matcher_dict();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

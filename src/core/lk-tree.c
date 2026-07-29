@@ -823,6 +823,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
         wr_cstr(wr, ud, "\"");
         break;
       case UIV_RESOURCE: wr_resource(t, wr, ud, &p->value); break;
+      case UIV_TEXT: wr_cstr(wr, ud, "<text>"); break;
       default: wr_cstr(wr, ud, "null"); break;
       }
     }
@@ -883,6 +884,7 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
               wr_cstr(wr, ud, "\"");
               break;
             case UIV_RESOURCE: wr_resource(t, wr, ud, pv); break;
+            case UIV_TEXT: wr_cstr(wr, ud, "<text>"); break;
             default: wr_cstr(wr, ud, "null"); break;
             }
           }

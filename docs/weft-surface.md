@@ -340,8 +340,44 @@ matter, that is its own design.
 
 ## 5. Staging
 
-**S1 — the mechanism**, four conceptual pieces, one landing
-sequence (structure per review):
+**S1 — the mechanism** — **DONE 2026-07-29**, four conceptual
+pieces, one landing sequence (structure per review).  Landing notes
+(implementation decisions within the latitude this doc grants):
+
+- Locus fill split: `lk_annot_presentations_at` fills what the store
+  knows — `{annot id, start, end, 0, rev.hi, rev.lo}` with
+  `locus_kind = 0` — and the editor's offer path
+  (`lk_editor_offer_presentations`) stamps `locus_kind =` interned
+  `"editor-range"` plus `locus[3] =` hit position.  The store has no
+  intern table and no gesture; the editor has both.  Packing
+  documented at `lk_editor_set_presentation_source` in lk-editor.h.
+- Insertion serial = the record id (already stable + monotonic); no
+  new field.
+- The convergence shape: `lk_translate_event` and
+  `lk_translate_presentations` share `translator_match` +
+  `emit_translated` in lk-command.c; node presentations emit with
+  their pvalues as args and a zeroed hit.
+- `button` sits before `command_name` in `lk_ui_add_translator/_s`;
+  the Lcl `lk::add_translator` takes it as an OPTIONAL 8th arg
+  (`primary|middle|secondary`, ""/0 = any) so existing 7-arg callers
+  (examples) run unmodified.
+- Editor default behavior under the pinned §1.5 contract: primary or
+  a button-0 synthetic event places cursor/focus/capture as before;
+  middle/secondary with no translation bubble (previously any button
+  placed the cursor — the pinned contract supersedes).
+- Lcl glue: `lk::annot_present [ui s id ptype value]` (ui first — it
+  supplies the intern table and the resource table; a store's
+  presentations bind to ONE ui), `lk::annot_layer_priority`,
+  `lk::editor_presentations [ed s]`, `lk::editor_pos_at [ed x y]` →
+  pos or -1.  Command dicts carry a `hit` sub-dict with the
+  editor-range locus decoded and lcl-value resources unwrapped.
+- The transient-text emitter is `lk_v_text(ui, ptr, len)`; the
+  accessors are `lk_command_arg_text` / `lk_command_text`, which
+  resolve against the queue arena or the command log's own copy
+  (made at record time, so `lk_ui_dump_commands` — which now also
+  dumps the log — never reads reset memory).
+
+Original staging:
 
 1. *Presentation representation*: `lk_presentation_hit`, locus
    kinds + editor packing, command-queue dispatch arena +
@@ -372,8 +408,8 @@ valid at handler time, gone after clear; stale-locus detectability
 (edit between dispatch and handling → revision mismatch visible).
 
 **S2 — primitives**: `lk_doc_find` (+ piece-boundary tests),
-`lk::editor_pos_at` if not landed in S1, lcl-io wiring decision
-for the example runner.
+lcl-io wiring decision for the example runner.
+(`lk::editor_pos_at` landed in S1.)
 
 **S3 — weft-mini** (`examples/weft-mini.lcl`, pure Lcl, target
 ~300 lines): two panes; revision-driven plumbing producer

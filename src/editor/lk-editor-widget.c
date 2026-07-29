@@ -292,10 +292,27 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
   case LK_EVENT_POINTER_DOWN: {
     lk_u32 pos;
+    lk_u8 btn = ev->data.pointer.button;
 
     if (!lk_editor_hit_pos(e, ui ? ui->text : NULL, ev->data.pointer.x,
                            ev->data.pointer.y, &pos)) {
       return 0; /* no layout geometry yet: bubble (click-to-focus) */
+    }
+
+    /* Interior presentations FIRST (docs/weft-surface.md section 1.5):
+     * offer candidates at the hit position; a fired translation
+     * consumes the click with no focus change, no cursor move, no
+     * selection mutation, and no pointer capture (pinned). */
+    if (lk_editor_offer_presentations(e, ui, t, n, ev, pos)) {
+      return 1;
+    }
+
+    /* No translation: exactly the pre-presentation behavior.  Primary
+     * (or an unspecified synthetic button) places the cursor; other
+     * buttons take no default action and bubble. */
+    if (btn != (lk_u8)LK_POINTER_BUTTON_ANY &&
+        btn != (lk_u8)LK_POINTER_BUTTON_PRIMARY) {
+      return 0;
     }
 
     ed_set_cursor(e, ui, pos, 0);

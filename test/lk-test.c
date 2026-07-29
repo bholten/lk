@@ -31,6 +31,10 @@ void lk_editor_run_tests(void);
  * (test/lk-annot-test.c, editor track stage C) */
 void lk_annot_run_tests(void);
 
+/* interior presentation tests (test/lk-present-test.c, weft-surface
+ * track stage S1) */
+void lk_present_run_tests(void);
+
 /* ---- changeset query helpers ---- */
 
 static int cs_has(const lk_changeset *cs, lk_ui *ui, lk_u8 kind,
@@ -2926,7 +2930,7 @@ static void test_pres_multi_arg_cmd(void) {
 
   BEGIN_TEST("pres: multi-arg pres emits multi-arg command");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "action", 0, 0, 0, "DoIt");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "action", 0, 0, 0, 0, "DoIt");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3015,7 +3019,7 @@ static void test_translator_fires_command(void) {
   BEGIN_TEST("translator: fires command on match");
 
   /* Register translator: POINTER_DOWN + ptype "item" -> "Select" */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
 
   /* Build tree with presented button */
   t = lk_ui_begin_frame(ui);
@@ -3063,7 +3067,7 @@ static void test_translator_no_match(void) {
   BEGIN_TEST("translator: no match = empty queue");
 
   /* Translator for KEY_DOWN, but we'll send POINTER_DOWN */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3099,7 +3103,7 @@ static void test_translator_walks_ancestors(void) {
 
   BEGIN_TEST("translator: walks ancestors for pres");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, 0, 0, "ListClick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, 0, 0, 0, "ListClick");
 
   /* Presentation is on parent column, event targets child button */
   t = lk_ui_begin_frame(ui);
@@ -3143,7 +3147,7 @@ static void test_translator_ptype_and_kind(void) {
   BEGIN_TEST("translator: match ptype + node_kind");
 
   /* Only match BUTTON nodes with ptype "action" */
-  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, 0, 0, "DoAction");
+  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, 0, 0, 0, "DoAction");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3183,7 +3187,7 @@ static void test_translator_keycode_match(void) {
 
   /* Ctrl+S -> "Save" */
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3225,7 +3229,7 @@ static void test_translator_keycode_wrong_key(void) {
   BEGIN_TEST("translator: keycode mismatch = no command");
 
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3265,7 +3269,7 @@ static void test_translator_keycode_wrong_mods(void) {
 
   /* Ctrl+S translator */
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3305,7 +3309,7 @@ static void test_translator_keycode_no_pres_required(void) {
 
   /* Ctrl+F -> "Find", ptype=0 (match any presentation) */
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0,
-                          (lk_u16)LKK_F, LK_MOD_CTRL, "Find");
+                          (lk_u16)LKK_F, LK_MOD_CTRL, 0, "Find");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3349,7 +3353,7 @@ static void test_translator_keycode_on_pointer_event(void) {
 
   /* Translator with keycode set — should not match pointer events */
   lk_ui_add_translator_s(ui, 0, "item", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, "Save");
+                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3386,7 +3390,7 @@ static void test_translator_keycode_zero_mods(void) {
 
   /* Return key with no modifiers -> "Confirm" */
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "form", 0,
-                          (lk_u16)LKK_RETURN, 0, "Confirm");
+                          (lk_u16)LKK_RETURN, 0, 0, "Confirm");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3452,7 +3456,7 @@ static void test_command_handler_fires(void) {
   g_handler_cmd_name = 0;
 
   lk_ui_set_command_handler(ui, test_cmd_handler_cb, NULL);
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Pick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Pick");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3492,7 +3496,7 @@ static void test_command_log_accumulates(void) {
 
   BEGIN_TEST("introspect: command log accumulates");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3561,8 +3565,8 @@ static void test_dump_commands_output(void) {
 
   BEGIN_TEST("introspect: dump_commands output");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, 0, 0, "Activate");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, 0, 0, 0, "Activate");
 
   memset(&buf, 0, sizeof(buf));
   lk_ui_dump_commands(ui, test_buf_write, &buf);
@@ -3691,7 +3695,7 @@ static void test_accessor_command_fields(void) {
 
   BEGIN_TEST("accessor: command name/arg_count/arg/source");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
   select_id = lk_intern_id(ui->intern, lk_str_c("Select"));
   item_id = lk_intern_id(ui->intern, lk_str_c("item"));
 
@@ -3832,7 +3836,7 @@ static void test_command_arg_typed(void) {
 
   BEGIN_TEST("command: typed arg accessors");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -5586,7 +5590,7 @@ static void test_text_input_emits_value_changed(void) {
   ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
 
   /* Translator: value_changed + ptype "field" -> "FieldEdit" */
-  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0,
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
                           "FieldEdit");
 
   /* Attach presentation (arg = the field id) to text_input */
@@ -5669,7 +5673,7 @@ static void test_text_input_backspace_emits_value_changed(void) {
   st = lk_ui_state(ui);
   ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
 
-  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "", 0, 0, 0, "Edited");
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "", 0, 0, 0, 0, "Edited");
 
   {
     lk_tree *t = lk_ui_begin_frame(ui);
@@ -7075,7 +7079,7 @@ static void test_dropdown_return_commits(void) {
   dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
 
   /* Register translator so commit emits a command we can inspect */
-  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "picker", 0, 0, 0,
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "picker", 0, 0, 0, 0,
                           "Selected");
 
   /* Open + navigate to index 1 */
@@ -8411,7 +8415,7 @@ static void test_translator_disabled_no_command(void) {
   lk_tree_append_child(t, dcol, bs);
   lk_ui_end_frame(ui);
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "act", 0, 0, 0, "Do");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "act", 0, 0, 0, 0, "Do");
   q = lk_ui_commands(ui);
 
   /* Click disabled button: no command */
@@ -10242,6 +10246,9 @@ int main(void) {
 
   /* annotation store + styled spans (editor track, stage C) */
   lk_annot_run_tests();
+
+  /* interior presentations (weft-surface track, stage S1) */
+  lk_present_run_tests();
 
   printf("\n%d/%d tests passed", g_pass, g_tests);
 

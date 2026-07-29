@@ -619,6 +619,18 @@ static lk_u8 sdl_to_lk_mods(SDL_Keymod m) {
   return r;
 }
 
+/* SDL button number -> lk-owned lk_pointer_button.  Extra buttons
+ * (X1/X2, ...) become ANY: unmatched by button-specific translators,
+ * still visible to button-wildcard ones. */
+static lk_u8 sdl_to_lk_button(Uint8 b) {
+  switch (b) {
+  case SDL_BUTTON_LEFT: return (lk_u8)LK_POINTER_BUTTON_PRIMARY;
+  case SDL_BUTTON_MIDDLE: return (lk_u8)LK_POINTER_BUTTON_MIDDLE;
+  case SDL_BUTTON_RIGHT: return (lk_u8)LK_POINTER_BUTTON_SECONDARY;
+  default: return (lk_u8)LK_POINTER_BUTTON_ANY;
+  }
+}
+
 static int sdl_to_lk_event(lk_window *win, const SDL_Event *sdl,
                            lk_event *out) {
   memset(out, 0, sizeof(*out));
@@ -632,13 +644,13 @@ static int sdl_to_lk_event(lk_window *win, const SDL_Event *sdl,
     out->type = LK_EVENT_POINTER_DOWN;
     out->data.pointer.x = (lk_i32)sdl->button.x;
     out->data.pointer.y = (lk_i32)sdl->button.y;
-    out->data.pointer.button = (lk_u8)sdl->button.button;
+    out->data.pointer.button = sdl_to_lk_button(sdl->button.button);
     return 1;
   case SDL_EVENT_MOUSE_BUTTON_UP:
     out->type = LK_EVENT_POINTER_UP;
     out->data.pointer.x = (lk_i32)sdl->button.x;
     out->data.pointer.y = (lk_i32)sdl->button.y;
-    out->data.pointer.button = (lk_u8)sdl->button.button;
+    out->data.pointer.button = sdl_to_lk_button(sdl->button.button);
     return 1;
   case SDL_EVENT_KEY_DOWN:
     out->type = LK_EVENT_KEY_DOWN;
