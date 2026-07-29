@@ -104,9 +104,24 @@ endif()
 option(LK_BUILD_LCL "Build Lcl scripting bindings" OFF)
 
 if(LK_BUILD_LCL)
+  # lcl-io: file IO lives in the Lcl package, not in core Lcl and not
+  # in lk (docs/weft-surface.md section 3).  Default ON when the
+  # package is present so the script runner can open real files.
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/submodules/lcl/packages/lcl-io/CMakeLists.txt)
+    set(LK_LCL_IO_DEFAULT ON)
+  else()
+    set(LK_LCL_IO_DEFAULT OFF)
+  endif()
+  option(LK_LCL_IO "Register the Lcl IO package (io::*) in lcl_lk_main" ${LK_LCL_IO_DEFAULT})
+
   set(LCL_BUILD_SHARED OFF CACHE BOOL "" FORCE)
   set(LCL_BUILD_STATIC ON CACHE BOOL "" FORCE)
   set(LCL_BUILD_CLI OFF CACHE BOOL "" FORCE)
+  if(LK_LCL_IO)
+    set(LCL_BUILD_IO ON CACHE BOOL "" FORCE)
+  else()
+    set(LCL_BUILD_IO OFF CACHE BOOL "" FORCE)
+  endif()
   add_subdirectory(submodules/lcl)
 
   add_library(lcl_lk STATIC src/lcl/lcl-lk.c)
@@ -128,6 +143,10 @@ if(LK_BUILD_LCL)
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
     target_compile_definitions(lcl_lk_main PRIVATE
       LK_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
+    if(LK_LCL_IO)
+      target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_IO)
+      target_link_libraries(lcl_lk_main PRIVATE lcl_io)
+    endif()
     target_compile_options(lcl_lk_main PRIVATE -Wall -Wextra)
     set_target_properties(lcl_lk_main PROPERTIES
       C_STANDARD 11

@@ -2573,6 +2573,76 @@ static void test_doc_char_col(void) {
   END_TEST();
 }
 
+static void test_doc_find_binding(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: find happy paths incl. piece seams");
+  interp = make_interp();
+
+  eval_ok(interp, "let d [lk::doc_new \"one two one\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "lk::doc_find $d \"one\"", 0);
+  check_int(interp, "lk::doc_find $d \"two\"", 4);
+  check_int(interp, "lk::doc_find $d \"one\" 1", 8);
+  check_int(interp, "lk::doc_find $d \"one\" 8", 8);
+  check_int(interp, "lk::doc_find $d \"one\" 9", -1); /* not found */
+  check_int(interp, "lk::doc_find $d \"zzz\"", -1);
+  check_int(interp, "lk::doc_find $d \"one\" 99", -1); /* from past end */
+
+  /* Insert-in-middle splits the original piece; the needle spans the
+   * resulting seams. */
+  r = NULL;
+  eval_ok(interp, "lk::doc_insert $d 4 \"XY \"", &r);
+  if (r) lcl_ref_dec(r);
+  check_str(interp, "lk::doc_text $d", "one XY two one");
+  check_int(interp, "lk::doc_find $d \"e XY t\"", 2);
+  check_int(interp, "lk::doc_find $d \"Y tw\" 3", 5);
+
+  /* UTF-8 needle matches its exact bytes. */
+  r = NULL;
+  eval_ok(interp, "let d2 [lk::doc_new \"caf\xC3\xA9 bar\"]", &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "lk::doc_find $d2 \"\xC3\xA9 b\"", 3);
+
+  /* Search-next idiom from script. */
+  check_int(interp,
+            "let h [lk::doc_find $d \"one\"]\n"
+            "lk::doc_find $d \"one\" [+ $h 1]",
+            11);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_find_errors(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: find error paths");
+  interp = make_interp();
+
+  eval_ok(interp, "let d [lk::doc_new \"abc\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  eval_expect_err(interp, "lk::doc_find $d", "lk::doc_find",
+                  "2 or 3 arguments", NULL);
+  eval_expect_err(interp, "lk::doc_find $d \"a\" 0 extra", "lk::doc_find",
+                  "2 or 3 arguments", NULL);
+  eval_expect_err(interp, "lk::doc_find $d \"\"", "needle must be non-empty",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::doc_find $d \"a\" -1",
+                  "non-negative integer", NULL, NULL);
+  eval_expect_err(interp, "lk::doc_find $d \"a\" nope",
+                  "non-negative integer", NULL, NULL);
+  eval_expect_err(interp, "lk::doc_find 5 \"a\"",
+                  "expected lk_document opaque", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_doc_transact_groups(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -3821,6 +3891,8 @@ int main(void) {
   test_doc_mutation_errors();
   test_doc_line_procs();
   test_doc_char_col();
+  test_doc_find_binding();
+  test_doc_find_errors();
   test_doc_transact_groups();
   test_doc_transact_error_propagates();
   test_doc_subscribe_deltas();
