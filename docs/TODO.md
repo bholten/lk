@@ -486,6 +486,20 @@ All four stages of `docs/editor.md` landed (2026-07-26/27,
   for the editor by span-split `DRAW_RUN` rendering; a standalone
   `STYLED_TEXT` widget for labels/logs remains open.
 
+### ~~9. Weft surface track (interior presentations + weft-mini)~~ ✓
+
+All three stages of `docs/weft-surface.md` landed (2026-07-29):
+S1 interior/range presentations (typed presentation values, the one
+translator matcher with button discrimination, annot-store adapter,
+editor offer path), S2 primitives (`lk_doc_find`, lcl-io wiring for
+the runner), S3 `examples/weft-mini.lcl` — the north-star artifact:
+a two-pane Acme-flavored editor in pure Lcl (self-reading left
+buffer, revision-driven plumbing producer, execute-into-pane,
+look/search-next, Ctrl+F as composition, all gesture policy in the
+example).  Landing notes in `docs/weft-surface.md` §5.  Horizon
+items (tree-sitter producer, annot persistence, inline output
+records, keyboard activation) recorded there.
+
 
 ## Known issues / small hardening items
 
