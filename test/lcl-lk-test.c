@@ -2478,6 +2478,101 @@ static void test_doc_mutation_errors(void) {
   END_TEST();
 }
 
+static void test_doc_line_procs(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: pos_to_line / line_start / line_end");
+  interp = make_interp();
+
+  eval_ok(interp, "let d [lk::doc_new \"ab\ncd\nef\"]", &r);
+  if (r) lcl_ref_dec(r);
+
+  /* 0-based lines, mirroring the C API. */
+  check_int(interp, "lk::doc_pos_to_line $d 0", 0);
+  check_int(interp, "lk::doc_pos_to_line $d 2", 0); /* the \n itself */
+  check_int(interp, "lk::doc_pos_to_line $d 3", 1);
+  check_int(interp, "lk::doc_pos_to_line $d 7", 2);
+  check_int(interp, "lk::doc_pos_to_line $d 99", 2); /* clamps to last */
+
+  check_int(interp, "lk::doc_line_start $d 0", 0);
+  check_int(interp, "lk::doc_line_start $d 1", 3);
+  check_int(interp, "lk::doc_line_start $d 2", 6);
+
+  /* line_end: the \n (exclusive) for inner lines, doc len for last. */
+  check_int(interp, "lk::doc_line_end $d 0", 2);
+  check_int(interp, "lk::doc_line_end $d 1", 5);
+  check_int(interp, "lk::doc_line_end $d 2", 8);
+
+  /* Errors: arity, wrong opaque, bad values, out-of-range lines. */
+  eval_expect_err(interp, "lk::doc_pos_to_line $d", "lk::doc_pos_to_line",
+                  "2 arguments", NULL);
+  eval_expect_err(interp, "lk::doc_pos_to_line $d -1",
+                  "non-negative integer", NULL, NULL);
+  eval_expect_err(interp, "lk::doc_line_start $d 3", "line out of range",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::doc_line_end $d 99", "line out of range",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::doc_line_start $d nope",
+                  "non-negative integer", NULL, NULL);
+  eval_expect_err(interp, "lk::doc_line_start 5 0",
+                  "expected lk_document opaque", NULL, NULL);
+  eval_expect_err(interp, "lk::doc_line_end $d", "lk::doc_line_end",
+                  "2 arguments", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_doc_char_col(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("doc: char_col counts codepoints, tab = 1");
+  interp = make_interp();
+
+  /* Line 0: "hello" (bytes 0..4, \n at 5)
+   * Line 1: "na\xC3\xAFve caf\xC3\xA9" (starts at 6; 10 codepoints,
+   *         12 bytes; \n at 18)
+   * Line 2: "\ta\tb" (starts at 19; len = 23) */
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello\nna\xC3\xAFve caf\xC3\xA9\n\ta\tb\"]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_int(interp, "lk::doc_len $d", 23);
+
+  /* ASCII: position at line start is column 1; 1-based thereafter. */
+  check_int(interp, "lk::doc_char_col $d 0", 1);
+  check_int(interp, "lk::doc_char_col $d 3", 4);
+  check_int(interp, "lk::doc_char_col $d 5", 6); /* end of "hello" */
+
+  /* Multi-byte UTF-8: columns count codepoints, not bytes. */
+  check_int(interp, "lk::doc_char_col $d 6", 1);  /* line start */
+  check_int(interp, "lk::doc_char_col $d 8", 3);  /* before the i-uml */
+  check_int(interp, "lk::doc_char_col $d 10", 4); /* after it: 3 cp */
+  check_int(interp, "lk::doc_char_col $d 18", 11); /* 10 cp, 12 bytes */
+
+  /* Tabs count as ONE character (pinned definition, editor-wrap #8). */
+  check_int(interp, "lk::doc_char_col $d 19", 1);
+  check_int(interp, "lk::doc_char_col $d 20", 2); /* after the tab */
+  check_int(interp, "lk::doc_char_col $d 22", 4);
+  check_int(interp, "lk::doc_char_col $d 23", 5); /* pos == doc len */
+
+  /* Errors. */
+  eval_expect_err(interp, "lk::doc_char_col $d 24", "pos out of range",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::doc_char_col $d -1", "non-negative integer",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::doc_char_col $d", "lk::doc_char_col",
+                  "2 arguments", NULL);
+  eval_expect_err(interp, "lk::doc_char_col 5 0",
+                  "expected lk_document opaque", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_doc_transact_groups(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -2856,6 +2951,151 @@ static void test_editor_command_errors(void) {
                   NULL, NULL);
   eval_expect_err(interp, "lk::editor_command $d insert_text x",
                   "expected lk_editor opaque", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_wrap_proc(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: wrap mode set/get round-trip + errors");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"abc\"]\n"
+          "let e [lk::editor_new $ui $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* Default NONE; none/character round-trip through the getter. */
+  check_str(interp, "lk::editor_wrap_get $e", "none");
+  check_str(interp, "lk::editor_wrap $e character", "");
+  check_str(interp, "lk::editor_wrap_get $e", "character");
+  check_str(interp, "lk::editor_wrap $e none", "");
+  check_str(interp, "lk::editor_wrap_get $e", "none");
+
+  /* word: a recognized name the engine rejects -- hard error listing
+   * the supported modes; the mode is left unchanged. */
+  eval_expect_err(interp, "lk::editor_wrap $e word", "'word'",
+                  "supported: none, character", NULL);
+  check_str(interp, "lk::editor_wrap_get $e", "none");
+
+  /* Bogus mode name: same supported-modes listing. */
+  eval_expect_err(interp, "lk::editor_wrap $e diagonal",
+                  "unknown mode 'diagonal'", "supported: none, character",
+                  NULL);
+
+  /* Arity and type errors. */
+  eval_expect_err(interp, "lk::editor_wrap $e", "lk::editor_wrap",
+                  "2 arguments", NULL);
+  eval_expect_err(interp, "lk::editor_wrap $e none extra",
+                  "2 arguments", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_wrap $d character",
+                  "expected lk_editor opaque", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_wrap_get $d",
+                  "expected lk_editor opaque", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_wrap_get", "lk::editor_wrap_get",
+                  "1 argument", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_editor_row_commands(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui = NULL;
+
+  BEGIN_TEST("editor: move_row_start/end, wrapped vs logical");
+  interp = make_interp();
+
+  /* Unwrapped: the ROW variants are identical to the logical pair. */
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d0 [lk::doc_new \"ab\ncd\"]\n"
+          "let e0 [lk::editor_new $ui $d0]",
+          &r);
+  if (r) lcl_ref_dec(r);
+  check_int(interp, "lk::editor_command $e0 set_cursor 4", 1);
+  check_int(interp, "lk::editor_command $e0 move_row_start", 1);
+  check_int(interp, "lk::editor_cursor $e0", 3);
+  check_int(interp, "lk::editor_command $e0 move_row_end", 1);
+  check_int(interp, "lk::editor_cursor $e0", 5);
+
+  /* Wrapped: one 20-codepoint line under the stub backend (8 px per
+   * codepoint, so width 80 = 10 codepoints per row -- the same
+   * geometry as the core wrap tests).  The frame carries the editor
+   * ref; a real lk_layout stamps the wrap key (content width). */
+  r = NULL;
+  eval_ok(interp,
+          "let d [lk::doc_new \"abcdefghijklmnopqrst\"]\n"
+          "let e [lk::editor_new $ui $d]\n"
+          "let t [lk::begin_frame $ui]\n"
+          "let w [lk::node $t \"w\" \"window\"]\n"
+          "let n [lk::node $t \"ed\" \"editor\"]\n"
+          "lk::set_root $t $w\n"
+          "lk::append_child $t $w $n\n"
+          "lk::prop $t $n focusable 1\n"
+          "lk::prop $t $n editor $e\n"
+          "lk::end_frame $ui\n"
+          "lk::editor_wrap $e character",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  r = NULL;
+  eval_ok(interp, "$ui", &r);
+  if (r) {
+    CHECK(lcl_opaque_get(r, "lk_ui", (void **)&ui) == LCL_OK);
+    lcl_ref_dec(r);
+  }
+  CHECK(ui != NULL);
+
+  if (ui) {
+    lk_rect rects[8];
+    lk_layout_cfg cfg;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 80;
+    cfg.viewport_h = 80;
+    cfg.state = lk_ui_state(ui);
+    lk_ui_set_text_backend(ui, lk_text_backend_stub());
+    CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+
+    /* Rows are [0,10) and [10,20].  Cursor on row 1: ROW_START goes
+     * to the break, LINE_START to the line start. */
+    check_int(interp, "lk::editor_command $e set_cursor 15", 1);
+    check_int(interp, "lk::editor_command $e move_row_start", 1);
+    check_int(interp, "lk::editor_cursor $e", 10);
+    check_int(interp, "lk::editor_command $e move_line_start", 1);
+    check_int(interp, "lk::editor_cursor $e", 0);
+
+    /* Cursor on row 0: ROW_END stops at the break byte (owned by the
+     * NEXT row), LINE_END goes to the line end. */
+    check_int(interp, "lk::editor_command $e set_cursor 5", 1);
+    check_int(interp, "lk::editor_command $e move_row_end", 1);
+    check_int(interp, "lk::editor_cursor $e", 10);
+    check_int(interp, "lk::editor_command $e set_cursor 5", 1);
+    check_int(interp, "lk::editor_command $e move_line_end", 1);
+    check_int(interp, "lk::editor_cursor $e", 20);
+
+    /* The optional "select" flag extends, exactly like other motion
+     * commands. */
+    check_int(interp, "lk::editor_command $e set_cursor 15", 1);
+    check_int(interp, "lk::editor_command $e move_row_start select", 1);
+    check_int(interp, "get [lk::editor_selection $e] 0", 10);
+    check_int(interp, "get [lk::editor_selection $e] 1", 15);
+  }
+
+  /* Malformed flag: the same hard error as the other motions; the
+   * unknown-command listing names the row commands. */
+  eval_expect_err(interp, "lk::editor_command $e move_row_end sideways",
+                  "\"select\" flag", NULL, NULL);
+  eval_expect_err(interp, "lk::editor_command $e frobnicate",
+                  "move_row_start", "move_row_end", NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3249,6 +3489,8 @@ int main(void) {
   test_doc_revision_string();
   test_doc_insert_delete();
   test_doc_mutation_errors();
+  test_doc_line_procs();
+  test_doc_char_col();
   test_doc_transact_groups();
   test_doc_transact_error_propagates();
   test_doc_subscribe_deltas();
@@ -3259,6 +3501,8 @@ int main(void) {
   test_editor_cursor_selection();
   test_editor_command_drives_doc();
   test_editor_command_errors();
+  test_editor_wrap_proc();
+  test_editor_row_commands();
   test_editor_set_spans();
   test_editor_set_spans_errors();
   test_editor_lifetime();

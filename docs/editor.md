@@ -657,13 +657,13 @@ ordinary panes — not one gigantic magical widget.
 
 | feature | lands as |
 |---|---|
-| text wrapping | visual-line cache between doc lines and screen lines (weft `editor.c` reference); viewport anchor already shaped for it (§9) |
+| text wrapping | **landed 2026-07-28** (docs/editor-wrap.md; W1 e02bf4e wrap engine + horizontal scroll, W2 bindings/example/docs) — pixel wrap through the text contract, wrap-mode enum defaulting to NONE, visual-row `LK_ED_MOVE_ROW_START/END`, byte-anchored viewport |
 | column/block selection | editor state + multi-rect selection render; no core change |
 | cursor blink | needs a time source; candidate `lk_ui_set_time_ms` when animation wants one too |
 | IME composition display | preedit events + underline; SDL backend stage (`SDL_SetTextInputArea` is already focus-driven) |
 | tree-sitter | span producer over the annot store; zero widget changes |
 | annotation persistence | `annot_persist.c` lift (1240 lines) after the store proves out |
-| search/goto/prompt UI | app-level: `text_input` + overlay + translators; weft `pane.c` superseded, not ported |
+| search/goto/prompt UI | app-level: `text_input` + overlay + translators; weft `pane.c` superseded, not ported (Ctrl+G goto-line is now running proof in `examples/editor-dsl.lcl`) |
 | multi-view cursor sync | views' document subscriptions adjust cursors on foreign deltas — protocol ships in stage A, policy later |
 | position markers (bias'd cursors) | generalize the annot store's anchors into a shared marker facility when a second client (search results) exists |
 | editor keybindings as data | command layer is the substrate; a binding table replaces the switch when Lcl-configurable keymaps arrive |

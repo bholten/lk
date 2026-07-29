@@ -472,9 +472,14 @@ All four stages of `docs/editor.md` landed (2026-07-26/27,
   DSL `editor` widget + `editor` prop key,
   `examples/editor-dsl.lcl` (editor in a split beside live status
   labels, annotation-driven styled spans, command buttons).
-- Deferred with landing spots (docs/editor.md §13): wrapping,
+- Deferred with landing spots (docs/editor.md §13): ~~wrapping~~
+  (landed 2026-07-28 — docs/editor-wrap.md: W1 wrap engine +
+  horizontal scroll, e02bf4e; W2 `lk::editor_wrap`, doc line/column
+  procs, example wrap + line:col + Ctrl+G goto modal),
   column selection, cursor blink, IME preedit, tree-sitter,
-  annotation persistence, search/goto UI, multi-view cursor sync,
+  annotation persistence, ~~search/goto UI~~ (goto-line demonstrated
+  app-level in `examples/editor-dsl.lcl`; search UI still open),
+  multi-view cursor sync,
   shared position markers, keybindings-as-data, the
   widget-registration protocol upgrade.
 - Note: item 6 above (per-character styled text) is now delivered
