@@ -100,6 +100,10 @@ typedef struct ed_geom {
   lk_rect sel_rects[ED_MAX_SEL_RECTS];
   lk_u32 sel_count;
   lk_u16 font_id, font_size;
+  const lk_text_backend *tb; /* backend this snapshot was built with
+                                (lk_editor_pos_at resolves against the
+                                last completed layout, backend and
+                                all) */
 } ed_geom;
 
 struct lk_editor {
@@ -169,6 +173,9 @@ struct lk_editor {
   lk_u32 span_count, span_cap;
   lk_revision span_rev;
   lk_u32 span_range_start, span_range_end;
+
+  /* interior presentation source (weft-surface S1); zeroed = none */
+  lk_presentation_source psrc;
 
   ed_geom geom;
 };
@@ -2899,6 +2906,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   e->geom.scroll_x = e->scroll_x;
   e->geom.font_id = e->font_id;
   e->geom.font_size = e->font_size;
+  e->geom.tb = cfg ? cfg->text : NULL;
 }
 
 /* ---- Render hook body (pure geometry, no backend) ---- */
@@ -3057,4 +3065,68 @@ int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
                                x - e->geom.rect.x + e->geom.scroll_x);
 
   return 1;
+}
+
+int lk_editor_pos_at(const lk_editor *e, lk_i32 x, lk_i32 y, lk_u32 *out_pos) {
+  if (!e || !out_pos || !e->geom.valid) {
+    return 0; /* before first layout / snapshot invalidated by an edit */
+  }
+
+  /* Outside the laid-out rect: no clamping (pinned contract). */
+  if (x < e->geom.rect.x || x >= e->geom.rect.x + e->geom.rect.w ||
+      y < e->geom.rect.y || y >= e->geom.rect.y + e->geom.rect.h) {
+    return 0;
+  }
+
+  return lk_editor_hit_pos(e, e->geom.tb, x, y, out_pos);
+}
+
+/* ---- Interior presentations (weft-surface S1) ---- */
+
+#define ED_PRES_HIT_CAP 8
+
+void lk_editor_set_presentation_source(lk_editor *e,
+                                       const lk_presentation_source *src) {
+  if (!e) {
+    return;
+  }
+
+  if (src) {
+    e->psrc = *src;
+  } else {
+    memset(&e->psrc, 0, sizeof(e->psrc));
+  }
+}
+
+int lk_editor_offer_presentations(lk_editor *e, lk_ui *ui, const lk_tree *t,
+                                  lk_ix n, lk_event *ev, lk_u32 pos) {
+  lk_presentation_hit hits[ED_PRES_HIT_CAP];
+  lk_u32 count;
+  lk_u32 i;
+  lk_u32 locus_kind;
+
+  if (!e || !e->psrc.query_at || !ui || !t) {
+    return 0;
+  }
+
+  count = e->psrc.query_at(e->psrc.ud, pos, hits, ED_PRES_HIT_CAP);
+
+  if (count == 0) {
+    return 0;
+  }
+
+  if (count > ED_PRES_HIT_CAP) {
+    count = ED_PRES_HIT_CAP;
+  }
+
+  /* Stamp the editor-owned locus words: the kind vocabulary and the
+   * hit position (the source filled annot id / range / revision). */
+  locus_kind = t->intern ? lk_intern_cid(t->intern, "editor-range") : 0;
+
+  for (i = 0; i < count; i++) {
+    hits[i].locus_kind = locus_kind;
+    hits[i].locus[3] = pos;
+  }
+
+  return lk_translate_presentations(ui, t, n, ev, hits, count);
 }

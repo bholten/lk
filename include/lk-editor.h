@@ -159,6 +159,49 @@ typedef struct lk_edit_span_snapshot {
 void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap);
 
 /**
+ ** Interior presentations — the editor offering (weft-surface track
+ ** S1; docs/weft-surface.md §1.5)
+ **/
+
+/* Install (copy by value) the presentation source consulted on
+ * POINTER_DOWN.  NULL or a zeroed source clears.  The source's ud is
+ * borrowed: the provider (e.g. the annot store behind
+ * lk_annot_presentation_source) must outlive the editor's use of it.
+ *
+ * On POINTER_DOWN (any button), before its normal behavior, the
+ * widget maps (x, y) -> byte position, queries the source, stamps
+ * each hit's locus (below), and offers the candidates via
+ * lk_translate_presentations.  A fired translation consumes the event
+ * with NO focus change, NO cursor move, NO selection mutation, and NO
+ * pointer capture.  No source, no candidates, or no matching
+ * translator leaves the editor's behavior unchanged.
+ *
+ * "editor-range" locus packing (lk_presentation_hit.locus, with
+ * locus_kind = the interned string "editor-range"):
+ *   locus[0] = annotation id        (source-filled)
+ *   locus[1] = range start byte     (source-filled)
+ *   locus[2] = range end byte       (source-filled)
+ *   locus[3] = hit byte position    (editor-filled)
+ *   locus[4] = document revision hi (source-filled)
+ *   locus[5] = document revision lo (source-filled)
+ * The revision pair is the staleness evidence: a handler running
+ * after further edits can compare it against the document's current
+ * revision. */
+void lk_editor_set_presentation_source(lk_editor *e,
+                                       const lk_presentation_source *src);
+
+/* Map window coordinates to a document byte position (pinned
+ * contract, docs/weft-surface.md §1.5): (x, y) are in the same window
+ * space pointer events use; the query resolves against the editor's
+ * LAST COMPLETED layout snapshot (the transient geometry block, using
+ * the text backend that layout ran with); returns 0 before the first
+ * layout (or after an edit invalidated the snapshot) and when (x, y)
+ * is outside the editor's laid-out rect — NO clamping; callers who
+ * want nearest-position semantics use the widget's own click path.
+ * Returns 1 and writes *out_pos otherwise. */
+int lk_editor_pos_at(const lk_editor *e, lk_i32 x, lk_i32 y, lk_u32 *out_pos);
+
+/**
  ** Resource integration (docs/editor.md section 5)
  **/
 
@@ -274,6 +317,15 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
  * valid geometry exists (event should bubble). */
 int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
                       lk_i32 y, lk_u32 *out_pos);
+
+/* Offer interior presentation candidates at byte position pos to the
+ * translator matcher: queries the installed source (up to 8 hits),
+ * stamps locus_kind = interned "editor-range" and the hit position
+ * into each, and calls lk_translate_presentations.  Returns 1 when a
+ * translation fired (the widget must consume the event untouched),
+ * 0 otherwise (no source, no candidates, or no match). */
+int lk_editor_offer_presentations(lk_editor *e, lk_ui *ui, const lk_tree *t,
+                                  lk_ix n, lk_event *ev, lk_u32 pos);
 
 /* Drag flag (pointer-capture selection drags). */
 void lk_editor_set_drag(lk_editor *e, int on);

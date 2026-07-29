@@ -64,6 +64,13 @@ typedef struct lk_annot_record {
   char **values;
   lk_u32 meta_count;
   lk_revision doc_rev; /* store revision when the record was created */
+  lk_u32 pres_type;    /* interned ptype, 0 = no presentation.  The
+                          store has no intern table: type ids are
+                          produced by callers who do (bindings /
+                          editor); the store just carries them. */
+  lk_value pres_value; /* the typed presentation value (any lk_value,
+                          incl. UIV_RESOURCE); meaningful only when
+                          pres_type != 0 */
 } lk_annot_record;
 
 typedef enum lk_layer_state {
@@ -76,6 +83,9 @@ typedef struct lk_annot_layer {
   lk_layer_state state;
   lk_u32 version; /* bumped by clear/clear_layer/set_dirty (weft:
                      an ephemeral session counter, lk_u32 here) */
+  lk_i32 priority; /* presentation precedence, default 0; higher wins
+                      (lk_annot_presentations_at orders by priority
+                      DESC before specificity) */
 } lk_annot_layer;
 
 /* Query result: annotation ids.  init zeroes the struct; the array
@@ -125,6 +135,14 @@ typedef struct lk_annot_store {
   lk_document *doc; /* attached document, NULL when detached */
   lk_u32 sub_id;
   lk_revision doc_rev; /* follows delta->after */
+
+  /* Optional presentation-value release hook (installed by the
+   * bindings): fires exactly once whenever a presentation value
+   * detaches — replaced by a new set_present, record removed (incl.
+   * the delete-transform sweep), layer cleared, store cleared, store
+   * destroyed.  The store owns no value semantics beyond this. */
+  void (*pres_release)(void *ud, lk_value v);
+  void *pres_release_ud;
 } lk_annot_store;
 
 /**
@@ -205,6 +223,44 @@ void lk_annot_in_range(const lk_annot_store *s, lk_u32 start, lk_u32 end,
 /* All annotations in a layer. */
 void lk_annot_by_layer(const lk_annot_store *s, const char *layer,
                        lk_annot_query *out);
+
+/**
+ ** Range presentations (weft-surface track, S1; docs/weft-surface.md
+ ** §1.4).  The store carries presentations and answers query-all;
+ ** editor-range locus semantics live in the editor (the source
+ ** adapter's hits leave locus_kind 0 and the hit position unset — the
+ ** offering editor fills both).
+ **/
+
+/* Attach (or replace) the presentation on record id.  type_id is an
+ * interned ptype produced by a caller with an intern table (0 is
+ * rejected).  Replacing fires the release hook for the old value.
+ * Returns 1 on success, 0 when the record is missing or type_id is 0. */
+int lk_annot_set_present(lk_annot_store *s, lk_u32 id, lk_u32 type_id,
+                         lk_value value);
+
+/* Install the per-store release hook (see the struct comment).  fn
+ * NULL uninstalls. */
+void lk_annot_set_present_release(lk_annot_store *s,
+                                  void (*fn)(void *ud, lk_value v), void *ud);
+
+/* ALL presentation-carrying annotations containing pos, precedence-
+ * ordered: layer priority DESC, then smaller range, then insertion
+ * serial (the record id — stable, monotonic).  Fills type_id/value;
+ * locus_kind is left 0 and locus is filled with what the store knows:
+ * {annot id, start, end, 0, rev.hi, rev.lo}.  Writes at most cap hits;
+ * returns the number written. */
+lk_u32 lk_annot_presentations_at(const lk_annot_store *s, lk_u32 pos,
+                                 lk_presentation_hit *out, lk_u32 cap);
+
+/* Set a layer's presentation precedence (default 0; higher wins).
+ * Auto-registers the layer, like lk_annot_add. */
+void lk_annot_layer_set_priority(lk_annot_store *s, const char *layer,
+                                 lk_i32 priority);
+
+/* Adapter to the generic interface (lk.h): ud is the store itself
+ * (borrowed — the editor must not outlive it). */
+lk_presentation_source lk_annot_presentation_source(lk_annot_store *s);
 
 /**
  ** Layer management

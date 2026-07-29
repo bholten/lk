@@ -1,12 +1,13 @@
 /*
  * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
  *
- * Exposes 65 procs in the "lk" namespace (59 core + 6 SDL) for
+ * Exposes 76 procs in the "lk" namespace (70 core + 6 SDL) for
  * building UI trees, managing frames, commands, translators, state,
- * focus, overlays, interning, windows/fonts, and the editor track
- * (documents, edit histories, editors, annotation stores).  SDL procs
- * (window_* and register_font) are conditionally compiled when
- * LK_HAVE_SDL is set.
+ * focus, overlays, interning, windows/fonts, the editor track
+ * (documents, edit histories, editors, annotation stores), and range
+ * presentations (weft-surface S1: annot_present, annot_layer_priority,
+ * editor_presentations, editor_pos_at).  SDL procs (window_* and
+ * register_font) are conditionally compiled when LK_HAVE_SDL is set.
  *
  * C89 (matches lk + lcl).
  */
@@ -209,6 +210,13 @@ static const str_enum mod_table[] = {
     {NULL,    0            }
 };
 
+static const str_enum button_table[] = {
+    {"primary",   LK_POINTER_BUTTON_PRIMARY  },
+    {"middle",    LK_POINTER_BUTTON_MIDDLE   },
+    {"secondary", LK_POINTER_BUTTON_SECONDARY},
+    {NULL,        0                          }
+};
+
 static int lookup_enum(const str_enum *table, const char *name, int *out) {
   const str_enum *e;
 
@@ -309,11 +317,34 @@ struct lcl_lk_editor {
   lcl_value *ui_val;   /* retained */
   lcl_value *doc_val;  /* retained */
   lcl_value *hist_val; /* retained, NULL when no history was given */
+  lcl_value *annot_val; /* retained annot-store value while its
+                           presentation source is installed
+                           (lk::editor_presentations), NULL before */
 };
 
 struct lcl_lk_annot {
   lk_annot_store *store;
   lcl_value *doc_val; /* retained once attached, NULL before */
+  lk_ui *pres_ui;     /* ui whose resource table holds this store's
+                         presentation values; set by the first
+                         lk::annot_present, NULL before */
+  lcl_value *ui_val;  /* retained alongside pres_ui */
+};
+
+/* ---- "lcl-value" resources ----
+ *
+ * lk::annot_present wraps ANY Lcl value as a presentation value: the
+ * value is retained in a box registered in the ui's resource table
+ * under this type, and the annotation carries the UIV_RESOURCE ref.
+ * command_to_dict unwraps refs of this type back to the retained Lcl
+ * value, so handlers receive dicts/closures/whatever intact.  The
+ * store's release hook releases the registration + retain when the
+ * presentation detaches. */
+
+static const lk_resource_type g_lcl_value_type = {"lcl-value", NULL};
+
+struct lcl_pres_box {
+  lcl_value *val; /* retained */
 };
 
 /* ---- Live-ui registry ----
@@ -442,6 +473,10 @@ static void editor_finalizer(void *ptr) {
     lcl_ref_dec(ew->hist_val);
   }
 
+  if (ew->annot_val) {
+    lcl_ref_dec(ew->annot_val);
+  }
+
   lcl_ref_dec(ew->doc_val);
   lcl_ref_dec(ew->ui_val);
   free(ew);
@@ -450,10 +485,16 @@ static void editor_finalizer(void *ptr) {
 static void annot_finalizer(void *ptr) {
   struct lcl_lk_annot *aw = (struct lcl_lk_annot *)ptr;
 
+  /* Destroy first: the release hook fires for every live
+   * presentation while aw->pres_ui is still retained/checkable. */
   lk_annot_store_destroy(aw->store); /* unsubscribes if attached */
 
   if (aw->doc_val) {
     lcl_ref_dec(aw->doc_val);
+  }
+
+  if (aw->ui_val) {
+    lcl_ref_dec(aw->ui_val);
   }
 
   free(aw);
@@ -928,10 +969,14 @@ static int c_lk_present(lcl_interp *interp, int argc, lcl_value **argv,
  * ============================================================================
  */
 
-/* lk::add_translator [ui event_type ptype kind keycode mods cmd_name]
+/* lk::add_translator [ui event_type ptype kind keycode mods cmd_name
+ *                     ?button?]
  * All string fields: "" means any/wildcard.
  * keycode: "" or letter/name (e.g. "s", "f", "return").
- * mods: "" or "+"-joined modifiers (e.g. "ctrl", "ctrl+shift"). */
+ * mods: "" or "+"-joined modifiers (e.g. "ctrl", "ctrl+shift").
+ * button (optional 8th arg): "primary" | "middle" | "secondary", or
+ * "" / "0" for any.  When set, only pointer events with that button
+ * and exact mods match. */
 static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
                                lcl_value **out) {
   lk_ui *ui;
@@ -945,11 +990,12 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
   lk_u16 node_kind = 0;
   lk_u16 keycode = 0;
   lk_u8 mods = 0;
+  lk_u8 button = 0;
   lk_u32 ptype = 0;
   lk_u32 cmd_name;
 
-  if (argc != 7) {
-    lcl_set_error(interp, "lk::add_translator: expected 7 arguments");
+  if (argc != 7 && argc != 8) {
+    lcl_set_error(interp, "lk::add_translator: expected 7 or 8 arguments");
 
     return LCL_RC_ERR;
   }
@@ -1012,8 +1058,27 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
     }
   }
 
+  /* button: absent, "" or "0" means 0 (any) */
+  if (argc == 8) {
+    const char *btn_str = lcl_value_to_string(argv[7]);
+
+    if (btn_str[0] != '\0' && strcmp(btn_str, "0") != 0) {
+      int btn_val;
+
+      if (!lookup_enum(button_table, btn_str, &btn_val)) {
+        lcl_set_error(interp,
+                      "lk::add_translator: unknown button (known: primary, "
+                      "middle, secondary)");
+        return LCL_RC_ERR;
+      }
+
+      button = (lk_u8)btn_val;
+    }
+  }
+
   cmd_name = lk_intern_cid(ui->intern, cmd_str);
-  lk_ui_add_translator(ui, ev_type, ptype, node_kind, keycode, mods, cmd_name);
+  lk_ui_add_translator(ui, ev_type, ptype, node_kind, keycode, mods, button,
+                       cmd_name);
 
   *out = lcl_string_new("");
 
@@ -1023,6 +1088,9 @@ static int c_lk_add_translator(lcl_interp *interp, int argc, lcl_value **argv,
 /* Helper: convert lk_command to lcl dict */
 /* ---- Marshal lk_value to Lcl value (caller owns ref) ---- */
 
+/* Context-free marshal: UIV_TEXT and non-lcl-value resources become
+ * placeholders (command args go through cmd_value_to_lcl below, which
+ * has the ui for arena + resource-table access). */
 static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
   switch (v->tag) {
   case UIV_I32: return lcl_int_new((long)v->as.i);
@@ -1031,15 +1099,127 @@ static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
     const char *s = lk_intern_cstr(intern, v->as.str_id);
     return lcl_string_new(s ? s : "");
   }
-  /* UIV_RESOURCE is not exposed to scripts until editor-track stage D;
-   * marshal a placeholder so the value stays inspectable. */
   case UIV_RESOURCE: return lcl_string_new("<resource>");
+  case UIV_TEXT: return lcl_string_new("<text>");
   default: return lcl_string_new("");
   }
 }
 
-static lcl_value *command_to_dict(const lk_command *cmd,
-                                  const lk_intern *intern) {
+/* Command-scope marshal: UIV_TEXT resolves through the right arena
+ * (queue or log copy); UIV_RESOURCE refs of the lcl-value type unwrap
+ * to the retained Lcl value itself. */
+static lcl_value *cmd_value_to_lcl(lk_ui *ui, const lk_command *cmd,
+                                   const lk_value *v) {
+  switch (v->tag) {
+  case UIV_TEXT: {
+    lk_str s = lk_command_text(ui, cmd, *v);
+    char *buf;
+    lcl_value *r;
+
+    if (!s.ptr) {
+      return lcl_string_new("");
+    }
+
+    buf = (char *)malloc((size_t)s.len + 1);
+
+    if (!buf) {
+      return lcl_string_new("");
+    }
+
+    memcpy(buf, s.ptr, s.len);
+    buf[s.len] = '\0';
+    r = lcl_string_new(buf);
+    free(buf);
+
+    return r;
+  }
+  case UIV_RESOURCE: {
+    struct lcl_pres_box *box = (struct lcl_pres_box *)lk_resource_get(
+        ui->resources, lk_v_resource_ref(*v), &g_lcl_value_type);
+
+    if (box && box->val) {
+      return lcl_ref_inc(box->val);
+    }
+
+    return lcl_string_new("<resource>");
+  }
+  default: return lk_value_to_lcl(v, ui->intern);
+  }
+}
+
+/* The hit sub-dict: #{ptype <name> value <unwrapped> locus_kind
+ * <name> locus <...>}.  For locus_kind "editor-range" the locus is
+ * decoded into #{annot_id start end pos rev "hi:lo"}; any other kind
+ * gets the raw 6-int list. */
+static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
+  const lk_presentation_hit *hit = &cmd->hit;
+  lcl_value *dict = lcl_dict_new();
+  lcl_value *v;
+  const char *pt = lk_intern_cstr(ui->intern, hit->type_id);
+  const char *lk_name =
+      hit->locus_kind ? lk_intern_cstr(ui->intern, hit->locus_kind) : NULL;
+
+  v = lcl_string_new(pt ? pt : "");
+  lcl_dict_put(&dict, "ptype", v);
+  lcl_ref_dec(v);
+
+  v = cmd_value_to_lcl(ui, cmd, &hit->value);
+  lcl_dict_put(&dict, "value", v);
+  lcl_ref_dec(v);
+
+  v = lcl_string_new(lk_name ? lk_name : "");
+  lcl_dict_put(&dict, "locus_kind", v);
+  lcl_ref_dec(v);
+
+  if (lk_name && strcmp(lk_name, "editor-range") == 0) {
+    lcl_value *locus = lcl_dict_new();
+    char rev[32];
+
+    v = lcl_int_new((long)hit->locus[0]);
+    lcl_dict_put(&locus, "annot_id", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)hit->locus[1]);
+    lcl_dict_put(&locus, "start", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)hit->locus[2]);
+    lcl_dict_put(&locus, "end", v);
+    lcl_ref_dec(v);
+
+    v = lcl_int_new((long)hit->locus[3]);
+    lcl_dict_put(&locus, "pos", v);
+    lcl_ref_dec(v);
+
+    /* Same "hi:lo" shape as lk::doc_revision, so scripts can compare
+     * for staleness with a string equality. */
+    sprintf(rev, "%lu:%lu", (unsigned long)hit->locus[4],
+            (unsigned long)hit->locus[5]);
+    v = lcl_string_new(rev);
+    lcl_dict_put(&locus, "rev", v);
+    lcl_ref_dec(v);
+
+    lcl_dict_put(&dict, "locus", locus);
+    lcl_ref_dec(locus);
+  } else {
+    lcl_value *locus = lcl_list_new();
+    int i;
+
+    for (i = 0; i < 6; i++) {
+      v = lcl_int_new((long)hit->locus[i]);
+      lcl_list_push(&locus, v);
+      lcl_ref_dec(v);
+    }
+
+    lcl_dict_put(&dict, "locus", locus);
+    lcl_ref_dec(locus);
+  }
+
+  return dict;
+}
+
+static lcl_value *command_to_dict(const lk_command *cmd, lk_ui *ui) {
+  const lk_intern *intern = ui->intern;
   lcl_value *dict = lcl_dict_new();
   lcl_value *v;
   const char *name_str;
@@ -1055,19 +1235,7 @@ static lcl_value *command_to_dict(const lk_command *cmd,
   {
     lcl_value *args_list = lcl_list_new();
     for (i = 0; i < cmd->arg_count; i++) {
-      const lk_value *arg = &cmd->args[i];
-      lcl_value *av = NULL;
-      switch (arg->tag) {
-      case UIV_I32: av = lcl_int_new((long)arg->as.i); break;
-      case UIV_STR: {
-        const char *s = lk_intern_cstr(intern, arg->as.str_id);
-        av = lcl_string_new(s ? s : "");
-        break;
-      }
-      case UIV_BOOL: av = lcl_int_new((long)arg->as.b); break;
-      case UIV_RESOURCE: av = lcl_string_new("<resource>"); break;
-      default: av = lcl_string_new(""); break;
-      }
+      lcl_value *av = cmd_value_to_lcl(ui, cmd, &cmd->args[i]);
 
       lcl_list_push(&args_list, av);
       lcl_ref_dec(av);
@@ -1097,6 +1265,14 @@ static lcl_value *command_to_dict(const lk_command *cmd,
   lcl_dict_put(&dict, "source_value", v);
   lcl_ref_dec(v);
 
+  /* hit — only when the command came from an interior presentation
+   * (scripts test with `has?`). */
+  if (cmd->hit.type_id != 0) {
+    v = hit_to_dict(ui, cmd);
+    lcl_dict_put(&dict, "hit", v);
+    lcl_ref_dec(v);
+  }
+
   return dict;
 }
 
@@ -1115,7 +1291,7 @@ static void lcl_cmd_bridge(const lk_command *cmd, void *ud) {
   lcl_value *result = NULL;
   const lk_tree *cur;
 
-  dict = command_to_dict(cmd, ctx->ui->intern);
+  dict = command_to_dict(cmd, ctx->ui);
 
   /* Add source_node_id string for convenience */
   cur = lk_ui_tree(ctx->ui);
@@ -1173,7 +1349,7 @@ static int c_lk_commands(lcl_interp *interp, int argc, lcl_value **argv,
   list = lcl_list_new();
 
   for (i = 0; i < q->count; i++) {
-    lcl_value *d = command_to_dict(&q->cmds[i], ui->intern);
+    lcl_value *d = command_to_dict(&q->cmds[i], ui);
     lcl_list_push(&list, d);
     lcl_ref_dec(d);
   }
@@ -1231,7 +1407,7 @@ static int c_lk_command_log(lcl_interp *interp, int argc, lcl_value **argv,
   list = lcl_list_new();
 
   for (i = 0; i < log_count; i++) {
-    lcl_value *d = command_to_dict(&log[i], ui->intern);
+    lcl_value *d = command_to_dict(&log[i], ui);
     lcl_list_push(&list, d);
     lcl_ref_dec(d);
   }
@@ -1411,6 +1587,7 @@ static int c_lk_state_get(lcl_interp *interp, int argc, lcl_value **argv,
     break;
   }
   case UIV_RESOURCE: *out = lcl_string_new("<resource>"); break;
+  case UIV_TEXT: *out = lcl_string_new("<text>"); break; /* command scope only */
   default: *out = lcl_string_new(""); break;
   }
 
@@ -3512,6 +3689,7 @@ static int c_lk_editor_new(lcl_interp *interp, int argc, lcl_value **argv,
   ew->ui_val = lcl_ref_inc(argv[0]);
   ew->doc_val = lcl_ref_inc(argv[1]);
   ew->hist_val = hw ? lcl_ref_inc(argv[2]) : NULL;
+  ew->annot_val = NULL;
 
   *out = lcl_opaque_new(ew, LK_EDITOR_TYPE, editor_finalizer);
 
@@ -4150,6 +4328,8 @@ static int c_lk_annot_store_new(lcl_interp *interp, int argc, lcl_value **argv,
 
   aw->store = store;
   aw->doc_val = NULL;
+  aw->pres_ui = NULL;
+  aw->ui_val = NULL;
 
   *out = lcl_opaque_new(aw, LK_ANNOT_TYPE, annot_finalizer);
 
@@ -4594,6 +4774,267 @@ static int c_lk_annot_layer_register(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* lk::annot_layer_priority [store, layer, priority] -> ""
+ * Presentation precedence for a layer (default 0; higher wins).
+ * Auto-registers the layer. */
+static int c_lk_annot_layer_priority(lcl_interp *interp, int argc,
+                                     lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long prio;
+
+  if (argc != 3) {
+    lcl_set_error(interp,
+                  "lk::annot_layer_priority: expected 3 arguments "
+                  "(store, layer, priority)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[2], &prio) != LCL_OK) {
+    lcl_set_error(interp,
+                  "lk::annot_layer_priority: priority must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  lk_annot_layer_set_priority(aw->store, lcl_value_to_string(argv[1]),
+                              (lk_i32)prio);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* ============================================================================
+ * Range presentations (weft-surface track, S1)
+ * ============================================================================
+ */
+
+/* The store's release hook: fires when a presentation value detaches.
+ * For lcl-value resources this releases the registration and the Lcl
+ * retain; a ui that was already destroyed explicitly is skipped (the
+ * table died with it — same live_ui discipline as editors). */
+static void lcl_annot_pres_release(void *ud, lk_value v) {
+  struct lcl_lk_annot *aw = (struct lcl_lk_annot *)ud;
+  lk_resource_ref ref = lk_v_resource_ref(v);
+  struct lcl_pres_box *box;
+
+  if (ref.id == 0 || !aw->pres_ui || !live_ui_check(aw->pres_ui)) {
+    return;
+  }
+
+  box = (struct lcl_pres_box *)lk_resource_get(lk_ui_resources(aw->pres_ui),
+                                               ref, &g_lcl_value_type);
+
+  if (!box) {
+    return;
+  }
+
+  lk_resource_release(lk_ui_resources(aw->pres_ui), ref);
+  lcl_ref_dec(box->val);
+  free(box);
+}
+
+/* lk::annot_present [ui, store, id, ptype, value] -> ""
+ *
+ * Attaches a presentation to annotation id: ptype is interned in the
+ * ui's table; value may be ANY Lcl value (dicts, closures, ...) — it
+ * is retained and registered in the ui's resource table under the
+ * "lcl-value" type, and the record carries the UIV_RESOURCE ref.
+ * Handlers receive the value back intact (command_to_dict unwraps).
+ * A store's presentations are bound to ONE ui (the first call's);
+ * replacing / removing / clearing / destroying releases the retain
+ * through the store's release hook, installed here on first use. */
+static int c_lk_annot_present(lcl_interp *interp, int argc, lcl_value **argv,
+                              lcl_value **out) {
+  lk_ui *ui = NULL;
+  struct lcl_lk_annot *aw;
+  long id;
+  const char *ptype_str;
+  struct lcl_pres_box *box;
+  lk_resource_ref ref;
+  lk_u32 type_id;
+
+  if (argc != 5) {
+    lcl_set_error(interp,
+                  "lk::annot_present: expected 5 arguments "
+                  "(ui, store, id, ptype, value)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "lk::annot_present: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[1]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (aw->pres_ui && aw->pres_ui != ui) {
+    lcl_set_error(interp,
+                  "lk::annot_present: this store's presentations are bound "
+                  "to a different ui");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[2], &id) != LCL_OK || id <= 0) {
+    lcl_set_error(interp, "lk::annot_present: id must be a positive integer");
+
+    return LCL_RC_ERR;
+  }
+
+  ptype_str = lcl_value_to_string(argv[3]);
+
+  if (ptype_str[0] == '\0') {
+    lcl_set_error(interp, "lk::annot_present: ptype must be non-empty");
+
+    return LCL_RC_ERR;
+  }
+
+  if (!lk_annot_get(aw->store, (lk_u32)id)) {
+    lcl_set_error(interp, "lk::annot_present: no such annotation");
+
+    return LCL_RC_ERR;
+  }
+
+  box = (struct lcl_pres_box *)malloc(sizeof(*box));
+
+  if (!box) {
+    lcl_set_error(interp, "lk::annot_present: allocation failed");
+
+    return LCL_RC_ERR;
+  }
+
+  box->val = lcl_ref_inc(argv[4]);
+  ref = lk_resource_register(lk_ui_resources(ui), &g_lcl_value_type, box,
+                             "lcl-value");
+
+  if (ref.id == 0) {
+    lcl_ref_dec(box->val);
+    free(box);
+    lcl_set_error(interp, "lk::annot_present: resource registration failed");
+
+    return LCL_RC_ERR;
+  }
+
+  /* First use binds the store to this ui and installs the hook. */
+  if (!aw->pres_ui) {
+    aw->pres_ui = ui;
+    aw->ui_val = lcl_ref_inc(argv[0]);
+    lk_annot_set_present_release(aw->store, lcl_annot_pres_release, aw);
+  }
+
+  type_id = lk_intern_cid(ui->intern, ptype_str);
+
+  if (!lk_annot_set_present(aw->store, (lk_u32)id, type_id,
+                            lk_v_resource(ref))) {
+    lk_resource_release(lk_ui_resources(ui), ref);
+    lcl_ref_dec(box->val);
+    free(box);
+    lcl_set_error(interp, "lk::annot_present: set_present failed");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_pos_at [editor, x, y] -> byte position, or -1 when the
+ * point is outside the editor's laid-out rect or no layout snapshot
+ * exists (docs/weft-surface.md section 1.5 pinned contract). */
+static int c_lk_editor_pos_at(lcl_interp *interp, int argc, lcl_value **argv,
+                              lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  long x;
+  long y;
+  lk_u32 pos = 0;
+
+  if (argc != 3) {
+    lcl_set_error(interp,
+                  "lk::editor_pos_at: expected 3 arguments (editor, x, y)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &x) != LCL_OK ||
+      lcl_value_to_int(argv[2], &y) != LCL_OK) {
+    lcl_set_error(interp, "lk::editor_pos_at: x and y must be integers");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lk_editor_pos_at(ew->ed, (lk_i32)x, (lk_i32)y, &pos)) {
+    *out = lcl_int_new((long)pos);
+  } else {
+    *out = lcl_int_new(-1);
+  }
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_presentations [editor, store] -> ""
+ * Installs the store's presentation source on the editor (the annot
+ * adapter).  The editor wrapper retains the store value so the source
+ * can never dangle. */
+static int c_lk_editor_presentations(lcl_interp *interp, int argc,
+                                     lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  struct lcl_lk_annot *aw;
+  lk_presentation_source src;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::editor_presentations: expected 2 arguments "
+                  "(editor, store)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[1]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  src = lk_annot_presentation_source(aw->store);
+  lk_editor_set_presentation_source(ew->ed, &src);
+
+  if (ew->annot_val) {
+    lcl_ref_dec(ew->annot_val);
+  }
+
+  ew->annot_val = lcl_ref_inc(argv[1]);
+
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
 /* ============================================================================
  * Registration
  * ============================================================================
@@ -4744,6 +5185,18 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def(ns, "annot_layer_register",
              lcl_c_proc_new("lk::annot_layer_register",
                             c_lk_annot_layer_register));
+  lcl_ns_def(ns, "annot_layer_priority",
+             lcl_c_proc_new("lk::annot_layer_priority",
+                            c_lk_annot_layer_priority));
+
+  /* Range presentations (weft-surface S1) */
+  lcl_ns_def(ns, "annot_present",
+             lcl_c_proc_new("lk::annot_present", c_lk_annot_present));
+  lcl_ns_def(ns, "editor_pos_at",
+             lcl_c_proc_new("lk::editor_pos_at", c_lk_editor_pos_at));
+  lcl_ns_def(ns, "editor_presentations",
+             lcl_c_proc_new("lk::editor_presentations",
+                            c_lk_editor_presentations));
 
 #ifdef LK_HAVE_SDL
   /* SDL Window */

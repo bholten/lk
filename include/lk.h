@@ -200,7 +200,12 @@ typedef enum lk_value_tag {
   UIV_BOOL,
   UIV_I32,
   UIV_STR,
-  UIV_RESOURCE /* typed resource reference — see lk_resource_ref */
+  UIV_RESOURCE, /* typed resource reference — see lk_resource_ref */
+  UIV_TEXT /* transient text in the command queue's dispatch arena
+              (docs/weft-surface.md §1.2).  Command/hit scope ONLY —
+              never valid in trees or retained state.  Valid from
+              emission until lk_ui_clear_commands; the command log
+              copies the bytes into its own arena at record time. */
 } lk_value_tag;
 
 typedef struct lk_value {
@@ -214,6 +219,11 @@ typedef struct lk_value {
     } res; /* resource reference (UIV_RESOURCE); no pointer in the
               value — resolution and type checking go through the
               lk_resources table (docs/editor.md §5) */
+    struct {
+      lk_u32 off, len;
+    } text; /* UIV_TEXT: slice into the owning command queue's byte
+               arena (or the command log's arena for logged
+               commands).  Resolve via lk_command_arg_text. */
   } as;
 } lk_value;
 
@@ -260,6 +270,32 @@ typedef struct lk_presentation {
   lk_u8 pvalue_count;                 /* number of valid slots in pvalues */
   lk_value pvalues[LK_PRES_MAX_ARGS]; /* semantic value(s) */
 } lk_presentation;
+
+/**
+ * Interior presentations (docs/weft-surface.md §1) — sub-node
+ * presentation candidates resolved at a gesture locus and offered to
+ * the one translator matcher.  A hit carries a presentation type, a
+ * typed application value, and a widget-specific immutable locus
+ * snapshot.  Precedence travels with discovery order, not in the hit.
+ **/
+
+typedef struct lk_presentation_hit {
+  lk_u32 type_id;    /* interned ptype — vocabulary is bounded */
+  lk_value value;    /* the typed application value */
+  lk_u32 locus_kind; /* interned, e.g. "editor-range" (0 = none) */
+  lk_u32 locus[6];   /* immutable snapshot, packed by the discovering
+                        widget.  For "editor-range" the packing is
+                        documented in lk-editor.h. */
+} lk_presentation_hit;
+
+/* A source of interior presentation candidates at a position.  The
+ * widget owns nothing here; ud is borrowed.  query_at fills out with
+ * up to cap hits in precedence order and returns the number written. */
+typedef struct lk_presentation_source {
+  void *ud;
+  lk_u32 (*query_at)(void *ud, lk_u32 pos, lk_presentation_hit *out,
+                     lk_u32 cap);
+} lk_presentation_source;
 
 /**
  * Tag — attaches a named tag to a node for style matching.
@@ -529,6 +565,18 @@ typedef enum lk_event_phase {
 #define LK_MOD_ALT 0x04u
 #define LK_MOD_GUI 0x08u
 
+/* lk-owned pointer button identity carried in lk_event.data.pointer.
+ * button and matched by translators.  Backends map their own values
+ * in (the SDL backend maps left/middle/right; anything else becomes
+ * ANY).  0 doubles as "unspecified" on synthetic events and as the
+ * translator wildcard. */
+typedef enum lk_pointer_button {
+  LK_POINTER_BUTTON_ANY = 0,
+  LK_POINTER_BUTTON_PRIMARY,
+  LK_POINTER_BUTTON_MIDDLE,
+  LK_POINTER_BUTTON_SECONDARY
+} lk_pointer_button;
+
 typedef enum lk_keycode {
   LKK_UNKNOWN = 0,
   LKK_TAB,
@@ -609,12 +657,22 @@ typedef struct lk_command {
   lk_value source_value; /* event-carried value (e.g. new text for
                           * value_changed); UIV_NONE for events with
                           * no intrinsic value. */
+  lk_presentation_hit hit; /* the interior-presentation hit that
+                            * produced this command; all-zero when the
+                            * command did not come from an interior
+                            * presentation (node presentations,
+                            * keybindings). */
 } lk_command;
 
 typedef struct lk_command_queue {
   lk_command *cmds;
   lk_u32 count;
   lk_u32 cap;
+  char *bytes; /* dispatch arena for UIV_TEXT args (render-list byte-
+                  arena pattern): the queue OWNS these bytes.  Reset
+                  (capacity kept) by lk_ui_clear_commands. */
+  lk_u32 bytes_count;
+  lk_u32 bytes_cap;
 } lk_command_queue;
 
 typedef void (*lk_command_handler_fn)(const lk_command *cmd, void *ud);
@@ -630,7 +688,12 @@ typedef struct lk_translator {
   lk_u32 ptype;        /* presentation type to match (0 = any) */
   lk_u16 node_kind;    /* lk_kind to match (0 = any) */
   lk_u16 keycode;      /* lk_keycode to match (0 = any) */
-  lk_u8 mods;          /* LK_MOD_* bits; exact match when keycode != 0 */
+  lk_u8 mods;          /* LK_MOD_* bits; exact match when keycode != 0
+                          or button != 0 */
+  lk_u8 button;        /* lk_pointer_button to match (0 = any).  When
+                          set, only pointer events with that exact
+                          button AND exact mods match — the keycode
+                          discipline extended. */
   lk_u32 command_name; /* interned command name to emit */
 } lk_translator;
 
@@ -725,10 +788,16 @@ typedef struct lk_ui {
   lk_command_handler_fn cmd_handler;
   void *cmd_handler_ud;
 
-  /* Command log (append-only, cleared explicitly) */
+  /* Command log (append-only, cleared explicitly).  The log outlives
+   * lk_ui_clear_commands, so UIV_TEXT args are copied into the log's
+   * OWN arena at record time (offsets in logged commands point into
+   * cmd_log_bytes, never into the queue arena). */
   lk_command *cmd_log;
   lk_u32 cmd_log_count;
   lk_u32 cmd_log_cap;
+  char *cmd_log_bytes;
+  lk_u32 cmd_log_bytes_count;
+  lk_u32 cmd_log_bytes_cap;
 
   /* Style system */
   struct lk_theme *theme;
@@ -1201,16 +1270,34 @@ lk_node_id lk_capture_current(const lk_ui *ui);
 
 void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
                           lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
-                          lk_u32 command_name);
+                          lk_u8 button, lk_u32 command_name);
 void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
                             lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
-                            const char *command_name);
+                            lk_u8 button, const char *command_name);
 void lk_ui_clear_translators(lk_ui *ui);
 
 void lk_ui_set_command_handler(lk_ui *ui, lk_command_handler_fn fn, void *ud);
 
 const lk_command_queue *lk_ui_commands(const lk_ui *ui);
+
+/* Reset the queue: count and the UIV_TEXT dispatch arena (capacity
+ * kept).  Any UIV_TEXT value referencing the queue arena dies here;
+ * logged copies live on in the log's own arena. */
 void lk_ui_clear_commands(lk_ui *ui);
+
+/* Copy len bytes into the command queue's dispatch arena and return a
+ * UIV_TEXT value referencing them (valid until lk_ui_clear_commands).
+ * Returns a UIV_NONE value on allocation failure or NULL args.  len 0
+ * is legal (empty text). */
+lk_value lk_v_text(lk_ui *ui, const char *ptr, lk_u32 len);
+
+/* Resolve a UIV_TEXT value carried by cmd against the right arena
+ * (queue, or the log's copy when cmd is a logged command).  Returns
+ * {NULL, 0} unless v is a valid in-bounds UIV_TEXT. */
+lk_str lk_command_text(const lk_ui *ui, const lk_command *cmd, lk_value v);
+
+/* Convenience: lk_command_text over cmd->args[idx]. */
+lk_str lk_command_arg_text(const lk_ui *ui, const lk_command *cmd, lk_u8 idx);
 
 void lk_ui_dump_commands(const lk_ui *ui, lk_write_fn wr, void *wr_ud);
 const lk_command *lk_ui_command_log(const lk_ui *ui, lk_u32 *out_count);
@@ -1218,6 +1305,17 @@ void lk_ui_clear_command_log(lk_ui *ui);
 
 /* Internal: translator dispatch (called from event routing) */
 void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event);
+
+/* THE interior-presentation matcher (docs/weft-surface.md §1.3):
+ * consider ev against the candidate hits in the given order and emit
+ * the first applicable translator's command — hit attached, hit value
+ * as arg 0.  Returns 1 on the first emission (ev marked handled), 0
+ * when no (hit, translator) pair matched.  Node-level presentation
+ * routing (lk_translate_event) shares the same matching and emission
+ * internals after its own single-candidate discovery. */
+int lk_translate_presentations(lk_ui *ui, const lk_tree *t, lk_ix node,
+                               lk_event *ev, const lk_presentation_hit *hits,
+                               lk_u32 n);
 
 #ifdef __cplusplus
 }

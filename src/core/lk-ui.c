@@ -122,6 +122,12 @@ static int props_equal(const lk_tree *a, const lk_node *na, const lk_tree *b,
         return 0;
       }
       break;
+    case UIV_TEXT: /* command/hit scope only — never valid in trees */
+      if (pa->value.as.text.off != pb->value.as.text.off ||
+          pa->value.as.text.len != pb->value.as.text.len) {
+        return 0;
+      }
+      break;
     }
   }
 
@@ -140,6 +146,8 @@ static int value_equal(const lk_value *a, const lk_value *b) {
   case UIV_STR: return a->as.str_id == b->as.str_id;
   case UIV_RESOURCE:
     return a->as.res.id == b->as.res.id && a->as.res.gen == b->as.res.gen;
+  case UIV_TEXT:
+    return a->as.text.off == b->as.text.off && a->as.text.len == b->as.text.len;
   }
 
   return 0;
@@ -490,8 +498,16 @@ void lk_ui_destroy(lk_ui *ui) {
     ui_dealloc(ui, ui->cmd_queue.cmds);
   }
 
+  if (ui->cmd_queue.bytes) {
+    ui_dealloc(ui, ui->cmd_queue.bytes);
+  }
+
   if (ui->cmd_log) {
     ui_dealloc(ui, ui->cmd_log);
+  }
+
+  if (ui->cmd_log_bytes) {
+    ui_dealloc(ui, ui->cmd_log_bytes);
   }
 
   if (ui->theme) {

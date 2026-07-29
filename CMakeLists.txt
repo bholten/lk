@@ -61,7 +61,8 @@ target_include_directories(lk_core
 target_compile_options(lk_core PRIVATE -Wall -Wextra -pedantic)
 
 add_executable(lk_test test/lk-test.c test/lk-document-test.c
-  test/lk-resource-test.c test/lk-editor-test.c test/lk-annot-test.c)
+  test/lk-resource-test.c test/lk-editor-test.c test/lk-annot-test.c
+  test/lk-present-test.c)
 target_link_libraries(lk_test PRIVATE lk_core)
 target_include_directories(lk_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
