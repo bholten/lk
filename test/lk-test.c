@@ -7697,6 +7697,144 @@ static void test_overlay_modal_blocks(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_overlay_modal_scrim(void) {
+  lk_ui *ui;
+  lk_ix outside, modal;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_overlay ov;
+  lk_render_list rl;
+  lk_u32 main_count;
+  const lk_render_cmd *scrim;
+
+  BEGIN_TEST("overlay: modal renders a viewport scrim, dismissible doesn't");
+
+  ui = make_modal_ui(&outside, &modal);
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  memset(&ov, 0, sizeof(ov));
+  ov.kind = LK_OVERLAY_MODAL;
+  ov.anchor_mode = LK_ANCHOR_CENTER_VIEWPORT;
+  ov.dismiss_on_outside = 0;
+  ov.traps_focus = 1;
+  ov.owner_id = lk_ui_tree(ui)->nodes[modal].id;
+  ov.content_root_id = lk_ui_tree(ui)->nodes[modal].id;
+  lk_overlay_push(ui, &ov);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  main_count = rl.count;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+
+  /* First overlay command is the scrim: viewport-covering FILL_RECT,
+   * black at LK_MODAL_SCRIM_ALPHA (150). */
+  CHECK(rl.count > main_count);
+  scrim = &rl.cmds[main_count];
+  CHECK_EQ((unsigned)scrim->op, (unsigned)LK_ROP_FILL_RECT);
+  CHECK_EQ(scrim->rect.x, 0);
+  CHECK_EQ(scrim->rect.y, 0);
+  CHECK_EQ(scrim->rect.w, 400);
+  CHECK_EQ(scrim->rect.h, 300);
+  CHECK_EQ((unsigned)scrim->color.a, 150u);
+  CHECK_EQ((unsigned)scrim->color.r, 0u);
+
+  /* A dismissible, non-trapping overlay of the same shape gets no
+   * scrim: its first command must not be a viewport-covering fill. */
+  lk_overlay_pop(ui);
+  ov.dismiss_on_outside = 1;
+  ov.traps_focus = 0;
+  lk_overlay_push(ui, &ov);
+
+  rl.count = 0;
+  rl.bytes_count = 0;
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  main_count = rl.count;
+  lk_render_build_overlays(ui, rects, &cfg, &rl);
+  CHECK(rl.count > main_count);
+  CHECK(!(rl.cmds[main_count].op == LK_ROP_FILL_RECT &&
+          rl.cmds[main_count].rect.w == 400 &&
+          rl.cmds[main_count].rect.h == 300));
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_container_bg_renders(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, la;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_render_list rl;
+  lk_style s;
+  lk_u32 i;
+  int found;
+
+  BEGIN_TEST("render: container (render-less kind) bg from theme rule");
+
+  /* User rule: every COLUMN gets an opaque bg.  Containers have no
+   * widget render fn, so this plate comes from the engine — the
+   * regression was rules matching (borders drew) while the bg fill
+   * was silently never emitted. */
+  memset(&s, 0, sizeof(s));
+  s.bg.r = 40;
+  s.bg.g = 45;
+  s.bg.b = 58;
+  s.bg.a = 255;
+  lk_theme_add_rule(lk_ui_theme(ui), UIK_COLUMN, 0, 0, &s, LK_SF_BG);
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 300;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+
+  found = 0;
+
+  for (i = 0; i < rl.count; i++) {
+    const lk_render_cmd *c = &rl.cmds[i];
+
+    if (c->op == LK_ROP_FILL_RECT && c->color.r == 40 &&
+        c->color.g == 45 && c->color.b == 58 && c->color.a == 255) {
+      found = 1;
+    }
+  }
+
+  CHECK(found);
+
+  lk_render_list_destroy(&rl);
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static void test_hidden_subtree_layout(void) {
   lk_ui *ui = lk_ui_create(NULL);
   lk_tree *t;
@@ -10033,6 +10171,8 @@ int main(void) {
   test_overlay_escape_pops();
   test_dropdown_bottom_edge_flips();
   test_overlay_modal_blocks();
+  test_overlay_modal_scrim();
+  test_container_bg_renders();
   test_hidden_subtree_layout();
   test_hidden_subtree_render_hit();
   test_hidden_focus_next_skips();

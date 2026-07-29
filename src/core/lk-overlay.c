@@ -27,6 +27,11 @@
 #include "lk-tooltip.h"
 #include <lk.h>
 
+/* Scrim alpha for modal overlays (black at this opacity over the
+ * whole viewport).  A theme-driven scrim color is future work; the
+ * constant follows the SCROLL_BAR_W / SPLIT_DIVIDER_W precedent. */
+#define LK_MODAL_SCRIM_ALPHA 150
+
 /* ---- Stack manipulation ---- */
 
 int lk_overlay_push(lk_ui *ui, const lk_overlay *ov) {
@@ -320,6 +325,29 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
   /* Bottom to top: topmost overlay draws last (on top). */
   for (i = 0; i < ui->overlay_count; i++) {
     const lk_overlay *ov = &ui->overlays[i];
+
+    /* Modal overlays (the same traps_focus && !dismiss_on_outside
+     * definition the dismiss pass uses) dim everything beneath them:
+     * a viewport-covering scrim before the content, making the
+     * already-real click blocking visible.  Needs an alpha-blending
+     * consumer to actually dim (the SDL backend enables
+     * SDL_BLENDMODE_BLEND). */
+    if (ov->traps_focus && !ov->dismiss_on_outside &&
+        cfg->viewport_w > 0 && cfg->viewport_h > 0) {
+      lk_render_cmd scmd;
+
+      memset(&scmd, 0, sizeof(scmd));
+      scmd.op = LK_ROP_FILL_RECT;
+      scmd.color.r = 0;
+      scmd.color.g = 0;
+      scmd.color.b = 0;
+      scmd.color.a = LK_MODAL_SCRIM_ALPHA;
+      scmd.rect.x = 0;
+      scmd.rect.y = 0;
+      scmd.rect.w = cfg->viewport_w;
+      scmd.rect.h = cfg->viewport_h;
+      lk_render_list_push(out, scmd);
+    }
 
     if (ov->content_root_id != 0) {
       lk_rect *scratch = (lk_rect *)lk_sys_alloc(

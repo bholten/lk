@@ -209,6 +209,19 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
 
     if (def && def->render) {
       def->render(t, n, &rects[n], node_style, state, out);
+    } else if (node_style->bg.a > 0) {
+      /* Render-less kinds (containers: column, row, spacer) get their
+       * background from the engine — widgets with a render fn own
+       * their full appearance.  Without this, a theme rule setting bg
+       * on a container matches, draws its border, and silently never
+       * paints the plate. */
+      lk_render_cmd cmd;
+
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_FILL_RECT;
+      cmd.color = node_style->bg;
+      cmd.rect = rects[n];
+      lk_render_list_push(out, cmd);
     }
 
     /* Emit border edges as 4 FILL_RECTs */
