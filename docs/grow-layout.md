@@ -1,5 +1,35 @@
 # Grow Layout: Weighted Growth in Stacks (Design, v2)
 
+**F1: DONE** (2026-07-29). Landing notes:
+
+- `UIP_GROW` appended to `lk_prop_key` (after `UIP_EDITOR` — no
+  existing value shifted); the spacer distributor in `layout_stack`
+  (`src/core/lk-widget.c`) generalized to `grow_weight` +
+  largest-remainder apportionment (sort-free O(n²) rank pass; the
+  core has no assert facility, so negative weights clamp silently
+  as documented in §1). All 420 pre-existing core tests passed
+  untouched — the §3 compatibility theorem held in practice.
+- **Precedence investigation verdict (§4): the suspected clobber
+  was NOT real.** `lk_style_resolve` already gates every tree-prop
+  override (align, justify, padding, gap) on `lk_node_has_prop`,
+  so theme-sourced align survives an absent prop and an explicit
+  `align start` (zero) beats the theme — both directions now
+  pinned by tests. The stale "stretch is default" enum comment
+  traced instead to the *styleless* fallback in `layout_stack`
+  (`cfg->styles == NULL` reads `UIP_ALIGN` with default STRETCH);
+  that fallback is kept for backwards compat and the comment now
+  says so. WINDOW `align: STRETCH` landed in `lk_theme_default`.
+- Bindings: `grow` in the `lk::prop` coercion (i32, negatives
+  hard-error naming the constraint); DSL `_prop_schema` gains
+  `grow`. Example sweep: weft-mini lost `win_h`, the
+  `window_resize` tracking, `_ed_h` and its 76/38 chrome
+  constants (editors: `grow 1`; pane columns already stretched).
+  editor-dsl had no equivalents to shed (its editor is a direct
+  split-pane child); hello-dsl's `scroll h 200` is deliberate
+  (forces overflow so the wheel demo scrolls) and stayed.
+- Tests: +19 core (§6 list, normative examples exact), +2 Lcl
+  (binding validation + DSL schema/negative-grow error path).
+
 Polish-round headliner. Revision history: v1 draft ("flex-layout")
 2026-07-29; v2 same day after review — renamed per the review's
 §10: stack layouts gain **weighted growth**, analogous to

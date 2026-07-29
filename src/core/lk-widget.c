@@ -209,10 +209,48 @@ static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
   return 1;
 }
 
+/* Growth weight cap (docs/grow-layout.md section 1): keeps
+ * leftover * weight inside lk_i32 without wide integers. */
+#define GROW_WEIGHT_MAX 4096
+
+/* Effective growth weight of one stack child.  An explicit UIP_GROW
+ * wins -- presence-checked, so grow 0 genuinely pins a spacer --
+ * clamped to [0, GROW_WEIGHT_MAX] (the core has no assert facility;
+ * negatives clamp silently, the bindings hard-error).  An unsized
+ * SPACER keeps its legacy weight of 1; everything else is fixed. */
+static lk_i32 grow_weight(const lk_tree *t, lk_ix child,
+                          lk_prop_key main_key) {
+  if (lk_node_has_prop(t, child, UIP_GROW)) {
+    lk_i32 w = lk_node_prop_i32(t, child, UIP_GROW, 0);
+
+    if (w < 0) {
+      w = 0;
+    }
+
+    if (w > GROW_WEIGHT_MAX) {
+      w = GROW_WEIGHT_MAX;
+    }
+
+    return w;
+  }
+
+  if ((lk_kind)t->nodes[child].kind == UIK_SPACER &&
+      !lk_node_has_prop(t, child, main_key)) {
+    return 1;
+  }
+
+  return 0;
+}
+
 /* Shared column/row layout parameterized by axis.
  * axis=0 -> column (main=vertical, cross=horizontal)
  * axis=1 -> row    (main=horizontal, cross=vertical)
- */
+ *
+ * Leftover main-axis space (final extent minus bases minus visible
+ * gaps, never negative -- intrinsic is the floor, no shrink) is
+ * apportioned by grow weight, largest-remainder, ties to earlier
+ * children.  Equal weights reproduce the legacy spacer share-out
+ * exactly.  Growth is layout-only: measurement never sees it. */
 static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
                         const lk_rect *content, const lk_layout_cfg *cfg,
                         lk_rect *rects, int axis) {
@@ -231,76 +269,69 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 cross_size = axis ? content->h : content->w;
   lk_i32 main_origin = axis ? content->x : content->y;
   lk_i32 cross_origin = axis ? content->y : content->x;
-  /* flex prop that indicates no fixed size along main axis */
-  lk_prop_key flex_key = axis ? UIP_W : UIP_H;
+  /* main-axis explicit-size prop (its absence keeps a spacer flexible) */
+  lk_prop_key main_key = axis ? UIP_W : UIP_H;
   /* cross-axis fixed-size prop */
   lk_prop_key cross_key = axis ? UIP_H : UIP_W;
 
-  lk_i32 remaining = main_size;
-  int spacer_count = 0;
+  lk_i32 leftover = main_size;
+  lk_i32 total_weight = 0;
+  lk_i32 residual = 0;
   int child_count = 0;
-  lk_i32 spacer_each;
-  lk_i32 spacer_extra;
   lk_i32 pos;
-  int spacer_idx;
   lk_ix child;
 
   child = nd->first_child;
 
   while (child) {
-    lk_kind ck = (lk_kind)t->nodes[child].kind;
-    int is_flex_spacer =
-        (ck == UIK_SPACER && !lk_node_has_prop(t, child, flex_key));
-
     if (lk_node_prop_bool(t, child, UIP_HIDDEN)) {
       child = t->nodes[child].next_sibling;
       continue;
     }
 
     child_count++;
-
-    if (is_flex_spacer) {
-      spacer_count++;
-    } else {
-      remaining -= axis ? sizes[child].w : sizes[child].h;
-    }
+    leftover -= axis ? sizes[child].w : sizes[child].h;
+    total_weight += grow_weight(t, child, main_key);
 
     child = t->nodes[child].next_sibling;
   }
 
   if (child_count > 1) {
-    remaining -= gap * (child_count - 1);
+    leftover -= gap * (child_count - 1);
   }
 
-  if (remaining < 0) {
-    remaining = 0;
+  if (leftover < 0) {
+    leftover = 0;
   }
 
-  if (spacer_count > 0) {
-    spacer_each = remaining / spacer_count;
-    spacer_extra = remaining % spacer_count;
-  } else {
-    spacer_each = 0;
-    spacer_extra = 0;
-  }
+  /* Largest-remainder residual: pixels the floored shares leave
+   * over (always < the number of weighted children). */
+  if (total_weight > 0 && leftover > 0) {
+    residual = leftover;
+    child = nd->first_child;
 
-  /* Compute justify offset for main axis */
-  pos = main_origin;
-  if (spacer_count == 0 && remaining > 0) {
-    if (justify == LK_ALIGN_CENTER) {
-      pos = main_origin + remaining / 2;
-    } else if (justify == LK_ALIGN_END) {
-      pos = main_origin + remaining;
+    while (child) {
+      if (!lk_node_prop_bool(t, child, UIP_HIDDEN)) {
+        residual -= leftover * grow_weight(t, child, main_key) / total_weight;
+      }
+
+      child = t->nodes[child].next_sibling;
     }
   }
 
-  spacer_idx = 0;
+  /* Justify shifts the run only when nothing grows */
+  pos = main_origin;
+  if (total_weight == 0 && leftover > 0) {
+    if (justify == LK_ALIGN_CENTER) {
+      pos = main_origin + leftover / 2;
+    } else if (justify == LK_ALIGN_END) {
+      pos = main_origin + leftover;
+    }
+  }
+
   child = nd->first_child;
 
   while (child) {
-    lk_kind ck = (lk_kind)t->nodes[child].kind;
-    int is_flex_spacer =
-        (ck == UIK_SPACER && !lk_node_has_prop(t, child, flex_key));
     lk_i32 child_main;
     lk_i32 child_cross;
     lk_i32 child_cross_pos;
@@ -310,11 +341,41 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
       continue;
     }
 
-    if (is_flex_spacer) {
-      child_main = spacer_each + (spacer_idx < spacer_extra ? 1 : 0);
-      spacer_idx++;
-    } else {
-      child_main = axis ? sizes[child].w : sizes[child].h;
+    child_main = axis ? sizes[child].w : sizes[child].h;
+
+    if (leftover > 0) {
+      lk_i32 wgt = grow_weight(t, child, main_key);
+
+      if (wgt > 0) {
+        /* Rank this child's remainder among its weighted siblings
+         * (earlier child wins ties); the first `residual` ranks get
+         * one extra pixel.  O(n^2) but sort-free and exact. */
+        lk_i32 rem = leftover * wgt % total_weight;
+        lk_i32 rank = 0;
+        int before = 1;
+        lk_ix sib = nd->first_child;
+
+        while (sib) {
+          if (sib == child) {
+            before = 0;
+          } else if (!lk_node_prop_bool(t, sib, UIP_HIDDEN)) {
+            lk_i32 swgt = grow_weight(t, sib, main_key);
+
+            if (swgt > 0) {
+              lk_i32 srem = leftover * swgt % total_weight;
+
+              if (srem > rem || (srem == rem && before)) {
+                rank++;
+              }
+            }
+          }
+
+          sib = t->nodes[sib].next_sibling;
+        }
+
+        child_main +=
+            leftover * wgt / total_weight + (rank < residual ? 1 : 0);
+      }
     }
 
     if (lk_node_has_prop(t, child, cross_key)) {

@@ -45,7 +45,6 @@ var search_open 0
 var search_val ""
 var flash ""       ;; transient status message (left status row)
 var flash_ttl 0
-var win_h 640      ;; tracked via window_resize; sizes the editors
 
 ;; io:: is a separate package (may be compiled out): probe with a
 ;; guarded call so the example degrades instead of dying.
@@ -433,14 +432,6 @@ if $has_io {
 
 ;; ---- View pieces ----
 
-;; Eyeballed chrome heights: pane padding + gap + status row; the
-;; search row costs a bit more in the pane that owns it.
-proc _ed_h {side} {
-    var h [- $win_h 76]
-    if [and [== $search_open 1] [== $active $side]] { set! h [- $h 38] }
-    return $h
-}
-
 proc _flash_text {side} {
     if [and [== $side left] [> $flash_ttl 0]] { return $flash }
     return ""
@@ -455,7 +446,7 @@ proc _pane_view {side} {
     let cpos [lk::editor_cursor $ed]
 
     column "pane_$side" #{align stretch gap 4 padding 6} {
-        editor "ed_$side" #{editor $ed h [_ed_h $side] focusable 1 present (buf ($side))}
+        editor "ed_$side" #{editor $ed grow 1 focusable 1 present (buf ($side))}
 
         row "st_$side" #{gap 12} {
             label "st_name_$side" #{text [pane_get $side name]}
@@ -544,10 +535,6 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
     ;; here (primary never does - the editor owns it).  Button ints:
     ;; 1 = primary, 2 = middle, 3 = secondary.
     event_handler [lambda {ev node} {
-        if [== [get $ev type] window_resize] {
-            set! win_h [get $ev h]
-            return 0
-        }
         if [not [== [get $ev type] pointer_down]] { return 0 }
         if [not [== [get $ev phase] target]] { return 0 }
         if [not [has? $ev target_id]] { return 0 }

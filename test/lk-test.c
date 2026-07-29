@@ -1592,6 +1592,740 @@ static void test_layout_row_justify_end(void) {
 }
 
 /* ================================================================
+ * Tests: grow layout (docs/grow-layout.md)
+ * ================================================================ */
+
+static void test_grow_thirds(void) {
+  /* 100 @ 1:1:1 -> 34/33/33 (largest-remainder, ties to earlier) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2, s3;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: 100 @ 1:1:1 -> 34/33/33");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(1));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_GROW, lk_v_i32(1));
+  s3 = lk_tree_add_node_s(t, lk_str_c("s3"), UIK_SPACER);
+  lk_tree_add_prop(t, s3, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+  lk_tree_append_child(t, col, s3);
+
+  r = run_layout(t, 800, 100);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 34);
+    CHECK_RECT(r[s2], 0, 34, 800, 33);
+    CHECK_RECT(r[s3], 0, 67, 800, 33);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_one_two(void) {
+  /* 100 @ 1:2 -> 33/67; 101 @ 1:2 -> 34/67 (both normative) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: 100 @ 1:2 -> 33/67, 101 -> 34/67");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(1));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_GROW, lk_v_i32(2));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+
+  r = run_layout(t, 800, 100);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 33);
+    CHECK_RECT(r[s2], 0, 33, 800, 67);
+    free(r);
+  }
+
+  r = run_layout(t, 800, 101);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 34);
+    CHECK_RECT(r[s2], 0, 34, 800, 67);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_legacy_remainder_order(void) {
+  /* 3 bare legacy spacers, leftover 100: extras go to the FIRST
+   * children -> 34/33/33 (the compatibility theorem, order pinned) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2, s3;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: legacy spacers keep remainder order");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  s3 = lk_tree_add_node_s(t, lk_str_c("s3"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+  lk_tree_append_child(t, col, s3);
+
+  r = run_layout(t, 800, 100);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 800, 34);
+    CHECK_RECT(r[s2], 0, 34, 800, 33);
+    CHECK_RECT(r[s3], 0, 67, 800, 33);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_mixed_legacy_and_grow(void) {
+  /* bare spacer (legacy weight 1) + grow-1 label split leftover */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: legacy spacer + grow child split");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_add_prop(t, l1, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* leftover = 600 - 16 = 584, split 292/292; label basis 16 + 292 */
+    CHECK_RECT(r[sp], 0, 0, 800, 292);
+    CHECK_RECT(r[l1], 0, 292, 800, 308);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_zero_pins_spacer(void) {
+  /* grow 0 on an otherwise-flexible spacer: zero-sized, fixed */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sp, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: grow 0 pins an unsized spacer");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_GROW, lk_v_i32(0));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[sp], 0, 0, 800, 0);
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_sized_spacer_basis(void) {
+  /* explicit main size is the basis: fixed without grow, grows on top
+   * of it with grow */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sa, sb;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: sized spacer with/without grow");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sa = lk_tree_add_node_s(t, lk_str_c("sa"), UIK_SPACER);
+  lk_tree_add_prop(t, sa, UIP_H, lk_v_i32(100));
+  sb = lk_tree_add_node_s(t, lk_str_c("sb"), UIK_SPACER);
+  lk_tree_add_prop(t, sb, UIP_H, lk_v_i32(100));
+  lk_tree_add_prop(t, sb, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sa);
+  lk_tree_append_child(t, col, sb);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* leftover = 600 - 200 = 400, all to sb: 100 + 400 = 500 */
+    CHECK_RECT(r[sa], 0, 0, 800, 100);
+    CHECK_RECT(r[sb], 0, 100, 800, 500);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_negative_clamped(void) {
+  /* negative grow clamps to 0 in core (bindings hard-error instead) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sn, sp;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: negative grow clamps to 0");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sn = lk_tree_add_node_s(t, lk_str_c("sn"), UIK_SPACER);
+  lk_tree_add_prop(t, sn, UIP_GROW, lk_v_i32(-5));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sn);
+  lk_tree_append_child(t, col, sp);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[sn], 0, 0, 800, 0);
+    CHECK_RECT(r[sp], 0, 0, 800, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_huge_weights_capped(void) {
+  /* weights clamp to 4096: huge values behave as equal weights and
+   * leftover * weight stays inside lk_i32 */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: huge weights cap at 4096");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(1000000));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_GROW, lk_v_i32(5000));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+
+  r = run_layout(t, 800, 101);
+  CHECK(r != NULL);
+  if (r) {
+    /* both clamp to 4096 -> equal split, extra to the first */
+    CHECK_RECT(r[s1], 0, 0, 800, 51);
+    CHECK_RECT(r[s2], 0, 51, 800, 50);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_hidden_children_inert(void) {
+  /* hidden children contribute neither weights nor bases nor gaps */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, la, sh, sp, lb;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: hidden children are inert");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(10));
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  sh = lk_tree_add_node_s(t, lk_str_c("sh"), UIK_SPACER);
+  lk_tree_add_prop(t, sh, UIP_GROW, lk_v_i32(5));
+  lk_tree_add_prop(t, sh, UIP_HIDDEN, lk_v_bool(1));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, la);
+  lk_tree_append_child(t, col, sh);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, lb);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* visible: la(16), sp, lb(16); 2 gaps = 20;
+     * leftover = 600 - 32 - 20 = 548 (hidden grow-5 spacer excluded) */
+    CHECK_RECT(r[la], 0, 0, 800, 16);
+    CHECK_RECT(r[sh], 0, 0, 0, 0);
+    CHECK_RECT(r[sp], 0, 26, 800, 548);
+    CHECK_RECT(r[lb], 0, 584, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_all_hidden(void) {
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, s2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: all children hidden");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(2));
+  lk_tree_add_prop(t, s1, UIP_HIDDEN, lk_v_bool(1));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+  lk_tree_add_prop(t, s2, UIP_HIDDEN, lk_v_bool(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, s2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[s1], 0, 0, 0, 0);
+    CHECK_RECT(r[s2], 0, 0, 0, 0);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_single_child(void) {
+  /* single visible grow child takes the whole extent */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: single grow child fills");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_add_prop(t, l1, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[l1], 0, 0, 800, 600);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_zero_extent_and_negative_leftover(void) {
+  /* zero inner extent: shares are 0; negative leftover: bases kept
+   * (intrinsic is the floor, no shrink) */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: zero extent / negative leftover");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+  lk_tree_add_prop(t, l2, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 0);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    CHECK_RECT(r[l2], 0, 16, 800, 16);
+    free(r);
+  }
+
+  r = run_layout(t, 800, 20);
+  CHECK(r != NULL);
+  if (r) {
+    /* leftover = 20 - 32 < 0 -> clamped, bases kept */
+    CHECK_RECT(r[l1], 0, 0, 800, 16);
+    CHECK_RECT(r[l2], 0, 16, 800, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_padding_gap_accounting(void) {
+  /* available = inner extent - padding - visible gaps, exactly once */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, l1, sp, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: padding + gaps + growth exact");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  lk_tree_add_prop(t, col, UIP_PADDING, lk_v_i32(10));
+  lk_tree_add_prop(t, col, UIP_GAP, lk_v_i32(5));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  sp = lk_tree_add_node_s(t, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(t, sp, UIP_GROW, lk_v_i32(1));
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, sp);
+  lk_tree_append_child(t, col, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* content h = 580; leftover = 580 - 32 - 10 = 538
+     * l2 ends at 574 + 16 = 590 = 600 - padding */
+    CHECK_RECT(r[l1], 10, 10, 780, 16);
+    CHECK_RECT(r[sp], 10, 31, 780, 538);
+    CHECK_RECT(r[l2], 10, 574, 780, 16);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_repeated_layout_identical(void) {
+  /* growth is deterministic: repeated layout is byte-identical */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, s1, l1, s2;
+  lk_rect *r1;
+  lk_rect *r2;
+
+  BEGIN_TEST("grow: repeated layout byte-identical");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  s1 = lk_tree_add_node_s(t, lk_str_c("s1"), UIK_SPACER);
+  lk_tree_add_prop(t, s1, UIP_GROW, lk_v_i32(3));
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Mid"));
+  lk_tree_add_prop(t, l1, UIP_GROW, lk_v_i32(2));
+  s2 = lk_tree_add_node_s(t, lk_str_c("s2"), UIK_SPACER);
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, s1);
+  lk_tree_append_child(t, col, l1);
+  lk_tree_append_child(t, col, s2);
+
+  r1 = run_layout(t, 800, 601);
+  r2 = run_layout(t, 800, 601);
+  CHECK(r1 != NULL && r2 != NULL);
+  if (r1 && r2) {
+    CHECK(memcmp(r1, r2, sizeof(lk_rect) * t->node_count) == 0);
+  }
+  free(r1);
+  free(r2);
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_measure_unaffected(void) {
+  /* growth is layout-only: a parent's intrinsic size never includes
+   * it, and a parent granted only its intrinsic size distributes
+   * nothing */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, outer, inner, la, lb, after;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: measurement unaffected by child grow");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  outer = lk_tree_add_node_s(t, lk_str_c("outer"), UIK_COLUMN);
+  inner = lk_tree_add_node_s(t, lk_str_c("inner"), UIK_COLUMN);
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+  lk_tree_add_prop(t, lb, UIP_GROW, lk_v_i32(3));
+  after = lk_tree_add_node_s(t, lk_str_c("after"), UIK_LABEL);
+  lk_tree_add_prop(t, after, UIP_TEXT, lk_v_cstr(t->intern, "After"));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, outer);
+  lk_tree_append_child(t, outer, inner);
+  lk_tree_append_child(t, inner, la);
+  lk_tree_append_child(t, inner, lb);
+  lk_tree_append_child(t, outer, after);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* inner intrinsic = 32 (grow 3 invisible to measure); zero
+     * leftover inside -> grow is a no-op */
+    CHECK_EQ((unsigned)r[inner].h, 32u);
+    CHECK_EQ((unsigned)r[la].h, 16u);
+    CHECK_EQ((unsigned)r[lb].h, 16u);
+    CHECK_EQ((unsigned)r[after].y, 32u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_grow_justify_gate(void) {
+  /* justify operates iff leftover > 0 && total_weight == 0: a grow-0
+   * spacer no longer suppresses it, a bare spacer still does */
+  lk_tree *ta = lk_tree_create(NULL);
+  lk_tree *tb = lk_tree_create(NULL);
+  lk_ix w, row, l1, sp;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: justify inert iff total weight > 0");
+
+  w = lk_tree_add_node_s(ta, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(ta, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(ta, row, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(ta, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(ta, l1, UIP_TEXT, lk_v_cstr(ta->intern, "X"));
+  sp = lk_tree_add_node_s(ta, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_add_prop(ta, sp, UIP_GROW, lk_v_i32(0));
+  lk_tree_set_root(ta, w);
+  lk_tree_append_child(ta, w, row);
+  lk_tree_append_child(ta, row, l1);
+  lk_tree_append_child(ta, row, sp);
+
+  r = run_layout(ta, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* total weight 0 -> justify end active: x = 800 - 8 = 792 */
+    CHECK_EQ((unsigned)r[l1].x, 792u);
+    free(r);
+  }
+
+  w = lk_tree_add_node_s(tb, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(tb, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(tb, row, UIP_JUSTIFY, lk_v_i32(LK_ALIGN_END));
+  l1 = lk_tree_add_node_s(tb, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(tb, l1, UIP_TEXT, lk_v_cstr(tb->intern, "X"));
+  sp = lk_tree_add_node_s(tb, lk_str_c("sp"), UIK_SPACER);
+  lk_tree_set_root(tb, w);
+  lk_tree_append_child(tb, w, row);
+  lk_tree_append_child(tb, row, l1);
+  lk_tree_append_child(tb, row, sp);
+
+  r = run_layout(tb, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* bare spacer soaks the leftover -> justify inert */
+    CHECK_EQ((unsigned)r[l1].x, 0u);
+    CHECK_EQ((unsigned)r[sp].w, 792u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(ta);
+  lk_tree_destroy(tb);
+}
+
+static void test_grow_nested_containers(void) {
+  /* two independent phases: outer grants the inner column its grown
+   * extent; the inner column distributes its own leftover */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, outer, top, inner, la, lb;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: nested grown containers");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  outer = lk_tree_add_node_s(t, lk_str_c("outer"), UIK_COLUMN);
+  top = lk_tree_add_node_s(t, lk_str_c("top"), UIK_LABEL);
+  lk_tree_add_prop(t, top, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  inner = lk_tree_add_node_s(t, lk_str_c("inner"), UIK_COLUMN);
+  lk_tree_add_prop(t, inner, UIP_GROW, lk_v_i32(1));
+  la = lk_tree_add_node_s(t, lk_str_c("la"), UIK_LABEL);
+  lk_tree_add_prop(t, la, UIP_TEXT, lk_v_cstr(t->intern, "Yo"));
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "Fill"));
+  lk_tree_add_prop(t, lb, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, outer);
+  lk_tree_append_child(t, outer, top);
+  lk_tree_append_child(t, outer, inner);
+  lk_tree_append_child(t, inner, la);
+  lk_tree_append_child(t, inner, lb);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    /* outer: inner basis 32 + (600 - 16 - 32) = 584 at y 16
+     * inner: lb = 16 + (584 - 32) = 568 at y 16 + 16 */
+    CHECK_RECT(r[inner], 0, 16, 800, 584);
+    CHECK_RECT(r[la], 0, 16, 800, 16);
+    CHECK_RECT(r[lb], 0, 32, 800, 568);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_style_theme_align_precedence(void) {
+  /* theme-sourced align survives an absent prop; an explicit
+   * align-start prop (zero IS a valid value) beats the theme */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+  lk_style s;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, col, l1;
+
+  BEGIN_TEST("style: theme align vs prop precedence");
+
+  t = lk_tree_create(NULL);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hi"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, l1);
+
+  th = lk_theme_new(NULL, NULL, NULL);
+  memset(&s, 0, sizeof(s));
+  s.align = (lk_u8)LK_ALIGN_STRETCH;
+  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_ALIGN);
+
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+
+  if (th && styles && rects) {
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 800;
+    cfg.viewport_h = 600;
+    cfg.styles = styles;
+
+    /* direction 1: absent prop -> theme STRETCH survives */
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[col].align, (unsigned)LK_ALIGN_STRETCH);
+    lk_layout(t, &cfg, rects);
+    CHECK_EQ((unsigned)rects[l1].w, 800u);
+
+    /* direction 2: explicit align start beats theme STRETCH */
+    lk_tree_add_prop(t, col, UIP_ALIGN, lk_v_i32(LK_ALIGN_START));
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[col].align, (unsigned)LK_ALIGN_START);
+    lk_layout(t, &cfg, rects);
+    CHECK_EQ((unsigned)rects[l1].w, 16u);
+    CHECK_EQ((unsigned)rects[l1].x, 0u);
+  }
+
+  free(rects);
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_style_window_stretch_default(void) {
+  /* default theme gives WINDOW align STRETCH; an explicit prop
+   * overrides it */
+  lk_tree *t;
+  lk_theme *th;
+  lk_style *styles;
+
+  BEGIN_TEST("style: WINDOW align STRETCH default");
+
+  t = lk_tree_create(NULL);
+  lk_tree_set_root(t, lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW));
+
+  th = lk_theme_default(NULL, NULL, NULL);
+  styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
+
+  if (th && styles) {
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[t->root].align, (unsigned)LK_ALIGN_STRETCH);
+
+    lk_tree_add_prop(t, t->root, UIP_ALIGN, lk_v_i32(LK_ALIGN_START));
+    lk_style_resolve(th, t, NULL, styles);
+    CHECK_EQ((unsigned)styles[t->root].align, (unsigned)LK_ALIGN_START);
+  }
+
+  free(styles);
+  lk_theme_destroy(th);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+/* ================================================================
  * Tests: render list
  * ================================================================ */
 
@@ -9960,6 +10694,27 @@ int main(void) {
   test_layout_column_justify_end();
   test_layout_row_align_center();
   test_layout_row_justify_end();
+
+  /* grow layout (docs/grow-layout.md) */
+  test_grow_thirds();
+  test_grow_one_two();
+  test_grow_legacy_remainder_order();
+  test_grow_mixed_legacy_and_grow();
+  test_grow_zero_pins_spacer();
+  test_grow_sized_spacer_basis();
+  test_grow_negative_clamped();
+  test_grow_huge_weights_capped();
+  test_grow_hidden_children_inert();
+  test_grow_all_hidden();
+  test_grow_single_child();
+  test_grow_zero_extent_and_negative_leftover();
+  test_grow_padding_gap_accounting();
+  test_grow_repeated_layout_identical();
+  test_grow_measure_unaffected();
+  test_grow_justify_gate();
+  test_grow_nested_containers();
+  test_style_theme_align_precedence();
+  test_style_window_stretch_default();
 
   /* render list */
   printf("\nlk render tests:\n");

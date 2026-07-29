@@ -80,6 +80,7 @@ static const str_enum prop_table[] = {
     {"tooltip",     UIP_TOOLTIP    },
     {"split_ratio", UIP_SPLIT_RATIO},
     {"editor",      UIP_EDITOR     },
+    {"grow",        UIP_GROW       },
     {NULL,          0              }
 };
 
@@ -856,6 +857,20 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
     long i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
       lcl_set_error(interp, "lk::prop: numeric prop expects integer");
+      return LCL_RC_ERR;
+    }
+    lv = lk_v_i32((lk_i32)i);
+    break;
+  }
+  case UIP_GROW: {
+    long i;
+    if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
+      lcl_set_error(interp, "lk::prop: grow expects an integer >= 0");
+      return LCL_RC_ERR;
+    }
+    if (i < 0) {
+      lcl_set_error(interp, "lk::prop: grow must be >= 0 (weighted growth "
+                            "has no negative weights)");
       return LCL_RC_ERR;
     }
     lv = lk_v_i32((lk_i32)i);
