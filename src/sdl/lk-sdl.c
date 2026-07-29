@@ -427,6 +427,11 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
 
   win->vsync = SDL_SetRenderVSync(win->sdl_ren, 1) ? 1 : 0;
 
+  /* SDL's default draw blend mode is NONE, which ignores alpha in
+   * fill colors — semi-transparent fills (modal scrim, selection
+   * highlights) would paint opaque. */
+  SDL_SetRenderDrawBlendMode(win->sdl_ren, SDL_BLENDMODE_BLEND);
+
   /* Glyph-atlas text engine bound to the renderer.  A NULL engine is
    * survivable: measurement still works via font instances; DRAW_TEXT
    * and index<->x mapping degrade to no-ops. */
