@@ -107,6 +107,118 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y) {
   return best;
 }
 
+/* ---- Pending synthetic-event queue ----
+ *
+ * Synthetic events (VALUE_CHANGED, FOCUS_CHANGED) are ENQUEUED by
+ * their emitters instead of recursively calling lk_event_route
+ * mid-dispatch (the design-coherence debt paid by this queue).  The
+ * queue drains FIFO at the end of the OUTERMOST lk_event_route call;
+ * lk_ui_flush_events drains outside routing.  Events enqueued during
+ * a drain append and drain in the same loop, bounded by
+ * LK_PENDING_DRAIN_MAX dispatches per drain — overflow is dropped
+ * and counted in ui->pending_dropped (a debug counter lk never
+ * resets), so a self-feeding handler cannot livelock the router. */
+
+#define LK_PENDING_DRAIN_MAX 64
+
+int lk_event_enqueue(lk_ui *ui, const lk_event *ev) {
+  if (!ui || !ev) {
+    return 0;
+  }
+
+  if (ui->pending_count >= ui->pending_cap) {
+    lk_u32 new_cap = ui->pending_cap ? ui->pending_cap * 2 : 8;
+    lk_event *np = (lk_event *)ui->alloc(
+        ui->alloc_ud, (lk_u32)(sizeof(lk_event) * new_cap));
+
+    if (!np) {
+      return 0;
+    }
+
+    if (ui->pending && ui->pending_count) {
+      memcpy(np, ui->pending, sizeof(lk_event) * ui->pending_count);
+    }
+
+    if (ui->pending) {
+      ui->dealloc(ui->alloc_ud, ui->pending);
+    }
+
+    ui->pending = np;
+    ui->pending_cap = new_cap;
+  }
+
+  ui->pending[ui->pending_count++] = *ev;
+  return 1;
+}
+
+/* Forward declaration: one full tier sequence for a single event
+ * (defined with the routing code below). */
+static void route_one(lk_ui *ui, const lk_tree *t, lk_event *event);
+
+/* Drain the queue FIFO against t.  route_depth is held non-zero for
+ * the whole drain so tier handlers that call lk_event_route
+ * re-entrantly never trigger a nested drain — their enqueues simply
+ * append and are consumed by this loop. */
+static void drain_pending(lk_ui *ui, const lk_tree *t) {
+  lk_u32 i = 0;
+
+  ui->route_depth++;
+
+  while (i < ui->pending_count) {
+    lk_event ev;
+
+    if (i >= LK_PENDING_DRAIN_MAX) {
+      ui->pending_dropped += ui->pending_count - i;
+      break;
+    }
+
+    ev = ui->pending[i]; /* copy: the array may grow during dispatch */
+    i++;
+    route_one(ui, t, &ev);
+  }
+
+  ui->pending_count = 0;
+  ui->route_depth--;
+}
+
+void lk_ui_flush_events(lk_ui *ui, const lk_tree *t) {
+  if (!ui) {
+    return;
+  }
+
+  if (ui->route_depth != 0) {
+    return; /* the outermost lk_event_route call will drain */
+  }
+
+  if (ui->pending_count == 0) {
+    return;
+  }
+
+  drain_pending(ui, t ? t : lk_ui_tree(ui));
+}
+
+/* Enqueue a FOCUS_CHANGED event for an effective focus change.
+ * target = the newly focused node's index when resolvable (the
+ * VALUE_CHANGED convention), else the root so clear-events still
+ * route.  Callers only invoke this when prev != next. */
+static void focus_event_enqueue(lk_ui *ui, const lk_tree *t,
+                                lk_node_id prev_id, lk_node_id next_id,
+                                lk_ix target) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_FOCUS_CHANGED;
+  ev.target = target;
+  ev.data.focus.prev_id = prev_id;
+  ev.data.focus.next_id = next_id;
+
+  if (ev.target == 0 && t && t->root != 0) {
+    ev.target = t->root;
+  }
+
+  lk_event_enqueue(ui, &ev);
+}
+
 /* ---- Focus management ---- */
 
 void lk_ui_set_event_handler(lk_ui *ui, lk_event_handler_fn fn, void *ud) {
@@ -139,15 +251,30 @@ int lk_focus_set(lk_ui *ui, const lk_tree *t, lk_node_id id) {
     return 0;
   }
 
-  focus_flag_sync(ui, id);
-  ui->focused_id = id;
+  {
+    lk_node_id prev = ui->focused_id;
+
+    focus_flag_sync(ui, id);
+    ui->focused_id = id;
+
+    if (prev != id) {
+      focus_event_enqueue(ui, t, prev, id, ix);
+    }
+  }
+
   return 1;
 }
 
 void lk_focus_clear(lk_ui *ui) {
   if (ui) {
+    lk_node_id prev = ui->focused_id;
+
     focus_flag_sync(ui, 0);
     ui->focused_id = 0;
+
+    if (prev != 0) {
+      focus_event_enqueue(ui, lk_ui_tree(ui), prev, 0, 0);
+    }
   }
 }
 
@@ -300,6 +427,23 @@ static lk_ix focus_scope_root(const lk_ui *ui, const lk_tree *t,
   return t->root;
 }
 
+/* Shared cycling tail: commit focus to node index chosen, enqueue
+ * FOCUS_CHANGED when the effective focus actually changed, return
+ * the new focused id. */
+static lk_node_id focus_commit(lk_ui *ui, const lk_tree *t, lk_ix chosen) {
+  lk_node_id prev = ui->focused_id;
+  lk_node_id result = t->nodes[chosen].id;
+
+  focus_flag_sync(ui, result);
+  ui->focused_id = result;
+
+  if (prev != result) {
+    focus_event_enqueue(ui, t, prev, result, chosen);
+  }
+
+  return result;
+}
+
 lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
   lk_ix *buf;
   lk_u32 count, i;
@@ -327,9 +471,7 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
 
   if (ui->focused_id == 0) {
     /* No current focus: pick the first */
-    result = t->nodes[buf[0]].id;
-    focus_flag_sync(ui, result);
-    ui->focused_id = result;
+    result = focus_commit(ui, t, buf[0]);
     lk_sys_dealloc(NULL, buf);
     return result;
   }
@@ -337,19 +479,14 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
   /* Find current position */
   for (i = 0; i < count; i++) {
     if (t->nodes[buf[i]].id == ui->focused_id) {
-      lk_u32 next_i = (i + 1) % count;
-      result = t->nodes[buf[next_i]].id;
-      focus_flag_sync(ui, result);
-      ui->focused_id = result;
+      result = focus_commit(ui, t, buf[(i + 1) % count]);
       lk_sys_dealloc(NULL, buf);
       return result;
     }
   }
 
   /* Current focused not found; pick first */
-  result = t->nodes[buf[0]].id;
-  focus_flag_sync(ui, result);
-  ui->focused_id = result;
+  result = focus_commit(ui, t, buf[0]);
   lk_sys_dealloc(NULL, buf);
   return result;
 }
@@ -381,9 +518,7 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
 
   if (ui->focused_id == 0) {
     /* No current focus: pick the last */
-    result = t->nodes[buf[count - 1]].id;
-    focus_flag_sync(ui, result);
-    ui->focused_id = result;
+    result = focus_commit(ui, t, buf[count - 1]);
     lk_sys_dealloc(NULL, buf);
     return result;
   }
@@ -391,19 +526,14 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
   /* Find current position */
   for (i = 0; i < count; i++) {
     if (t->nodes[buf[i]].id == ui->focused_id) {
-      lk_u32 prev_i = (i == 0) ? count - 1 : i - 1;
-      result = t->nodes[buf[prev_i]].id;
-      focus_flag_sync(ui, result);
-      ui->focused_id = result;
+      result = focus_commit(ui, t, buf[(i == 0) ? count - 1 : i - 1]);
       lk_sys_dealloc(NULL, buf);
       return result;
     }
   }
 
   /* Current focused not found; pick last */
-  result = t->nodes[buf[count - 1]].id;
-  focus_flag_sync(ui, result);
-  ui->focused_id = result;
+  result = focus_commit(ui, t, buf[count - 1]);
   lk_sys_dealloc(NULL, buf);
 
   return result;
@@ -411,15 +541,15 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
 
 /* ---- Event routing ---- */
 
-void lk_event_route(lk_ui *ui, lk_event *event) {
-  const lk_tree *t;
+/* One full tier sequence (overlay pre-step, widget target+bubble,
+ * user handler capture/target/bubble, translators) for a single
+ * event.  Both the public entry point and the pending-queue drain
+ * come through here; only the outermost lk_event_route call drains
+ * the queue afterwards. */
+static void route_one(lk_ui *ui, const lk_tree *t, lk_event *event) {
   lk_ix path[64]; /* max tree depth */
   int depth, i;
   lk_ix n;
-
-  if (!ui || !event) {
-    return;
-  }
 
   /* Overlay pre-step: ESC pops the topmost overlay (dropdown popup,
    * modal, ...) before any widget or user handler sees the key.  The
@@ -439,8 +569,6 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
     event->handled = 1;
     return;
   }
-
-  t = lk_ui_tree(ui);
 
   if (!t || event->target == 0 || event->target >= t->node_count) {
     return;
@@ -533,5 +661,22 @@ void lk_event_route(lk_ui *ui, lk_event *event) {
   /* Translator dispatch: if no handler consumed the event */
   if (!event->handled) {
     lk_translate_event(ui, t, event);
+  }
+}
+
+void lk_event_route(lk_ui *ui, lk_event *event) {
+  if (!ui || !event) {
+    return;
+  }
+
+  ui->route_depth++;
+  route_one(ui, lk_ui_tree(ui), event);
+  ui->route_depth--;
+
+  /* Only the outermost call drains: synthetic events enqueued during
+   * this dispatch (VALUE_CHANGED, FOCUS_CHANGED) run their own full
+   * tier sequences AFTER the originating event completes. */
+  if (ui->route_depth == 0 && ui->pending_count > 0) {
+    drain_pending(ui, lk_ui_tree(ui));
   }
 }

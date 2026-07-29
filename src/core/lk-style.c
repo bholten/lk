@@ -242,11 +242,17 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
 
   /* EDITOR -- dark bg slightly distinct from the window bg; fg
    * inherits from the wildcard rule.  Padding 0 keeps line geometry
-   * aligned with the node rect (apps can set UIP_PADDING). */
+   * aligned with the node rect (apps can set UIP_PADDING).
+   * Scrollbar colors mirror the UIK_SCROLL rule (that rule is
+   * kind-scoped, so the editor needs its own). */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(24, 25, 29, 255);
   s.padding = 0;
-  lk_theme_add_rule(th, UIK_EDITOR, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
+  s.scrollbar_track = mk_color(50, 50, 50, 128);
+  s.scrollbar_thumb = mk_color(120, 120, 120, 200);
+  lk_theme_add_rule(th, UIK_EDITOR, 0, 0, &s,
+                    LK_SF_BG | LK_SF_PADDING | LK_SF_SCROLLBAR_TRACK |
+                        LK_SF_SCROLLBAR_THUMB);
 
   return th;
 }

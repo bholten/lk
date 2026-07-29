@@ -1363,6 +1363,198 @@ static void test_render_tab_expansion(void) {
 }
 
 /* ================================================================
+ * (e2) overlay scrollbar (polish F2)
+ * ================================================================ */
+
+#define ED_TEST_BAR_W 6
+
+/* nth FILL_RECT sitting in the scrollbar column (x == bar_x, w ==
+ * bar width): 0 = track, 1 = thumb.  NULL when absent. */
+static const lk_render_cmd *nth_bar_fill(const lk_render_list *rl,
+                                         lk_i32 bar_x, lk_u32 idx) {
+  lk_u32 i, seen = 0;
+
+  for (i = 0; i < rl->count; i++) {
+    const lk_render_cmd *c = &rl->cmds[i];
+
+    if (c->op == LK_ROP_FILL_RECT && c->rect.x == bar_x &&
+        c->rect.w == ED_TEST_BAR_W) {
+      if (seen == idx) {
+        return c;
+      }
+
+      seen++;
+    }
+  }
+
+  return NULL;
+}
+
+/* Build "ab\n" * n_lines (each line 2 chars + newline). */
+static void many_lines(char *buf, lk_u32 cap, lk_u32 n_lines) {
+  lk_u32 i, o = 0;
+
+  for (i = 0; i < n_lines && o + 4 < cap; i++) {
+    buf[o++] = 'a';
+    buf[o++] = 'b';
+    buf[o++] = '\n';
+  }
+
+  buf[o] = '\0';
+}
+
+static void test_scrollbar_exact_geometry(void) {
+  ed_fix f;
+  lk_render_list rl;
+  char text[256];
+  const lk_render_cmd *track;
+  const lk_render_cmd *thumb;
+
+  BEGIN_TEST("ed scrollbar: track+thumb exact stub geometry");
+
+  /* 30 lines (the last many_lines newline yields an empty 31st line;
+   * ed line count = 31... keep the arithmetic explicit below), view
+   * 400x160: rows 31, line_h 16 -> total 496 px > 160. */
+  many_lines(text, sizeof(text), 30);
+  fix_init(&f, text, 400, 160);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  track = nth_bar_fill(&rl, 400 - ED_TEST_BAR_W, 0);
+  thumb = nth_bar_fill(&rl, 400 - ED_TEST_BAR_W, 1);
+  CHECK(track != NULL);
+  CHECK(thumb != NULL);
+
+  if (track && thumb) {
+    /* Track spans the content rect height at the right edge. */
+    CHECK_EQ((unsigned)track->rect.y, 0u);
+    CHECK_EQ((unsigned)track->rect.h, 160u);
+
+    /* 31 rows * 16 = 496 total; thumb = 160*160/496 = 51 (min 8). */
+    CHECK_EQ((unsigned)thumb->rect.h, 51u);
+    CHECK_EQ((unsigned)thumb->rect.y, 0u); /* anchored at doc top */
+  }
+
+  /* Scroll 6 lines down: top_px = 96, max_top = 496-160 = 336,
+   * thumb_y = 96 * (160-51) / 336 = 31. */
+  CHECK(cmd_scroll(&f, 6));
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  thumb = nth_bar_fill(&rl, 400 - ED_TEST_BAR_W, 1);
+  CHECK(thumb != NULL);
+
+  if (thumb) {
+    CHECK_EQ((unsigned)thumb->rect.y, 31u);
+    CHECK_EQ((unsigned)thumb->rect.h, 51u);
+  }
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_scrollbar_absent_when_fits(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("ed scrollbar: absent when content fits");
+
+  /* 3 lines in a 160 px viewport: 48 px of rows, no bar. */
+  fix_init(&f, "ab\ncd\nef", 400, 160);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  CHECK(nth_bar_fill(&rl, 400 - ED_TEST_BAR_W, 0) == NULL);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_scrollbar_tiny_viewport(void) {
+  ed_fix f;
+  lk_render_list rl;
+  char text[256];
+  const lk_render_cmd *track;
+  const lk_render_cmd *thumb;
+
+  BEGIN_TEST("ed scrollbar: tiny viewport, no negative rects");
+
+  /* Viewport shorter than the 8 px minimum thumb: the thumb clamps
+   * to the track, nothing goes negative. */
+  many_lines(text, sizeof(text), 30);
+  fix_init(&f, text, 400, 4);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  track = nth_bar_fill(&rl, 400 - ED_TEST_BAR_W, 0);
+  thumb = nth_bar_fill(&rl, 400 - ED_TEST_BAR_W, 1);
+  CHECK(track != NULL);
+  CHECK(thumb != NULL);
+
+  if (track && thumb) {
+    CHECK_EQ((unsigned)track->rect.h, 4u);
+    CHECK_EQ((unsigned)thumb->rect.h, 4u); /* min 8 clamped to track */
+    CHECK_EQ((unsigned)thumb->rect.y, 0u);
+    CHECK(track->rect.h >= 0 && thumb->rect.h >= 0);
+    CHECK(track->rect.w >= 0 && thumb->rect.w >= 0);
+  }
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_scrollbar_wrapped_extent(void) {
+  ed_fix f;
+  lk_render_list rl;
+  char text[512];
+  lk_u32 i, o = 0;
+  const lk_render_cmd *track;
+  const lk_render_cmd *thumb;
+
+  BEGIN_TEST("ed scrollbar: wrapped rows + estimator extent");
+
+  /* 8 lines of 30 chars in a 160 px wrap width: 20 chars per row ->
+   * 2 rows per line, exact for measured lines, estimator (seeded by
+   * the measured average of 8 px/byte) for the rest: 16 rows total,
+   * 256 px in a 64 px viewport. */
+  for (i = 0; i < 8; i++) {
+    lk_u32 k;
+
+    for (k = 0; k < 30; k++) {
+      text[o++] = (char)('a' + (char)(i % 26));
+    }
+
+    if (i + 1 < 8) {
+      text[o++] = '\n';
+    }
+  }
+
+  text[o] = '\0';
+  fix_init(&f, text, 160, 64);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK(fix_render(&f, &rl));
+  track = nth_bar_fill(&rl, 160 - ED_TEST_BAR_W, 0);
+  thumb = nth_bar_fill(&rl, 160 - ED_TEST_BAR_W, 1);
+  CHECK(track != NULL);
+  CHECK(thumb != NULL);
+
+  if (track && thumb) {
+    CHECK_EQ((unsigned)track->rect.h, 64u);
+    /* thumb = 64*64/256 = 16 */
+    CHECK_EQ((unsigned)thumb->rect.h, 16u);
+    CHECK_EQ((unsigned)thumb->rect.y, 0u);
+  }
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+/* ================================================================
  * (f) degradation
  * ================================================================ */
 
@@ -2302,6 +2494,10 @@ void lk_editor_run_tests(void) {
   test_render_cursor_focus_only();
   test_render_selection_rects();
   test_render_tab_expansion();
+  test_scrollbar_exact_geometry();
+  test_scrollbar_absent_when_fits();
+  test_scrollbar_tiny_viewport();
+  test_scrollbar_wrapped_extent();
 
   printf("\nlk editor degradation tests:\n");
   test_degrade_missing_prop();

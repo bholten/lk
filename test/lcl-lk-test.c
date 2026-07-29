@@ -3770,6 +3770,204 @@ static void test_lcl_presentation_pipeline(void) {
   END_TEST();
 }
 
+/* ---- focus_changed (polish F2) ---- */
+
+/* The event-to-dict marshal is exported by lcl-lk.c for hosts that
+ * drive lk_event_route themselves (and for these tests). */
+extern lcl_value *lcl_lk_event_to_dict(const lk_event *ev,
+                                       const lk_intern *intern);
+
+/* Minimal headless event-handler bridge: marshal the event and call
+ * the script lambda fetched by the test (the window bridge does the
+ * same thing with extra target_id/node_id sugar). */
+struct focus_probe {
+  lcl_interp *interp;
+  lcl_value *handler;
+  const lk_intern *intern;
+};
+
+static int focus_probe_handler(lk_event *event, lk_ix node_ix, void *ud) {
+  struct focus_probe *p = (struct focus_probe *)ud;
+  lcl_value *args[2];
+  lcl_value *result = NULL;
+
+  (void)node_ix;
+
+  if (event->phase != LK_PHASE_TARGET) {
+    return 0;
+  }
+
+  args[0] = lcl_lk_event_to_dict(event, p->intern);
+  args[1] = lcl_int_new((long)node_ix);
+  lcl_call_proc(p->interp, p->handler, 2, args, &result);
+  lcl_ref_dec(args[0]);
+  lcl_ref_dec(args[1]);
+
+  if (result) {
+    lcl_ref_dec(result);
+  }
+
+  return 0;
+}
+
+static void test_focus_changed_marshal(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lcl_value *handler = NULL;
+  lk_ui *ui;
+  struct focus_probe probe;
+
+  BEGIN_TEST("focus_changed reaches script handler with ids");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let b1 [lk::node $t \"b1\" \"button\"]\n"
+    "let b2 [lk::node $t \"b2\" \"button\"]\n"
+    "lk::prop $t $b1 \"focusable\" 1\n"
+    "lk::prop $t $b2 \"focusable\" 1\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $b1\n"
+    "lk::append_child $t $w $b2\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  eval_ok(interp,
+    "var g_prev \"-\"\n"
+    "var g_next \"-\"\n"
+    "var g_count 0\n"
+    "let h [lambda {ev node} {\n"
+    "  if [== [get $ev type] focus_changed] {\n"
+    "    set! g_prev [get $ev prev_id]\n"
+    "    set! g_next [get $ev next_id]\n"
+    "    set! g_count [+ $g_count 1]\n"
+    "  }\n"
+    "  return 0\n"
+    "}]",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+
+  eval_ok(interp, "$h", &handler);
+  CHECK(handler != NULL);
+
+  if (ui && handler) {
+    probe.interp = interp;
+    probe.handler = handler;
+    probe.intern = ui->intern;
+    lk_ui_set_event_handler(ui, focus_probe_handler, &probe);
+
+    /* Focus via the script-facing proc, drain outside routing. */
+    eval_ok(interp, "lk::focus_set $ui \"b1\"", &r);
+    if (r) lcl_ref_dec(r);
+    r = NULL;
+    lk_ui_flush_events(ui, NULL);
+
+    {
+      static const struct {
+        const char *src;
+        const char *want;
+      } checks[] = {
+        {"$g_count", "1"},
+        {"$g_prev", ""},
+        {"$g_next", "b1"},
+      };
+      size_t i;
+
+      for (i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
+        eval_ok(interp, checks[i].src, &r);
+        if (r) {
+          const char *got = lcl_value_to_string(r);
+          if (strcmp(got, checks[i].want) != 0) {
+            if (g_cur_ok) printf("FAIL\n");
+            printf("    %s -> '%s', want '%s'\n", checks[i].src, got,
+                   checks[i].want);
+            g_cur_ok = 0;
+          }
+          lcl_ref_dec(r);
+          r = NULL;
+        }
+      }
+    }
+
+    /* Second change carries the old focus as prev_id. */
+    eval_ok(interp, "lk::focus_set $ui \"b2\"", &r);
+    if (r) lcl_ref_dec(r);
+    r = NULL;
+    lk_ui_flush_events(ui, NULL);
+
+    eval_ok(interp, "$g_prev", &r);
+    if (r) {
+      CHECK(strcmp(lcl_value_to_string(r), "b1") == 0);
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    eval_ok(interp, "$g_next", &r);
+    if (r) {
+      CHECK(strcmp(lcl_value_to_string(r), "b2") == 0);
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    /* focus_clear marshals next_id as the empty string. */
+    eval_ok(interp, "lk::focus_clear $ui", &r);
+    if (r) lcl_ref_dec(r);
+    r = NULL;
+    lk_ui_flush_events(ui, NULL);
+
+    eval_ok(interp, "$g_next", &r);
+    if (r) {
+      CHECK(strcmp(lcl_value_to_string(r), "") == 0);
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    lk_ui_set_event_handler(ui, NULL, NULL);
+  }
+
+  if (handler) {
+    lcl_ref_dec(handler);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_focus_changed_translator_name(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("add_translator accepts focus_changed");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "lk::add_translator $ui \"focus_changed\" \"\" \"\" \"\" \"\" \"Act\"",
+    &r);
+  if (r) lcl_ref_dec(r);
+  CHECK(g_cur_ok);
+
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+
+  if (ui) {
+    CHECK(ui->translator_count == 1);
+    CHECK(ui->translators[0].event_type == (lk_u8)LK_EVENT_FOCUS_CHANGED);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_annot_present_errors(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -3980,6 +4178,8 @@ int main(void) {
   /* Range presentations (weft-surface track, S1) */
   test_add_translator_button_arg();
   test_lcl_presentation_pipeline();
+  test_focus_changed_marshal();
+  test_focus_changed_translator_name();
   test_annot_present_errors();
   test_dsl_translator_matcher_dict();
 
