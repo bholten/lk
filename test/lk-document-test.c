@@ -1094,6 +1094,237 @@ static void test_hist_deep_chain(void) {
 }
 
 /* ================================================================
+ * Delta coordinate contract (SEQUENTIAL, docs/editor-wrap.md
+ * section 7): each delta's positions are expressed in the document
+ * state produced by all preceding deltas of the same transaction.
+ * The decisive check is a replay: applying the recorded deltas one
+ * by one to a copy of the pre-transaction bytes must reproduce the
+ * post-transaction document exactly.
+ * ================================================================ */
+
+/* Replay rec's deltas sequentially over `before`; 1 when the result
+ * (and every delta's captured deleted bytes) matches the document. */
+static int rec_replays_to(const doc_rec *rec, const char *before,
+                          const lk_document *d) {
+  char buf[128];
+  char cur[128];
+  lk_u32 len = (lk_u32)strlen(before);
+  lk_u32 i;
+
+  if (len >= sizeof(buf)) {
+    return 0;
+  }
+
+  memcpy(buf, before, len);
+
+  for (i = 0; i < rec->n; i++) {
+    lk_u32 p = rec->deltas[i].start;
+    lk_u32 dl = rec->deltas[i].deleted_len;
+    lk_u32 il = rec->deltas[i].inserted_len;
+
+    if (p > len || dl > len - p || len - dl + il >= sizeof(buf)) {
+      return 0; /* coordinates invalid in the sequential state */
+    }
+
+    /* the captured deleted bytes must match this state at p */
+    if (dl && memcmp(buf + p, rec->del[i], dl) != 0) {
+      return 0;
+    }
+
+    memmove(buf + p + il, buf + p + dl, len - p - dl);
+
+    if (il) {
+      memcpy(buf + p, rec->ins[i], il);
+    }
+
+    len = len - dl + il;
+  }
+
+  buf[len] = '\0';
+
+  if (len != lk_doc_len(d) || len >= sizeof(cur)) {
+    return 0;
+  }
+
+  doc_all(d, cur);
+
+  return strcmp(buf, cur) == 0;
+}
+
+static void test_delta_seq_newline_insert(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "ab", 2);
+  doc_rec rec;
+
+  BEGIN_TEST("delta seq: one-newline insert");
+
+  memset(&rec, 0, sizeof(rec));
+  lk_doc_subscribe(d, rec_listener, &rec);
+
+  CHECK(lk_doc_insert(d, 1, "x\ny", 3) == 1);
+
+  CHECK_EQ(rec.n, 1);
+  CHECK_EQ(rec.deltas[0].start, 1);
+  CHECK_EQ(rec.deltas[0].inserted_len, 3);
+  CHECK_EQ(rec.deltas[0].deleted_len, 0);
+  CHECK(strcmp(rec.ins[0], "x\ny") == 0);
+  CHECK_EQ(lk_doc_line_count(d), 2);
+  CHECK(rec_replays_to(&rec, "ab", d));
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_delta_seq_newline_delete(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "ab\ncd", 5);
+  doc_rec rec;
+
+  BEGIN_TEST("delta seq: one-newline delete");
+
+  memset(&rec, 0, sizeof(rec));
+  lk_doc_subscribe(d, rec_listener, &rec);
+
+  CHECK(lk_doc_delete(d, 2, 1) == 1);
+
+  CHECK_EQ(rec.n, 1);
+  CHECK_EQ(rec.deltas[0].start, 2);
+  CHECK_EQ(rec.deltas[0].deleted_len, 1);
+  CHECK(strcmp(rec.del[0], "\n") == 0);
+  CHECK_EQ(lk_doc_line_count(d), 1);
+  CHECK(rec_replays_to(&rec, "ab\ncd", d));
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_delta_seq_lines_replaced(void) {
+  lk_document *d =
+      lk_doc_from_str(NULL, NULL, NULL, "aaa\nbbb\nccc\nddd", 15);
+  doc_rec rec;
+  char buf[32];
+
+  BEGIN_TEST("delta seq: N lines replaced with M");
+
+  memset(&rec, 0, sizeof(rec));
+  lk_doc_subscribe(d, rec_listener, &rec);
+
+  /* replace lines 1-2 with three new lines, one transaction */
+  lk_doc_begin(d, 42);
+  CHECK(lk_doc_delete(d, 4, 8) == 1); /* "bbb\nccc\n" */
+  CHECK(lk_doc_insert(d, 4, "X\nY\nZ\n", 6) == 1);
+  lk_doc_commit(d);
+
+  CHECK_EQ(rec.calls, 1);
+  CHECK_EQ(rec.n, 2);
+  CHECK_EQ(rec.deltas[0].start, 4);
+  CHECK_EQ(rec.deltas[0].deleted_len, 8);
+  CHECK(strcmp(rec.del[0], "bbb\nccc\n") == 0);
+
+  /* the insert's start is a position in the POST-delete state */
+  CHECK_EQ(rec.deltas[1].start, 4);
+  CHECK_EQ(rec.deltas[1].inserted_len, 6);
+
+  doc_all(d, buf);
+  CHECK(strcmp(buf, "aaa\nX\nY\nZ\nddd") == 0);
+  CHECK_EQ(lk_doc_line_count(d), 5);
+  CHECK(rec_replays_to(&rec, "aaa\nbbb\nccc\nddd", d));
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_delta_seq_multiple_deltas(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "xy", 2);
+  doc_rec rec;
+  char buf[16];
+
+  BEGIN_TEST("delta seq: multiple primitives, shifted coords");
+
+  memset(&rec, 0, sizeof(rec));
+  lk_doc_subscribe(d, rec_listener, &rec);
+
+  lk_doc_begin(d, 42);
+  CHECK(lk_doc_insert(d, 0, "A", 1) == 1); /* "Axy" */
+  CHECK(lk_doc_insert(d, 2, "B", 1) == 1); /* "AxBy" */
+  lk_doc_commit(d);
+
+  CHECK_EQ(rec.n, 2);
+  CHECK_EQ(rec.deltas[0].start, 0);
+
+  /* start 2 is "between x and y" only in the state produced by the
+   * first delta -- the sequential rule, not original-document
+   * coordinates (which would say 1) */
+  CHECK_EQ(rec.deltas[1].start, 2);
+
+  doc_all(d, buf);
+  CHECK(strcmp(buf, "AxBy") == 0);
+  CHECK(rec_replays_to(&rec, "xy", d));
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_delta_seq_delete_then_insert(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "hello", 5);
+  doc_rec rec;
+  char buf[16];
+
+  BEGIN_TEST("delta seq: delete-then-insert at one position");
+
+  memset(&rec, 0, sizeof(rec));
+  lk_doc_subscribe(d, rec_listener, &rec);
+
+  lk_doc_begin(d, 42);
+  CHECK(lk_doc_delete(d, 1, 3) == 1);
+  CHECK(lk_doc_insert(d, 1, "XY", 2) == 1);
+  lk_doc_commit(d);
+
+  CHECK_EQ(rec.n, 2);
+  CHECK_EQ(rec.deltas[0].start, 1);
+  CHECK_EQ(rec.deltas[0].deleted_len, 3);
+  CHECK_EQ(rec.deltas[1].start, 1);
+  CHECK_EQ(rec.deltas[1].inserted_len, 2);
+
+  doc_all(d, buf);
+  CHECK(strcmp(buf, "hXYo") == 0);
+  CHECK(rec_replays_to(&rec, "hello", d));
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_delta_seq_newline_edges(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "ab\ncd\nef", 8);
+  doc_rec rec;
+  char buf[16];
+
+  BEGIN_TEST("delta seq: change begins/ends exactly on \\n");
+
+  memset(&rec, 0, sizeof(rec));
+  lk_doc_subscribe(d, rec_listener, &rec);
+
+  /* delete "\ncd\n" -- begins on line 0's \n, ends just past line
+   * 1's \n -- then insert a lone "\n" at the join */
+  lk_doc_begin(d, 42);
+  CHECK(lk_doc_delete(d, 2, 4) == 1); /* "abef" */
+  CHECK(lk_doc_insert(d, 2, "\n", 1) == 1);
+  lk_doc_commit(d);
+
+  CHECK_EQ(rec.n, 2);
+  CHECK_EQ(rec.deltas[0].start, 2);
+  CHECK(strcmp(rec.del[0], "\ncd\n") == 0);
+  CHECK_EQ(rec.deltas[1].start, 2);
+  CHECK(strcmp(rec.ins[1], "\n") == 0);
+
+  doc_all(d, buf);
+  CHECK(strcmp(buf, "ab\nef") == 0);
+  CHECK_EQ(lk_doc_line_count(d), 2);
+  CHECK(rec_replays_to(&rec, "ab\ncd\nef", d));
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+/* ================================================================
  * Runner
  * ================================================================ */
 
@@ -1141,6 +1372,14 @@ void lk_document_run_tests(void) {
   test_doc_unsubscribe_stops();
   test_doc_delta_bytes_across_pieces();
   test_doc_revision_chain_in_txn();
+
+  printf("\nlk document delta-contract tests (sequential):\n");
+  test_delta_seq_newline_insert();
+  test_delta_seq_newline_delete();
+  test_delta_seq_lines_replaced();
+  test_delta_seq_multiple_deltas();
+  test_delta_seq_delete_then_insert();
+  test_delta_seq_newline_edges();
 
   printf("\nlk edit history tests:\n");
   test_hist_empty_returns_zero();

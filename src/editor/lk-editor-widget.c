@@ -145,13 +145,16 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
     return 1;
 
   case LKK_HOME:
-    ed_motion(e, ui, ctrl ? LK_ED_MOVE_DOC_START : LK_ED_MOVE_LINE_START,
+    /* Visual-row HOME (identical to logical when unwrapped); the
+     * logical LINE_START command remains reachable for other
+     * keymaps. */
+    ed_motion(e, ui, ctrl ? LK_ED_MOVE_DOC_START : LK_ED_MOVE_ROW_START,
               shift);
 
     return 1;
 
   case LKK_END:
-    ed_motion(e, ui, ctrl ? LK_ED_MOVE_DOC_END : LK_ED_MOVE_LINE_END, shift);
+    ed_motion(e, ui, ctrl ? LK_ED_MOVE_DOC_END : LK_ED_MOVE_ROW_END, shift);
 
     return 1;
 
@@ -333,10 +336,29 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
   case LK_EVENT_WHEEL: {
     lk_editor_cmd_arg arg;
+    lk_i32 vy = ev->data.wheel.dy;
+    lk_i32 hticks = 0;
 
-    memset(&arg, 0, sizeof(arg));
-    arg.lines = -ev->data.wheel.dy * ED_WHEEL_LINES;
-    ed_cmd(e, ui, LK_ED_SCROLL_LINES, &arg);
+    /* In NONE mode, native wheel-dx and SHIFT+wheel-dy scroll
+     * horizontally; vertical behavior is unchanged otherwise. */
+    if (lk_editor_wrap_mode_get(e) == LK_EDITOR_WRAP_NONE) {
+      hticks = ev->data.wheel.dx;
+
+      if (ev->mods & LK_MOD_SHIFT) {
+        hticks -= vy;
+        vy = 0;
+      }
+    }
+
+    if (hticks != 0) {
+      lk_editor_scroll_x_wheel(e, hticks);
+    }
+
+    if (vy != 0) {
+      memset(&arg, 0, sizeof(arg));
+      arg.lines = -vy * ED_WHEEL_LINES;
+      ed_cmd(e, ui, LK_ED_SCROLL_LINES, &arg);
+    }
 
     /* Always consumed: the editor owns its viewport and never leaks
      * wheel events to an ancestor UIK_SCROLL. */

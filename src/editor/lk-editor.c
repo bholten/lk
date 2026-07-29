@@ -5,9 +5,11 @@
  * State: cursor byte offset (codepoint-boundary-aligned), selection
  * anchor (sentinel = none), sticky x-pixel for vertical motion
  * (resolved lazily on the first UP/DOWN after a horizontal move),
- * anchored viewport {top_line, y_offset}, drag flag, tab settings,
- * growable scratch for visible-line extraction, and a transient
- * per-frame geometry block written by lk_editor_layout_node.
+ * anchored viewport {top_byte, y_offset} over VISUAL ROWS, the wrap
+ * cache + horizontal scroll (docs/editor-wrap.md), drag flag, tab
+ * settings, growable scratch for visible-row extraction, and a
+ * transient per-frame geometry block written by
+ * lk_editor_layout_node.
  *
  * The editor subscribes to its own document: LK_ORIGIN_UNDO/REDO
  * transactions derive the cursor from the deltas (end of the last
@@ -45,12 +47,28 @@
 #define ED_TAB_SIZE 4
 #define ED_MAX_SEL_RECTS 3
 
-/* One visible line extracted into the vis scratch. */
+/* One visible VISUAL ROW extracted into the vis scratch (a whole
+ * document line when wrapping is off). */
 typedef struct ed_line {
-  lk_u32 doc_start; /* byte offset of the line start in the document */
-  lk_u32 doc_len;   /* line length in bytes, excluding the \n */
-  lk_u32 off;       /* offset of the line's bytes in e->vis */
+  lk_u32 line;      /* document line index */
+  lk_u32 row;       /* visual row within that line (0 when unwrapped) */
+  lk_u32 doc_start; /* byte offset of the row start in the document */
+  lk_u32 doc_len;   /* row length in bytes, excluding the \n */
+  lk_u32 off;       /* offset of the row's bytes in e->vis */
 } ed_line;
+
+/* Per-document-line wrap cache entry (docs/editor-wrap.md section 1).
+ * breaks[] holds the 2nd..Nth row starts RELATIVE to the line start
+ * (row_count == break_count + 1); an unwrapped line allocates
+ * nothing.  An entry is valid iff generation == e->wrap_generation
+ * (generation 0 is reserved invalid; e->wrap_generation starts at
+ * 1). */
+typedef struct ed_line_wrap {
+  lk_u32 *breaks;
+  lk_u32 break_count;
+  lk_u32 break_cap;
+  lk_u32 generation;
+} ed_line_wrap;
 
 /* One tab-split (and, when spans are active, span-split) run segment,
  * in absolute pixels.  flags/fg/bg are copied out of the matching
@@ -76,6 +94,7 @@ typedef struct ed_geom {
   lk_i32 baseline; /* top of line -> text baseline, for underlines */
   lk_u32 first_line;
   lk_u32 vis_count;
+  lk_i32 scroll_x; /* horizontal scroll this geometry was built with */
   int cursor_vis;
   lk_i32 cursor_x, cursor_y;
   lk_rect sel_rects[ED_MAX_SEL_RECTS];
@@ -94,12 +113,33 @@ struct lk_editor {
 
   lk_u32 cursor;
   lk_u32 anchor;   /* ED_NO_ANCHOR = no selection */
-  lk_i32 sticky_x; /* ED_STICKY_NONE = unset */
+  lk_i32 sticky_x; /* ED_STICKY_NONE = unset; x within the VISUAL ROW */
   lk_editor_viewport vp;
   int drag;
   lk_u32 tab_size;
   int in_command; /* inside one of our own doc transactions */
   int pending_scroll;
+  lk_i32 scroll_x; /* horizontal scroll px; forced 0 while wrapping */
+
+  /* wrap engine (docs/editor-wrap.md).  wrap[] is one entry per
+   * document line, spliced in lockstep with the line index by
+   * ed_on_doc; it is materialized only while wrap_mode != NONE.
+   * The wrap key (width/font/tab/backend POINTER) is stamped by
+   * layout; any change bumps wrap_generation -- one integer write,
+   * never a sweep. */
+  lk_u32 wrap_mode; /* lk_editor_wrap_mode */
+  ed_line_wrap *wrap;
+  lk_u32 wrap_count, wrap_cap;
+  lk_u32 wrap_generation;
+  lk_i32 wrap_w; /* wrap key: content width px (0 = no layout yet) */
+  const void *wrap_tb;
+  lk_u16 wrap_font_id, wrap_font_size;
+  lk_u32 wrap_tab;
+
+  /* scroll-extent estimator (docs/editor-wrap.md section 6): running
+   * pixel/byte totals over measured lines; consumed ONLY at the
+   * scroll-extent edge, never by the wrap engine itself. */
+  lk_u32 est_px, est_bytes;
 
   /* last-known metrics (survive geometry invalidation) */
   lk_i32 line_h;
@@ -118,6 +158,11 @@ struct lk_editor {
   /* command-time single-line extraction buffer */
   char *line_buf;
   lk_u32 line_buf_cap;
+
+  /* wrap-measurement line buffer (separate from line_buf: break
+   * finding runs while callers hold line_buf text) */
+  char *wrap_buf;
+  lk_u32 wrap_buf_cap;
 
   /* styled-span snapshot (deep copy; docs/editor.md section 10) */
   lk_edit_span *spans;
@@ -765,6 +810,481 @@ static const char *ed_line_text(lk_editor *e, lk_u32 line, lk_u32 *out_len,
   return e->line_buf;
 }
 
+/* ---- Wrap cache (docs/editor-wrap.md sections 1-3) ---- */
+
+static int ed_wrap_buf_reserve(lk_editor *e, lk_u32 needed) {
+  lk_u32 nc;
+  char *nb;
+
+  if (needed <= e->wrap_buf_cap) {
+    return 1;
+  }
+
+  nc = ed_grow_cap(e->wrap_buf_cap, needed, 128);
+  nb = (char *)ed_grow_buf(e, e->wrap_buf, 0, nc);
+
+  if (!nb) {
+    return 0;
+  }
+
+  e->wrap_buf = nb;
+  e->wrap_buf_cap = nc;
+
+  return 1;
+}
+
+/* Wrapping is effective only once layout has stamped a width. */
+static int ed_wrapping(const lk_editor *e) {
+  return e->wrap_mode != LK_EDITOR_WRAP_NONE && e->wrap != NULL &&
+         e->wrap_w > 0;
+}
+
+static int ed_break_push(lk_editor *e, ed_line_wrap *w, lk_u32 rel) {
+  if (w->break_count >= w->break_cap) {
+    lk_u32 nc = ed_grow_cap(w->break_cap, w->break_count + 1, 8);
+    lk_u32 *nb = (lk_u32 *)ed_grow_buf(e, w->breaks,
+                                       w->break_count * (lk_u32)sizeof(lk_u32),
+                                       nc * (lk_u32)sizeof(lk_u32));
+
+    if (!nb) {
+      return 0;
+    }
+
+    w->breaks = nb;
+    w->break_cap = nc;
+  }
+
+  w->breaks[w->break_count++] = rel;
+
+  return 1;
+}
+
+/* THE fit policy (character wrap): byte length of the longest prefix
+ * of the tab-free segment seg[0..len) whose pixel extent fits in
+ * avail.  One backend fit query (nearest boundary) plus one
+ * floor-correction -- never per-codepoint accumulation.  Word wrap
+ * later is a different policy in this ONE function (prefer the last
+ * whitespace boundary at-or-before this result, char-fallback for
+ * unbreakable runs); nothing outside changes. */
+static lk_u32 ed_fit_prefix(const lk_editor *e, const lk_text_backend *tb,
+                            const char *seg, lk_u32 len, lk_i32 avail) {
+  lk_u32 ix;
+
+  if (avail <= 0) {
+    return 0;
+  }
+
+  ix = ed_run_ix(e, tb, seg, len, avail);
+
+  if (ix > len) {
+    ix = len;
+  }
+
+  if (ix > 0 && ed_run_x(e, tb, seg, len, ix) > avail) {
+    ix = lk_utf8_prev(seg, len, ix);
+  }
+
+  return ix;
+}
+
+/* Find the wrap breaks of one line (p[0..len), no \n).  Tab stops are
+ * relative to the CURRENT VISUAL ROW's x = 0; a tab that would land
+ * past the width breaks first.  Empty-row progress guarantee: when
+ * nothing fits on an empty row, one boundary is taken anyway.
+ * Writes the final row's end x to *out_last_x (for the estimator).
+ * Returns 0 only on allocation failure. */
+static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
+                             ed_line_wrap *w, const char *p, lk_u32 len,
+                             lk_i32 *out_last_x) {
+  lk_i32 width = e->wrap_w;
+  lk_i32 tabpx = ed_tab_px(e);
+  lk_i32 x = 0;
+  lk_u32 i = 0;
+  lk_u32 row_start = 0;
+
+  w->break_count = 0;
+
+  while (i < len) {
+    if (p[i] == '\t') {
+      lk_i32 stop = (x / tabpx + 1) * tabpx;
+
+      if (stop > width && i > row_start) {
+        if (!ed_break_push(e, w, i)) {
+          return 0;
+        }
+
+        row_start = i;
+        x = 0;
+        continue; /* re-place the tab on the fresh row */
+      }
+
+      x = stop;
+      i++;
+      continue;
+    }
+
+    {
+      lk_u32 j = i;
+      lk_i32 seg_w;
+      lk_u32 fit;
+
+      while (j < len && p[j] != '\t') {
+        j++;
+      }
+
+      seg_w = ed_run_x(e, tb, p + i, j - i, j - i);
+
+      if (x + seg_w <= width) {
+        x += seg_w;
+        i = j;
+        continue;
+      }
+
+      fit = ed_fit_prefix(e, tb, p + i, j - i, width - x);
+
+      if (fit == 0 && i == row_start) {
+        /* progress guarantee */
+        fit = lk_utf8_next(p, len, i) - i;
+      }
+
+      if (i + fit >= len) {
+        x += ed_run_x(e, tb, p + i, j - i, fit);
+        i += fit;
+        continue;
+      }
+
+      if (!ed_break_push(e, w, i + fit)) {
+        return 0;
+      }
+
+      i += fit;
+      row_start = i;
+      x = 0;
+    }
+  }
+
+  *out_last_x = x;
+
+  return 1;
+}
+
+/* Ensure the line's wrap entry is valid at the current generation,
+ * measuring lazily on demand.  NULL when wrapping is off (every line
+ * is one row). */
+static const ed_line_wrap *ed_wrap_line(lk_editor *e,
+                                        const lk_text_backend *tb,
+                                        lk_u32 line) {
+  ed_line_wrap *w;
+  lk_u32 ls;
+  lk_u32 le;
+  lk_u32 len;
+  lk_i32 last_x = 0;
+
+  if (!ed_wrapping(e) || line >= e->wrap_count) {
+    return NULL;
+  }
+
+  w = &e->wrap[line];
+
+  if (w->generation == e->wrap_generation) {
+    return w;
+  }
+
+  ls = lk_doc_line_start(e->doc, line);
+  le = lk_doc_line_end(e->doc, line);
+  len = le - ls;
+  w->break_count = 0;
+
+  if (len > 0) {
+    if (!ed_wrap_buf_reserve(e, len)) {
+      return NULL;
+    }
+
+    lk_doc_get_text(e->doc, ls, e->wrap_buf, len);
+
+    if (!ed_measure_breaks(e, tb, w, e->wrap_buf, len, &last_x)) {
+      return NULL;
+    }
+
+    /* estimator update: rows before the last are full-ish */
+    e->est_px += w->break_count * (lk_u32)e->wrap_w + (lk_u32)last_x;
+    e->est_bytes += len;
+
+    if (e->est_px > 0x40000000u) {
+      e->est_px /= 2;
+      e->est_bytes = e->est_bytes / 2 ? e->est_bytes / 2 : 1;
+    }
+  }
+
+  w->generation = e->wrap_generation;
+
+  return w;
+}
+
+static lk_u32 ed_row_count_of(const ed_line_wrap *w) {
+  return w ? w->break_count + 1 : 1;
+}
+
+static lk_u32 ed_row_start_rel(const ed_line_wrap *w, lk_u32 row) {
+  return (w && row > 0) ? w->breaks[row - 1] : 0;
+}
+
+static lk_u32 ed_row_end_rel(const ed_line_wrap *w, lk_u32 row,
+                             lk_u32 line_len) {
+  return (w && row < w->break_count) ? w->breaks[row] : line_len;
+}
+
+/* Half-open row ownership (pinned, docs/editor-wrap.md section 3):
+ * row i owns caret positions [row_start_i, row_start_i+1); a position
+ * exactly at a wrap break belongs to the NEXT row; the final row
+ * additionally owns the end-of-line caret.  EVERY consumer -- cursor
+ * xy, vertical motion, ROW commands, selection rects, clicks,
+ * scroll-to-cursor -- routes through here. */
+static void ed_pos_to_row(lk_editor *e, const lk_text_backend *tb, lk_u32 pos,
+                          lk_u32 *out_line, lk_u32 *out_row) {
+  lk_u32 line = lk_doc_pos_to_line(e->doc, pos);
+  const ed_line_wrap *w = ed_wrap_line(e, tb, line);
+  lk_u32 rel = pos - lk_doc_line_start(e->doc, line);
+  lk_u32 row = 0;
+
+  if (w) {
+    while (row < w->break_count && rel >= w->breaks[row]) {
+      row++;
+    }
+  }
+
+  *out_line = line;
+  *out_row = row;
+}
+
+/* Step one visual row forward/backward; 0 at the document edge. */
+static int ed_row_next(lk_editor *e, const lk_text_backend *tb, lk_u32 *line,
+                       lk_u32 *row) {
+  if (*row + 1 < ed_row_count_of(ed_wrap_line(e, tb, *line))) {
+    (*row)++;
+
+    return 1;
+  }
+
+  if (*line + 1 >= lk_doc_line_count(e->doc)) {
+    return 0;
+  }
+
+  (*line)++;
+  *row = 0;
+
+  return 1;
+}
+
+static int ed_row_prev(lk_editor *e, const lk_text_backend *tb, lk_u32 *line,
+                       lk_u32 *row) {
+  if (*row > 0) {
+    (*row)--;
+
+    return 1;
+  }
+
+  if (*line == 0) {
+    return 0;
+  }
+
+  (*line)--;
+  *row = ed_row_count_of(ed_wrap_line(e, tb, *line)) - 1;
+
+  return 1;
+}
+
+static lk_u32 ed_rows_back_n(lk_editor *e, const lk_text_backend *tb,
+                             lk_u32 *line, lk_u32 *row, lk_u32 n) {
+  lk_u32 done = 0;
+
+  while (done < n && ed_row_prev(e, tb, line, row)) {
+    done++;
+  }
+
+  return done;
+}
+
+/* Anchor that bottom-aligns row (bl, br) in a view_h viewport: back
+ * up q-1 rows (r == 0) or q rows with y_offset = line_h - r.  Only
+ * the walked rows' lines get measured -- this is both the bottom
+ * scroll clamp and the distant scroll-to-cursor placement, so it is
+ * viewport-bounded by construction. */
+static void ed_bottom_anchor(lk_editor *e, const lk_text_backend *tb,
+                             lk_u32 bl, lk_u32 br, lk_i32 line_h,
+                             lk_i32 view_h, lk_u32 *al, lk_u32 *ar,
+                             lk_i32 *ay) {
+  lk_u32 q = (lk_u32)(view_h / line_h);
+  lk_i32 r = view_h % line_h;
+  lk_u32 need = (r == 0) ? (q ? q - 1 : 0) : q;
+  lk_u32 got;
+
+  *al = bl;
+  *ar = br;
+  got = ed_rows_back_n(e, tb, al, ar, need);
+  *ay = (got < need || r == 0) ? 0 : line_h - r;
+}
+
+/* Estimated rows of an unmeasured line (docs/editor-wrap.md section
+ * 6): max(1, ceil(len * avg_px_per_byte / wrap_width)), the average
+ * running over measured lines with the space advance as seed. */
+static lk_u32 ed_est_rows(const lk_editor *e, lk_u32 line_len) {
+  unsigned long num;
+  unsigned long den;
+  unsigned long est;
+
+  if (!ed_wrapping(e) || line_len == 0) {
+    return 1;
+  }
+
+  if (e->est_bytes > 0) {
+    num = (unsigned long)e->est_px;
+    den = (unsigned long)e->est_bytes;
+  } else {
+    num = (unsigned long)ed_advance(e);
+    den = 1;
+  }
+
+  den *= (unsigned long)e->wrap_w;
+  est = ((unsigned long)line_len * num + den - 1) / den;
+
+  return est ? (lk_u32)est : 1;
+}
+
+/* Exact rows for a valid entry, estimate otherwise (scroll-extent
+ * edge only). */
+static lk_u32 ed_rows_or_est(const lk_editor *e, lk_u32 line) {
+  if (e->wrap && line < e->wrap_count &&
+      e->wrap[line].generation == e->wrap_generation) {
+    return e->wrap[line].break_count + 1;
+  }
+
+  return ed_est_rows(e, lk_doc_line_end(e->doc, line) -
+                            lk_doc_line_start(e->doc, line));
+}
+
+/* ---- Wrap array lifecycle + delta splicing (section 7) ---- */
+
+static void ed_wrap_release(lk_editor *e) {
+  lk_u32 i;
+
+  if (!e->wrap) {
+    return;
+  }
+
+  for (i = 0; i < e->wrap_count; i++) {
+    if (e->wrap[i].breaks) {
+      e->dealloc(e->ud, e->wrap[i].breaks);
+    }
+  }
+
+  e->dealloc(e->ud, e->wrap);
+  e->wrap = NULL;
+  e->wrap_count = 0;
+  e->wrap_cap = 0;
+}
+
+static int ed_wrap_reserve(lk_editor *e, lk_u32 needed) {
+  lk_u32 nc;
+  ed_line_wrap *nb;
+
+  if (needed <= e->wrap_cap) {
+    return 1;
+  }
+
+  nc = ed_grow_cap(e->wrap_cap, needed, 64);
+  nb = (ed_line_wrap *)ed_grow_buf(e, e->wrap,
+                                   e->wrap_count *
+                                       (lk_u32)sizeof(ed_line_wrap),
+                                   nc * (lk_u32)sizeof(ed_line_wrap));
+
+  if (!nb) {
+    return 0;
+  }
+
+  e->wrap = nb;
+  e->wrap_cap = nc;
+
+  return 1;
+}
+
+/* Fresh all-invalid array sized to the current document. */
+static int ed_wrap_materialize(lk_editor *e) {
+  lk_u32 lc = lk_doc_line_count(e->doc);
+
+  ed_wrap_release(e);
+
+  if (!ed_wrap_reserve(e, lc ? lc : 1)) {
+    return 0;
+  }
+
+  memset(e->wrap, 0, lc * sizeof(ed_line_wrap));
+  e->wrap_count = lc;
+
+  return 1;
+}
+
+/* Insert n fresh invalid entries at index at (entries below shift by
+ * index only -- relative offsets make that free). */
+static int ed_wrap_splice_in(lk_editor *e, lk_u32 at, lk_u32 n) {
+  if (at > e->wrap_count) {
+    at = e->wrap_count;
+  }
+
+  if (!ed_wrap_reserve(e, e->wrap_count + n)) {
+    return 0;
+  }
+
+  if (at < e->wrap_count) {
+    memmove(e->wrap + at + n, e->wrap + at,
+            (e->wrap_count - at) * sizeof(ed_line_wrap));
+  }
+
+  memset(e->wrap + at, 0, n * sizeof(ed_line_wrap));
+  e->wrap_count += n;
+
+  return 1;
+}
+
+/* Remove n entries at index at, freeing their breaks arrays. */
+static void ed_wrap_splice_out(lk_editor *e, lk_u32 at, lk_u32 n) {
+  lk_u32 i;
+
+  if (at >= e->wrap_count) {
+    return;
+  }
+
+  if (n > e->wrap_count - at) {
+    n = e->wrap_count - at;
+  }
+
+  for (i = at; i < at + n; i++) {
+    if (e->wrap[i].breaks) {
+      e->dealloc(e->ud, e->wrap[i].breaks);
+    }
+  }
+
+  if (at + n < e->wrap_count) {
+    memmove(e->wrap + at, e->wrap + at + n,
+            (e->wrap_count - at - n) * sizeof(ed_line_wrap));
+  }
+
+  e->wrap_count -= n;
+}
+
+static lk_u32 ed_count_nl(const char *p, lk_u32 len) {
+  lk_u32 i;
+  lk_u32 n = 0;
+
+  for (i = 0; i < len; i++) {
+    if (p[i] == '\n') {
+      n++;
+    }
+  }
+
+  return n;
+}
+
 /* ---- Selection helpers ---- */
 
 static int ed_sel_range(const lk_editor *e, lk_u32 *lo, lk_u32 *hi) {
@@ -808,6 +1328,78 @@ static void ed_on_doc(void *ud, const lk_document *d,
   /* Geometry is stale after any committed change; the next layout
    * recomputes it. */
   e->geom.valid = 0;
+
+  /* Viewport anchor transform, per delta in sequential order.
+   * Affinity is pinned RIGHT: an insertion exactly at top_byte
+   * (top_byte == p, hence the >=) shifts the anchor past the
+   * inserted bytes, so the content being read stays at the top of
+   * the viewport. */
+  {
+    lk_u32 di;
+
+    for (di = 0; di < n; di++) {
+      lk_u32 p = deltas[di].start;
+      lk_u32 dl = deltas[di].deleted_len;
+      lk_u32 il = deltas[di].inserted_len;
+
+      if (dl > 0) {
+        if (e->vp.top_byte >= p + dl) {
+          e->vp.top_byte -= dl;
+        } else if (e->vp.top_byte > p) {
+          e->vp.top_byte = p;
+        }
+      }
+
+      if (il > 0 && e->vp.top_byte >= p) {
+        e->vp.top_byte += il; /* RIGHT affinity */
+      }
+    }
+  }
+
+  /* Wrap-cache splice (docs/editor-wrap.md section 7), per delta in
+   * sequential order: dirty the touched line, add fresh invalid
+   * entries for inserted newlines, drop entries for deleted ones.
+   * Entries below shift by index only (relative break offsets).
+   * pos_to_line queries the post-transaction document; the line
+   * index AT delta.start is unchanged by the delta itself and by
+   * later deltas at or after it, which covers every transaction the
+   * editor, history, or an ascending multi-edit producer emits.  The
+   * count check below resyncs anything exotic. */
+  if (e->wrap) {
+    lk_u32 di;
+
+    for (di = 0; di < n; di++) {
+      lk_u32 line = lk_doc_pos_to_line(d, deltas[di].start);
+      lk_u32 del_nl = ed_count_nl(deltas[di].deleted,
+                                  deltas[di].deleted_len);
+      lk_u32 ins_nl = ed_count_nl(deltas[di].inserted,
+                                  deltas[di].inserted_len);
+
+      if (line >= e->wrap_count) {
+        line = e->wrap_count ? e->wrap_count - 1 : 0;
+      }
+
+      if (line < e->wrap_count) {
+        e->wrap[line].generation = 0;
+        e->wrap[line].break_count = 0;
+      }
+
+      if (ins_nl > del_nl) {
+        if (!ed_wrap_splice_in(e, line + 1, ins_nl - del_nl)) {
+          ed_wrap_release(e); /* degrade; rebuilt by the count check */
+          break;
+        }
+      } else if (del_nl > ins_nl) {
+        ed_wrap_splice_out(e, line + 1, del_nl - ins_nl);
+      }
+    }
+
+    if (e->wrap_count != lk_doc_line_count(d)) {
+      ed_wrap_materialize(e);
+    }
+  } else if (e->wrap_mode != LK_EDITOR_WRAP_NONE) {
+    ed_wrap_materialize(e); /* recover from a failed splice */
+  }
 
   /* Keep the styled-span copy usable through this transaction: if it
    * was current when the transaction began, forward-transform it per
@@ -891,13 +1483,9 @@ static void ed_on_doc(void *ud, const lk_document *d,
     e->sticky_x = ED_STICKY_NONE;
   }
 
-  {
-    lk_u32 lc = lk_doc_line_count(d);
-
-    if (e->vp.top_line >= lc) {
-      e->vp.top_line = lc - 1;
-      e->vp.y_offset = 0;
-    }
+  if (e->vp.top_byte > lk_doc_len(d)) {
+    e->vp.top_byte = lk_doc_line_start(d, lk_doc_line_count(d) - 1);
+    e->vp.y_offset = 0;
   }
 }
 
@@ -935,6 +1523,7 @@ lk_editor *lk_editor_new(void *(*alloc)(void *, lk_u32),
   e->tab_size = ED_TAB_SIZE;
   e->line_h = ED_FALLBACK_LINE_H;
   e->space_adv = ED_FALLBACK_ADVANCE;
+  e->wrap_generation = 1; /* entry generation 0 is reserved invalid */
   e->sub_id = lk_doc_subscribe(doc, ed_on_doc, e);
 
   return e;
@@ -964,6 +1553,12 @@ void lk_editor_destroy(lk_editor *e) {
   if (e->line_buf) {
     e->dealloc(e->ud, e->line_buf);
   }
+
+  if (e->wrap_buf) {
+    e->dealloc(e->ud, e->wrap_buf);
+  }
+
+  ed_wrap_release(e);
 
   if (e->spans) {
     e->dealloc(e->ud, e->spans);
@@ -1016,7 +1611,7 @@ int lk_editor_selection(const lk_editor *e, lk_u32 *out_start,
 lk_editor_viewport lk_editor_get_viewport(const lk_editor *e) {
   lk_editor_viewport vp;
 
-  vp.top_line = 0;
+  vp.top_byte = 0;
   vp.y_offset = 0;
 
   return e ? e->vp : vp;
@@ -1030,6 +1625,74 @@ void lk_editor_scroll_to_cursor(lk_editor *e) {
 
 lk_u32 lk_editor_tab_size(const lk_editor *e) {
   return e ? e->tab_size : ED_TAB_SIZE;
+}
+
+/* ---- Wrap modes (docs/editor-wrap.md section 5) ---- */
+
+int lk_editor_set_wrap_mode(lk_editor *e, lk_editor_wrap_mode m) {
+  if (!e) {
+    return 0;
+  }
+
+  if (m != LK_EDITOR_WRAP_NONE && m != LK_EDITOR_WRAP_CHARACTER) {
+    return 0; /* WORD is rejected until implemented */
+  }
+
+  if ((lk_u32)m == e->wrap_mode) {
+    return 1;
+  }
+
+  if (m == LK_EDITOR_WRAP_CHARACTER) {
+    if (!ed_wrap_materialize(e)) {
+      return 0;
+    }
+
+    e->scroll_x = 0;
+  } else {
+    ed_wrap_release(e);
+  }
+
+  e->wrap_mode = (lk_u32)m;
+  e->wrap_generation++;
+  e->geom.valid = 0;
+
+  return 1;
+}
+
+lk_editor_wrap_mode lk_editor_wrap_mode_get(const lk_editor *e) {
+  return e ? (lk_editor_wrap_mode)e->wrap_mode : LK_EDITOR_WRAP_NONE;
+}
+
+void lk_editor_invalidate_layout(lk_editor *e) {
+  if (e) {
+    e->wrap_generation++;
+    e->geom.valid = 0;
+  }
+}
+
+void lk_editor_scroll_x_wheel(lk_editor *e, lk_i32 ticks) {
+  if (!e || ticks == 0 || e->wrap_mode != LK_EDITOR_WRAP_NONE) {
+    return;
+  }
+
+  e->scroll_x += ticks * 3 * ed_advance(e);
+
+  if (e->scroll_x < 0) {
+    e->scroll_x = 0;
+  }
+}
+
+lk_i32 lk_editor_scroll_x(const lk_editor *e) {
+  return e ? e->scroll_x : 0;
+}
+
+lk_u32 lk_editor_wrap_rows(const lk_editor *e, lk_u32 line) {
+  if (!e || !e->wrap || line >= e->wrap_count ||
+      e->wrap[line].generation != e->wrap_generation) {
+    return 0;
+  }
+
+  return e->wrap[line].break_count + 1;
 }
 
 /* ---- Styled spans (docs/editor.md section 10) ---- */
@@ -1225,59 +1888,97 @@ static lk_i32 ed_page_size(const lk_editor *e) {
   return e->page_lines > 0 ? e->page_lines : ED_FALLBACK_PAGE_LINES;
 }
 
-/* Vertical motion by delta lines with sticky-x column resolution.
- * Boundary behavior mirrors weft: UP on the first line goes to 0,
- * DOWN on the last line goes to the end (sticky x preserved). */
+/* Bounds of visual row (line, row): absolute start byte, byte length
+ * (no \n), and whether it is the line's final row. */
+static void ed_row_bounds(lk_editor *e, const lk_text_backend *tb,
+                          lk_u32 line, lk_u32 row, lk_u32 *out_start,
+                          lk_u32 *out_len, int *out_final) {
+  const ed_line_wrap *w = ed_wrap_line(e, tb, line);
+  lk_u32 ls = lk_doc_line_start(e->doc, line);
+  lk_u32 llen = lk_doc_line_end(e->doc, line) - ls;
+  lk_u32 rs = ed_row_start_rel(w, row);
+
+  *out_start = ls + rs;
+  *out_len = ed_row_end_rel(w, row, llen) - rs;
+
+  if (out_final) {
+    *out_final = !w || row >= w->break_count;
+  }
+}
+
+/* Vertical motion by delta VISUAL ROWS with sticky-x resolution in
+ * the target row (a row is a whole line when wrapping is off, so the
+ * pre-wrap behavior is the degenerate case).  Boundary behavior
+ * mirrors weft: UP on the first row goes to 0, DOWN on the last row
+ * goes to the end (sticky x preserved). */
 static int ed_move_vert(lk_editor *e, lk_ui *ui, lk_i32 delta, int select) {
   const lk_text_backend *tb = ui ? ui->text : NULL;
   lk_u32 old_cursor = e->cursor;
   lk_u32 lo;
   lk_u32 hi;
   int had_sel = ed_sel_range(e, &lo, &hi);
-  lk_u32 line = lk_doc_pos_to_line(e->doc, e->cursor);
+  lk_u32 cl;
+  lk_u32 cr;
   lk_u32 lcount = lk_doc_line_count(e->doc);
+  int at_last;
 
+  ed_pos_to_row(e, tb, e->cursor, &cl, &cr);
+  at_last = cl >= lcount - 1 &&
+            cr + 1 >= ed_row_count_of(ed_wrap_line(e, tb, cl));
   ed_motion_begin(e, select);
 
-  if (delta < 0 && line == 0) {
+  if (delta < 0 && cl == 0 && cr == 0) {
     e->cursor = 0;
-  } else if (delta > 0 && line >= lcount - 1) {
+  } else if (delta > 0 && at_last) {
     e->cursor = lk_doc_len(e->doc);
   } else {
-    lk_u32 target;
+    lk_u32 n = (lk_u32)(delta < 0 ? -delta : delta);
+    lk_u32 k;
+    lk_u32 rstart;
+    lk_u32 rlen;
+    int final;
     const char *text;
     lk_u32 tlen;
     lk_u32 tstart;
-
-    if (delta < 0) {
-      lk_u32 d = (lk_u32)(-delta);
-
-      target = line > d ? line - d : 0;
-    } else {
-      target = line + (lk_u32)delta;
-
-      if (target > lcount - 1) {
-        target = lcount - 1;
-      }
-    }
+    lk_u32 ix;
 
     if (e->sticky_x < 0) {
-      text = ed_line_text(e, line, &tlen, &tstart);
+      ed_row_bounds(e, tb, cl, cr, &rstart, &rlen, NULL);
+      text = ed_line_text(e, cl, &tlen, &tstart);
 
       if (!text) {
         return 0;
       }
 
-      e->sticky_x = ed_line_x_from_ix(e, tb, text, tlen, e->cursor - tstart);
+      e->sticky_x = ed_line_x_from_ix(e, tb, text + (rstart - tstart), rlen,
+                                      e->cursor - rstart);
     }
 
-    text = ed_line_text(e, target, &tlen, &tstart);
+    for (k = 0; k < n; k++) {
+      if (delta < 0 ? !ed_row_prev(e, tb, &cl, &cr)
+                    : !ed_row_next(e, tb, &cl, &cr)) {
+        break;
+      }
+    }
+
+    ed_row_bounds(e, tb, cl, cr, &rstart, &rlen, &final);
+    text = ed_line_text(e, cl, &tlen, &tstart);
 
     if (!text) {
       return 0;
     }
 
-    e->cursor = tstart + ed_line_ix_from_x(e, tb, text, tlen, e->sticky_x);
+    ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen,
+                           e->sticky_x);
+
+    /* A non-final row's end position IS the wrap break, which the
+     * NEXT row owns -- clamp inside the row so the caret lands where
+     * the motion aimed. */
+    if (!final && ix >= rlen && rlen > 0) {
+      ix = lk_utf8_prev(text + (rstart - tstart), rlen, rlen);
+    }
+
+    e->cursor = rstart + ix;
   }
 
   e->pending_scroll = 1;
@@ -1449,6 +2150,33 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
         e, lk_doc_line_end(e->doc, lk_doc_pos_to_line(e->doc, e->cursor)),
         select);
 
+  case LK_ED_MOVE_ROW_START: {
+    lk_u32 cl;
+    lk_u32 cr;
+    lk_u32 rstart;
+    lk_u32 rlen;
+
+    ed_pos_to_row(e, ui ? ui->text : NULL, e->cursor, &cl, &cr);
+    ed_row_bounds(e, ui ? ui->text : NULL, cl, cr, &rstart, &rlen, NULL);
+
+    return ed_move_to(e, rstart, select);
+  }
+
+  case LK_ED_MOVE_ROW_END: {
+    lk_u32 cl;
+    lk_u32 cr;
+    lk_u32 rstart;
+    lk_u32 rlen;
+
+    ed_pos_to_row(e, ui ? ui->text : NULL, e->cursor, &cl, &cr);
+    ed_row_bounds(e, ui ? ui->text : NULL, cl, cr, &rstart, &rlen, NULL);
+
+    /* Row end: the wrap break for a non-final row (owned by the NEXT
+     * row per the pinned rule -- the caret renders at its start), the
+     * line end for the final row. */
+    return ed_move_to(e, rstart + rlen, select);
+  }
+
   case LK_ED_MOVE_DOC_START:
     return ed_move_to(e, 0, select);
 
@@ -1541,35 +2269,117 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
   }
 
   case LK_ED_SCROLL_LINES: {
-    lk_u32 old_top = e->vp.top_line;
+    lk_u32 old_top = e->vp.top_byte;
     lk_i32 old_off = e->vp.y_offset;
-    lk_u32 lcount;
+    lk_u32 lcount = lk_doc_line_count(e->doc);
+    const lk_text_backend *tb = ui ? ui->text : NULL;
 
     if (!arg || arg->lines == 0) {
       return 0;
     }
 
-    if (arg->lines < 0) {
-      lk_u32 d = (lk_u32)(-arg->lines);
+    if (!ed_wrapping(e)) {
+      lk_u32 line = lk_doc_pos_to_line(e->doc, e->vp.top_byte);
 
-      if (e->vp.top_line > d) {
-        e->vp.top_line -= d;
+      if (arg->lines < 0) {
+        lk_u32 d = (lk_u32)(-arg->lines);
+
+        if (line > d) {
+          line -= d;
+        } else {
+          line = 0;
+          e->vp.y_offset = 0;
+        }
       } else {
-        e->vp.top_line = 0;
-        e->vp.y_offset = 0;
-      }
-    } else {
-      e->vp.top_line += (lk_u32)arg->lines;
-      lcount = lk_doc_line_count(e->doc);
+        line += (lk_u32)arg->lines;
 
-      if (e->vp.top_line >= lcount) {
-        e->vp.top_line = lcount - 1;
+        if (line >= lcount) {
+          line = lcount - 1;
+        }
       }
+
+      e->vp.top_byte = lk_doc_line_start(e->doc, line);
+    } else {
+      lk_u32 al;
+      lk_u32 ar;
+      lk_u32 n = (lk_u32)(arg->lines < 0 ? -arg->lines : arg->lines);
+      lk_u32 distant = (lk_u32)ed_page_size(e) * 4u + 8u;
+
+      ed_pos_to_row(e, tb, e->vp.top_byte, &al, &ar);
+
+      if (n <= distant) {
+        /* near: walk visual rows, measuring only the walked lines */
+        lk_u32 k;
+
+        for (k = 0; k < n; k++) {
+          if (arg->lines < 0 ? !ed_row_prev(e, tb, &al, &ar)
+                             : !ed_row_next(e, tb, &al, &ar)) {
+            if (arg->lines < 0) {
+              e->vp.y_offset = 0;
+            }
+
+            break;
+          }
+        }
+      } else if (arg->lines > 0) {
+        /* distant down: consume exact-or-ESTIMATED rows per line
+         * (cheap arithmetic, no backend calls) to pick the target
+         * line, then measure just that line -- the scroll-extent
+         * edge is the one sanctioned estimate consumer. */
+        lk_u32 skip = n;
+        lk_u32 avail = ed_rows_or_est(e, al) - ar;
+
+        while (avail <= skip && al + 1 < lcount) {
+          skip -= avail;
+          al++;
+          ar = 0;
+          avail = ed_rows_or_est(e, al);
+        }
+
+        {
+          lk_u32 rc = ed_row_count_of(ed_wrap_line(e, tb, al));
+
+          ar = (al + 1 < lcount || avail > skip) ? ar + skip : rc;
+
+          if (ar >= rc) {
+            ar = rc - 1;
+          }
+        }
+      } else {
+        /* distant up: same estimate consumption backwards */
+        lk_u32 skip = n;
+        lk_u32 avail = ar;
+
+        while (avail < skip && al > 0) {
+          skip -= avail;
+          al--;
+          avail = ed_rows_or_est(e, al);
+          ar = avail;
+        }
+
+        if (avail >= skip) {
+          lk_u32 rc = ed_row_count_of(ed_wrap_line(e, tb, al));
+
+          ar = avail - skip;
+
+          if (ar >= rc) {
+            ar = rc - 1;
+          }
+        } else {
+          al = 0;
+          ar = 0;
+          e->vp.y_offset = 0;
+        }
+      }
+
+      e->vp.top_byte =
+          lk_doc_line_start(e->doc, al) +
+          ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
     }
 
     /* Precise bottom clamping happens at the next layout, which knows
      * the viewport height. */
-    return e->vp.top_line != old_top || e->vp.y_offset != old_off;
+    return e->vp.top_byte != old_top || e->vp.y_offset != old_off;
   }
 
   default:
@@ -1579,39 +2389,17 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
 /* ---- Layout hook body (transient geometry) ---- */
 
-/* Decompose "pixel offset = top_line * line_h + y_offset" arithmetic
- * without ever forming the full product (docs/editor.md section 9).
- * Given viewport height V = q * line_h + r, the maximum anchored
- * scroll for a document of L lines is:
- *   L <= q          -> (0, 0)
- *   r == 0          -> (L - q, 0)
- *   otherwise       -> (L - q - 1, line_h - r)
- */
-static void ed_max_scroll(lk_u32 lcount, lk_i32 line_h, lk_i32 view_h,
-                          lk_u32 *out_top, lk_i32 *out_off) {
-  lk_u32 q;
-  lk_i32 r;
-
-  if (view_h <= 0 || line_h <= 0) {
-    *out_top = 0;
-    *out_off = 0;
-
-    return;
+/* Lexicographic visual-row order. */
+static int ed_rowpos_cmp(lk_u32 l1, lk_u32 r1, lk_u32 l2, lk_u32 r2) {
+  if (l1 != l2) {
+    return l1 < l2 ? -1 : 1;
   }
 
-  q = (lk_u32)(view_h / line_h);
-  r = view_h % line_h;
-
-  if (lcount <= q) {
-    *out_top = 0;
-    *out_off = 0;
-  } else if (r == 0) {
-    *out_top = lcount - q;
-    *out_off = 0;
-  } else {
-    *out_top = lcount - q - 1;
-    *out_off = line_h - r;
+  if (r1 != r2) {
+    return r1 < r2 ? -1 : 1;
   }
+
+  return 0;
 }
 
 void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
@@ -1620,12 +2408,15 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   lk_i32 line_h;
   lk_i32 view_h;
   lk_u32 lcount;
-  lk_u32 max_top;
-  lk_i32 max_off;
+  lk_u32 q;
+  lk_u32 al;
+  lk_u32 ar;
   lk_u32 vis_count;
+  lk_u32 vis_needed;
   lk_u32 k;
   lk_i32 baseline;
   int spans_on;
+  int want_scroll;
 
   if (!e || !t || !content) {
     return;
@@ -1682,12 +2473,39 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   view_h = content->h;
   e->page_lines = view_h > 0 ? view_h / line_h : 0;
   lcount = lk_doc_line_count(e->doc);
+  q = view_h > 0 ? (lk_u32)(view_h / line_h) : 0;
+  want_scroll = e->pending_scroll;
 
-  /* Clamp the anchor to the document and the viewport. */
-  if (e->vp.top_line >= lcount) {
-    e->vp.top_line = lcount - 1;
-    e->vp.y_offset = 0;
+  /* Wrap key check (docs/editor-wrap.md section 1): any change in
+   * width/font/tab/backend-pointer bumps the generation -- one
+   * integer write, never a sweep. */
+  if (e->wrap_mode != LK_EDITOR_WRAP_NONE) {
+    lk_i32 ww = content->w > 0 ? content->w : 0;
+
+    if (e->wrap_w != ww || e->wrap_tb != (const void *)tb ||
+        e->wrap_font_id != e->font_id || e->wrap_font_size != e->font_size ||
+        e->wrap_tab != e->tab_size) {
+      e->wrap_w = ww;
+      e->wrap_tb = (const void *)tb;
+      e->wrap_font_id = e->font_id;
+      e->wrap_font_size = e->font_size;
+      e->wrap_tab = e->tab_size;
+      e->wrap_generation++;
+      e->est_px = 0;
+      e->est_bytes = 0;
+    }
+
+    e->scroll_x = 0; /* horizontal scroll is a NONE-mode feature */
   }
+
+  /* Resolve the anchor: clamp into the document, snap top_byte to
+   * the visual-row start at-or-before it (local resolution: only the
+   * anchor's own line is measured). */
+  if (e->vp.top_byte > lk_doc_len(e->doc)) {
+    e->vp.top_byte = lk_doc_len(e->doc);
+  }
+
+  ed_pos_to_row(e, tb, e->vp.top_byte, &al, &ar);
 
   if (e->vp.y_offset < 0) {
     e->vp.y_offset = 0;
@@ -1697,155 +2515,273 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     e->vp.y_offset = line_h - 1;
   }
 
-  ed_max_scroll(lcount, line_h, view_h, &max_top, &max_off);
+  /* Bottom clamp.  Skipped when there are more than q+1 whole LINES
+   * below the anchor (rows >= lines, so the anchor is provably above
+   * the maximum) -- this keeps a mid-document viewport from ever
+   * measuring doc-end lines.  Otherwise back-walk from the last row,
+   * measuring at most a viewport's worth of lines. */
+  if (view_h <= 0) {
+    al = 0;
+    ar = 0;
+    e->vp.y_offset = 0;
+  } else if (lcount - 1 - al <= q + 1) {
+    lk_u32 bl = lcount - 1;
+    lk_u32 br = ed_row_count_of(ed_wrap_line(e, tb, bl)) - 1;
+    lk_u32 ml;
+    lk_u32 mr;
+    lk_i32 my;
 
-  if (e->vp.top_line > max_top ||
-      (e->vp.top_line == max_top && e->vp.y_offset > max_off)) {
-    e->vp.top_line = max_top;
-    e->vp.y_offset = max_off;
+    ed_bottom_anchor(e, tb, bl, br, line_h, view_h, &ml, &mr, &my);
+
+    if (ed_rowpos_cmp(al, ar, ml, mr) > 0 ||
+        (ed_rowpos_cmp(al, ar, ml, mr) == 0 && e->vp.y_offset > my)) {
+      al = ml;
+      ar = mr;
+      e->vp.y_offset = my;
+    }
   }
 
-  /* Pending scroll-to-cursor: bring the cursor line fully into view
-   * (top-aligned when above, bottom-aligned when below). */
-  if (e->pending_scroll && view_h > 0) {
-    lk_u32 cl = lk_doc_pos_to_line(e->doc, e->cursor);
-    lk_u32 q = (lk_u32)(view_h / line_h);
-    lk_i32 r = view_h % line_h;
+  /* Pending scroll-to-cursor: bring the cursor ROW fully into view
+   * (top-aligned when above, bottom-aligned when below).  Two paths
+   * by construction: near targets walk at most q+1 rows; distant
+   * targets (outside the materialized window by line count alone)
+   * re-anchor directly at the cursor row and back up a viewport --
+   * never a walk over the intervening lines. */
+  if (want_scroll && view_h > 0) {
+    lk_u32 cl;
+    lk_u32 cr;
 
-    if (cl < e->vp.top_line ||
-        (cl == e->vp.top_line && e->vp.y_offset > 0)) {
-      e->vp.top_line = cl;
+    ed_pos_to_row(e, tb, e->cursor, &cl, &cr);
+
+    if (ed_rowpos_cmp(cl, cr, al, ar) < 0 ||
+        (ed_rowpos_cmp(cl, cr, al, ar) == 0 && e->vp.y_offset > 0)) {
+      al = cl;
+      ar = cr;
       e->vp.y_offset = 0;
-    } else {
-      lk_u32 rel = cl - e->vp.top_line;
+    } else if (ed_rowpos_cmp(cl, cr, al, ar) > 0) {
       int below;
 
-      /* rel > q means the line starts past the viewport even at
-       * y_offset = line_h - 1; otherwise the product is small. */
-      if (rel > q) {
-        below = 1;
+      if (cl - al > q + 1) {
+        below = 1; /* distant: provably past the viewport */
       } else {
-        below = ((lk_i32)rel * line_h - e->vp.y_offset + line_h) > view_h;
+        lk_u32 l = al;
+        lk_u32 r = ar;
+        lk_u32 rel = 0;
+
+        while (ed_rowpos_cmp(l, r, cl, cr) < 0 && rel <= q + 1) {
+          if (!ed_row_next(e, tb, &l, &r)) {
+            break;
+          }
+
+          rel++;
+        }
+
+        below = ed_rowpos_cmp(l, r, cl, cr) == 0
+                    ? ((lk_i32)rel * line_h - e->vp.y_offset + line_h) >
+                          view_h
+                    : 1;
       }
 
-      if (below && cl + 1 > q) {
-        if (r == 0) {
-          e->vp.top_line = cl + 1 - q;
-          e->vp.y_offset = 0;
-        } else {
-          e->vp.top_line = cl - q;
-          e->vp.y_offset = line_h - r;
-        }
-      } else if (below) {
-        e->vp.top_line = 0;
-        e->vp.y_offset = 0;
+      if (below) {
+        ed_bottom_anchor(e, tb, cl, cr, line_h, view_h, &al, &ar,
+                         &e->vp.y_offset);
       }
     }
 
     e->pending_scroll = 0;
   }
 
-  /* Visible line range: lines intersecting [0, view_h). */
-  if (view_h > 0) {
-    vis_count = (lk_u32)((view_h + e->vp.y_offset + line_h - 1) / line_h);
+  e->vp.top_byte = lk_doc_line_start(e->doc, al) +
+                   ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
 
-    if (vis_count > lcount - e->vp.top_line) {
-      vis_count = lcount - e->vp.top_line;
-    }
-  } else {
-    vis_count = 0;
-  }
+  /* Horizontal scroll (NONE mode only, docs/editor-wrap.md section
+   * 4): follow the cursor with a ~2-space margin, then soft-clamp
+   * against the widest MEASURED visible line (documented: lines
+   * outside the viewport do not extend the range). */
+  if (e->wrap_mode == LK_EDITOR_WRAP_NONE) {
+    lk_i32 margin = 2 * ed_advance(e);
 
-  /* Extract visible lines into scratch and precompute tab-expanded
-   * run segments (virtualization: cost is viewport-, never
-   * document-, proportional). */
-  e->vis_len = 0;
-  e->seg_count = 0;
+    if (want_scroll && view_h > 0) {
+      lk_u32 cl = lk_doc_pos_to_line(e->doc, e->cursor);
+      const char *text;
+      lk_u32 tlen;
+      lk_u32 tstart;
 
-  if (!ed_lines_reserve(e, vis_count ? vis_count : 1)) {
-    return;
-  }
+      text = ed_line_text(e, cl, &tlen, &tstart);
 
-  for (k = 0; k < vis_count; k++) {
-    lk_u32 line = e->vp.top_line + k;
-    lk_u32 ls = lk_doc_line_start(e->doc, line);
-    lk_u32 le = lk_doc_line_end(e->doc, line);
-    lk_u32 llen = le - ls;
-    lk_i32 y = content->y + (lk_i32)k * line_h - e->vp.y_offset;
-    const char *p;
-    lk_i32 x;
-    lk_u32 i;
-    lk_i32 tabpx;
+      if (text) {
+        lk_i32 cx = ed_line_x_from_ix(e, tb, text, tlen,
+                                      e->cursor - tstart);
 
-    if (!ed_vis_reserve(e, e->vis_len + llen)) {
-      return;
+        if (cx < e->scroll_x + margin) {
+          e->scroll_x = cx > margin ? cx - margin : 0;
+        } else if (content->w > 0 &&
+                   cx > e->scroll_x + content->w - margin) {
+          e->scroll_x = cx - content->w + margin;
+        }
+      }
     }
 
-    if (llen) {
-      lk_doc_get_text(e->doc, ls, e->vis + e->vis_len, llen);
-    }
+    if (e->scroll_x > 0 && view_h > 0) {
+      lk_i32 widest = 0;
+      lk_i32 cap;
+      lk_u32 nvis = (lk_u32)((view_h + e->vp.y_offset + line_h - 1) /
+                             line_h);
 
-    e->lines[k].doc_start = ls;
-    e->lines[k].doc_len = llen;
-    e->lines[k].off = e->vis_len;
-
-    /* Segment walk (shared shape with ed_line_x_from_ix); each
-     * tab-free run is further span-split by ed_emit_run when a
-     * revision-matched snapshot overlaps it. */
-    p = e->vis + e->vis_len;
-    x = 0;
-    i = 0;
-    tabpx = ed_tab_px(e);
-
-    while (i < llen) {
-      lk_u32 j = i;
-      lk_i32 w;
-
-      while (j < llen && p[j] != '\t') {
-        j++;
+      if (nvis > lcount - al) {
+        nvis = lcount - al;
       }
 
-      w = ed_run_x(e, tb, p + i, j - i, j - i);
+      for (k = 0; k < nvis; k++) {
+        const char *text;
+        lk_u32 tlen;
+        lk_u32 tstart;
+        lk_i32 w;
 
-      if (j > i) {
-        if (!ed_emit_run(e, tb, p + i, j - i, e->vis_len + i, ls + i,
-                         content->x + x, y, w, spans_on)) {
-          return;
+        text = ed_line_text(e, al + k, &tlen, &tstart);
+
+        if (!text) {
+          continue;
+        }
+
+        w = ed_line_x_from_ix(e, tb, text, tlen, tlen);
+
+        if (w > widest) {
+          widest = w;
         }
       }
 
-      x += w;
+      cap = widest - content->w + margin;
 
-      if (j < llen) {
-        x = (x / tabpx + 1) * tabpx;
-        i = j + 1;
-      } else {
-        i = j;
+      if (cap < 0) {
+        cap = 0;
+      }
+
+      if (e->scroll_x > cap) {
+        e->scroll_x = cap;
       }
     }
-
-    e->vis_len += llen;
   }
 
-  /* Cursor geometry (only when its line is visible). */
+  /* Visible rows: rows intersecting [0, view_h), walked forward from
+   * the anchor (virtualization: cost is viewport-, never document-,
+   * proportional). */
+  vis_needed =
+      view_h > 0
+          ? (lk_u32)((view_h + e->vp.y_offset + line_h - 1) / line_h)
+          : 0;
+  e->vis_len = 0;
+  e->seg_count = 0;
+  vis_count = 0;
+
+  if (!ed_lines_reserve(e, vis_needed ? vis_needed : 1)) {
+    return;
+  }
+
   {
-    lk_u32 cl = lk_doc_pos_to_line(e->doc, e->cursor);
+    lk_u32 l = al;
+    lk_u32 r = ar;
 
-    if (cl >= e->vp.top_line && cl < e->vp.top_line + vis_count) {
-      lk_u32 ck = cl - e->vp.top_line;
-      const ed_line *ln = &e->lines[ck];
-      lk_i32 cx = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                    e->cursor - ln->doc_start);
+    while (vis_count < vis_needed) {
+      const ed_line_wrap *w = ed_wrap_line(e, tb, l);
+      lk_u32 ls = lk_doc_line_start(e->doc, l);
+      lk_u32 llen = lk_doc_line_end(e->doc, l) - ls;
+      lk_u32 rs = ed_row_start_rel(w, r);
+      lk_u32 rlen = ed_row_end_rel(w, r, llen) - rs;
+      lk_i32 y = content->y + (lk_i32)vis_count * line_h - e->vp.y_offset;
+      const char *p;
+      lk_i32 x;
+      lk_u32 i;
+      lk_i32 tabpx;
 
-      e->geom.cursor_vis = 1;
-      e->geom.cursor_x = content->x + cx;
-      e->geom.cursor_y = content->y + (lk_i32)ck * line_h - e->vp.y_offset;
+      if (!ed_vis_reserve(e, e->vis_len + rlen)) {
+        return;
+      }
+
+      if (rlen) {
+        lk_doc_get_text(e->doc, ls + rs, e->vis + e->vis_len, rlen);
+      }
+
+      e->lines[vis_count].line = l;
+      e->lines[vis_count].row = r;
+      e->lines[vis_count].doc_start = ls + rs;
+      e->lines[vis_count].doc_len = rlen;
+      e->lines[vis_count].off = e->vis_len;
+
+      /* Segment walk (shared shape with ed_line_x_from_ix); tab
+       * stops are relative to the ROW's x = 0, matching the break
+       * finder; each tab-free run is further span-split by
+       * ed_emit_run when a revision-matched snapshot overlaps it. */
+      p = e->vis + e->vis_len;
+      x = 0;
+      i = 0;
+      tabpx = ed_tab_px(e);
+
+      while (i < rlen) {
+        lk_u32 j = i;
+        lk_i32 w2;
+
+        while (j < rlen && p[j] != '\t') {
+          j++;
+        }
+
+        w2 = ed_run_x(e, tb, p + i, j - i, j - i);
+
+        if (j > i) {
+          if (!ed_emit_run(e, tb, p + i, j - i, e->vis_len + i, ls + rs + i,
+                           content->x + x - e->scroll_x, y, w2, spans_on)) {
+            return;
+          }
+        }
+
+        x += w2;
+
+        if (j < rlen) {
+          x = (x / tabpx + 1) * tabpx;
+          i = j + 1;
+        } else {
+          i = j;
+        }
+      }
+
+      e->vis_len += rlen;
+      vis_count++;
+
+      if (!ed_row_next(e, tb, &l, &r)) {
+        break;
+      }
     }
   }
 
-  /* Selection rects: head partial line, body block, tail partial
-   * line, clipped to the visible range.  Zero-width pieces are
-   * dropped. */
+  /* Cursor geometry (only when its row is visible; ownership of a
+   * position at a wrap break comes from ed_pos_to_row: the NEXT
+   * row). */
+  {
+    lk_u32 cl;
+    lk_u32 cr;
+
+    ed_pos_to_row(e, tb, e->cursor, &cl, &cr);
+
+    for (k = 0; k < vis_count; k++) {
+      const ed_line *ln = &e->lines[k];
+
+      if (ln->line == cl && ln->row == cr) {
+        lk_i32 cx = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                      e->cursor - ln->doc_start);
+
+        e->geom.cursor_vis = 1;
+        e->geom.cursor_x = content->x + cx - e->scroll_x;
+        e->geom.cursor_y = content->y + (lk_i32)k * line_h - e->vp.y_offset;
+        break;
+      }
+    }
+  }
+
+  /* Selection rects: head partial row, body block, tail partial row,
+   * clipped to the visible range.  Zero-width pieces are dropped.
+   * Row membership of the endpoints comes from ed_pos_to_row, so
+   * selection geometry can never disagree with the cursor by a
+   * row. */
   {
     lk_u32 lo;
     lk_u32 hi;
@@ -1853,80 +2789,99 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     e->geom.sel_count = 0;
 
     if (vis_count > 0 && ed_sel_range(e, &lo, &hi)) {
-      lk_u32 lo_line = lk_doc_pos_to_line(e->doc, lo);
-      lk_u32 hi_line = lk_doc_pos_to_line(e->doc, hi);
-      lk_u32 first = e->vp.top_line;
-      lk_u32 last = e->vp.top_line + vis_count - 1;
+      lk_u32 ll;
+      lk_u32 lr;
+      lk_u32 hl;
+      lk_u32 hr;
 
-      if (lo_line == hi_line) {
-        if (lo_line >= first && lo_line <= last) {
-          lk_u32 ck = lo_line - first;
-          const ed_line *ln = &e->lines[ck];
-          lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                        lo - ln->doc_start);
-          lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                        hi - ln->doc_start);
+      ed_pos_to_row(e, tb, lo, &ll, &lr);
+      ed_pos_to_row(e, tb, hi, &hl, &hr);
 
-          if (x1 > x0) {
-            lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
+      if (ll == hl && lr == hr) {
+        for (k = 0; k < vis_count; k++) {
+          const ed_line *ln = &e->lines[k];
 
-            sr->x = content->x + x0;
-            sr->y = content->y + (lk_i32)ck * line_h - e->vp.y_offset;
-            sr->w = x1 - x0;
-            sr->h = line_h;
+          if (ln->line == ll && ln->row == lr) {
+            lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
+                                          ln->doc_len, lo - ln->doc_start);
+            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
+                                          ln->doc_len, hi - ln->doc_start);
+
+            if (x1 > x0) {
+              lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
+
+              sr->x = content->x + x0 - e->scroll_x;
+              sr->y = content->y + (lk_i32)k * line_h - e->vp.y_offset;
+              sr->w = x1 - x0;
+              sr->h = line_h;
+            }
+
+            break;
           }
         }
       } else {
-        /* head */
-        if (lo_line >= first && lo_line <= last) {
-          lk_u32 ck = lo_line - first;
-          const ed_line *ln = &e->lines[ck];
-          lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                        lo - ln->doc_start);
-          lk_i32 x1 =
-              ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                ln->doc_len);
+        lk_u32 b0 = 0;
+        lk_u32 b1 = 0;
+        int have_body = 0;
 
-          if (x1 > x0) {
-            lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
+        for (k = 0; k < vis_count; k++) {
+          const ed_line *ln = &e->lines[k];
+          int c_lo = ed_rowpos_cmp(ln->line, ln->row, ll, lr);
+          int c_hi = ed_rowpos_cmp(ln->line, ln->row, hl, hr);
 
-            sr->x = content->x + x0;
-            sr->y = content->y + (lk_i32)ck * line_h - e->vp.y_offset;
-            sr->w = x1 - x0;
-            sr->h = line_h;
+          if (c_lo == 0) {
+            /* head */
+            lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
+                                          ln->doc_len, lo - ln->doc_start);
+            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
+                                          ln->doc_len, ln->doc_len);
+
+            if (x1 > x0) {
+              lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
+
+              sr->x = content->x + x0 - e->scroll_x;
+              sr->y = content->y + (lk_i32)k * line_h - e->vp.y_offset;
+              sr->w = x1 - x0;
+              sr->h = line_h;
+            }
+          } else if (c_lo > 0 && c_hi < 0) {
+            /* body row (fully covered) */
+            if (!have_body) {
+              b0 = k;
+              have_body = 1;
+            }
+
+            b1 = k;
           }
         }
 
-        /* body block */
-        if (hi_line > lo_line + 1) {
-          lk_u32 b0 = lo_line + 1 > first ? lo_line + 1 : first;
-          lk_u32 b1 = hi_line - 1 < last ? hi_line - 1 : last;
+        if (have_body) {
+          lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
 
-          if (b0 <= b1) {
-            lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
-
-            sr->x = content->x;
-            sr->y = content->y + (lk_i32)(b0 - first) * line_h -
-                    e->vp.y_offset;
-            sr->w = content->w;
-            sr->h = (lk_i32)(b1 - b0 + 1) * line_h;
-          }
+          sr->x = content->x;
+          sr->y = content->y + (lk_i32)b0 * line_h - e->vp.y_offset;
+          sr->w = content->w;
+          sr->h = (lk_i32)(b1 - b0 + 1) * line_h;
         }
 
-        /* tail */
-        if (hi_line >= first && hi_line <= last) {
-          lk_u32 ck = hi_line - first;
-          const ed_line *ln = &e->lines[ck];
-          lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                        hi - ln->doc_start);
+        for (k = 0; k < vis_count; k++) {
+          const ed_line *ln = &e->lines[k];
 
-          if (x1 > 0) {
-            lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
+          if (ln->line == hl && ln->row == hr) {
+            /* tail */
+            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
+                                          ln->doc_len, hi - ln->doc_start);
 
-            sr->x = content->x;
-            sr->y = content->y + (lk_i32)ck * line_h - e->vp.y_offset;
-            sr->w = x1;
-            sr->h = line_h;
+            if (x1 > 0) {
+              lk_rect *sr = &e->geom.sel_rects[e->geom.sel_count++];
+
+              sr->x = content->x - e->scroll_x;
+              sr->y = content->y + (lk_i32)k * line_h - e->vp.y_offset;
+              sr->w = x1;
+              sr->h = line_h;
+            }
+
+            break;
           }
         }
       }
@@ -1939,8 +2894,9 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   e->geom.rect = *content;
   e->geom.line_h = line_h;
   e->geom.baseline = baseline;
-  e->geom.first_line = e->vp.top_line;
+  e->geom.first_line = al;
   e->geom.vis_count = vis_count;
+  e->geom.scroll_x = e->scroll_x;
   e->geom.font_id = e->font_id;
   e->geom.font_size = e->font_size;
 }
@@ -2096,9 +3052,9 @@ int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
   }
 
   ln = &e->lines[k];
-  *out_pos = ln->doc_start + ed_line_ix_from_x(e, tb, e->vis + ln->off,
-                                               ln->doc_len,
-                                               x - e->geom.rect.x);
+  *out_pos = ln->doc_start +
+             ed_line_ix_from_x(e, tb, e->vis + ln->off, ln->doc_len,
+                               x - e->geom.rect.x + e->geom.scroll_x);
 
   return 1;
 }
