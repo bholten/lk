@@ -3112,6 +3112,62 @@ static int c_lk_doc_char_col(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
+/* lk::doc_find [doc, needle, ?from] -> first match position >= from,
+ * or -1 when not found.
+ *
+ * Literal forward byte search (no patterns); from defaults to 0.  A
+ * from past the document end is simply not-found (-1), so the
+ * search-next idiom -- search again from hit + 1 -- never errors at
+ * the end of the document.  An empty needle is a hard error (the C
+ * API's silent 0 would be indistinguishable from not-found). */
+static int c_lk_doc_find(lcl_interp *interp, int argc, lcl_value **argv,
+                         lcl_value **out) {
+  struct lcl_lk_doc *dw;
+  const char *needle;
+  long from = 0;
+  lk_u32 pos = 0;
+
+  if (argc != 2 && argc != 3) {
+    lcl_set_error(interp,
+                  "lk::doc_find: expected 2 or 3 arguments (doc, needle, "
+                  "?from)");
+
+    return LCL_RC_ERR;
+  }
+
+  dw = get_doc(interp, argv[0]);
+
+  if (!dw) {
+    return LCL_RC_ERR;
+  }
+
+  needle = lcl_value_to_string(argv[1]);
+
+  if (!needle || needle[0] == '\0') {
+    lcl_set_error(interp, "lk::doc_find: needle must be non-empty");
+
+    return LCL_RC_ERR;
+  }
+
+  if (argc == 3) {
+    if (lcl_value_to_int(argv[2], &from) != LCL_OK || from < 0) {
+      lcl_set_error(interp,
+                    "lk::doc_find: from must be a non-negative integer");
+
+      return LCL_RC_ERR;
+    }
+  }
+
+  if (lk_doc_find(dw->doc, needle, (lk_u32)strlen(needle), (lk_u32)from,
+                  &pos)) {
+    *out = lcl_int_new((long)pos);
+  } else {
+    *out = lcl_int_new(-1);
+  }
+
+  return LCL_RC_OK;
+}
+
 /* lk::doc_revision [doc] -> "hi:lo" (e.g. "0:42").
  *
  * The lk_revision {hi,lo} pair encoded as a deterministic string —
@@ -5122,6 +5178,7 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::doc_line_end", c_lk_doc_line_end));
   lcl_ns_def(ns, "doc_char_col",
              lcl_c_proc_new("lk::doc_char_col", c_lk_doc_char_col));
+  lcl_ns_def(ns, "doc_find", lcl_c_proc_new("lk::doc_find", c_lk_doc_find));
   lcl_ns_def(ns, "doc_revision",
              lcl_c_proc_new("lk::doc_revision", c_lk_doc_revision));
   lcl_ns_def(ns, "doc_insert",

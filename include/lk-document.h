@@ -105,6 +105,16 @@ lk_u32 lk_doc_line_length(const lk_document *d, lk_u32 line);
 lk_u32 lk_doc_pos_to_line(const lk_document *d, lk_u32 pos);
 lk_revision lk_doc_revision(const lk_document *d);
 
+/* Literal forward byte search.  Finds the first occurrence of needle
+ * at a position >= from and stores it in *out_pos.  Returns 1 on a
+ * match, 0 when not found or on bad arguments (NULL/empty needle,
+ * from > document length).  Bytes are compared verbatim -- a UTF-8
+ * needle matches its exact byte sequence -- and matches may span
+ * piece boundaries.  Search-next is lk_doc_find(d, n, nl, hit + 1,
+ * &hit); backward search waits for a concrete consumer. */
+int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
+                lk_u32 from, lk_u32 *out_pos);
+
 /* Mutation.  insert/delete outside a begin/commit bracket form an
  * implicit single-op transaction (subscribers notified immediately).
  * Nested begin is a programming error (debug-asserted; the outer

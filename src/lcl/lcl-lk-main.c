@@ -3,6 +3,10 @@
 
 #include <lcl.h>
 
+#ifdef LK_HAVE_LCL_IO
+#include <lcl-io.h>
+#endif
+
 #include "lcl-lk.h"
 #include "lk-sdl.h"
 
@@ -26,6 +30,13 @@ int main(int argc, char **argv) {
 
   lcl_register_core(interp);
   lcl_register_lk(interp);
+
+#ifdef LK_HAVE_LCL_IO
+  /* File IO stays a package: core Lcl is IO-free by design and lk is
+   * a UI library (docs/weft-surface.md section 3).  The runner is
+   * where the io::* procs belong. */
+  lcl_register_io(interp);
+#endif
 
 #ifdef LK_DSL_PATH
   {

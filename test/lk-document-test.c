@@ -1325,6 +1325,191 @@ static void test_delta_seq_newline_edges(void) {
 }
 
 /* ================================================================
+ * lk_doc_find (weft-surface track, S2)
+ * ================================================================ */
+
+static void test_find_basic(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "hello world hello", 17);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: basic literal search");
+
+  CHECK(lk_doc_find(d, "hello", 5, 0, &pos) == 1);
+  CHECK_EQ(pos, 0);
+  CHECK(lk_doc_find(d, "world", 5, 0, &pos) == 1);
+  CHECK_EQ(pos, 6);
+  CHECK(lk_doc_find(d, "o w", 3, 0, &pos) == 1);
+  CHECK_EQ(pos, 4);
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_from_offset(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "hello world hello", 17);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: from offset skips earlier matches");
+
+  CHECK(lk_doc_find(d, "hello", 5, 1, &pos) == 1);
+  CHECK_EQ(pos, 12);
+  CHECK(lk_doc_find(d, "hello", 5, 12, &pos) == 1);
+  CHECK_EQ(pos, 12); /* first match at lowest position >= from */
+  CHECK(lk_doc_find(d, "hello", 5, 13, &pos) == 0);
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_not_found_and_bad_args(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "abcdef", 6);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: not-found and bad arguments");
+
+  CHECK(lk_doc_find(d, "xyz", 3, 0, &pos) == 0);
+  CHECK(lk_doc_find(NULL, "abc", 3, 0, &pos) == 0);
+  CHECK(lk_doc_find(d, NULL, 3, 0, &pos) == 0);
+  CHECK(lk_doc_find(d, "abc", 0, 0, &pos) == 0);
+  CHECK(lk_doc_find(d, "abc", 3, 7, &pos) == 0); /* from > doc len */
+  CHECK(lk_doc_find(d, "abc", 3, 0, NULL) == 0);
+  CHECK_EQ(pos, 99); /* out_pos untouched on failure */
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_spans_piece_boundary(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "abcdef", 6);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: needle spans piece boundaries");
+
+  /* insert in the middle: pieces become [abc][123][def] -- the
+   * original piece is split and the add-buffer piece sits between */
+  CHECK(lk_doc_insert(d, 3, "123", 3) == 1); /* "abc123def" */
+
+  /* across the first seam */
+  CHECK(lk_doc_find(d, "c1", 2, 0, &pos) == 1);
+  CHECK_EQ(pos, 2);
+
+  /* across both seams (whole middle piece plus neighbors) */
+  CHECK(lk_doc_find(d, "bc123de", 7, 0, &pos) == 1);
+  CHECK_EQ(pos, 1);
+
+  /* across the second seam, searched from past the first */
+  CHECK(lk_doc_find(d, "3def", 4, 3, &pos) == 1);
+  CHECK_EQ(pos, 5);
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_at_doc_end(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "abcabc", 6);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: match ending exactly at doc end");
+
+  CHECK(lk_doc_find(d, "abc", 3, 1, &pos) == 1);
+  CHECK_EQ(pos, 3);
+  CHECK(lk_doc_find(d, "abcabc", 6, 0, &pos) == 1); /* whole document */
+  CHECK_EQ(pos, 0);
+  CHECK(lk_doc_find(d, "abc", 3, 4, &pos) == 0); /* not enough room */
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_needle_longer_and_empty_doc(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "abc", 3);
+  lk_document *e = lk_doc_new(NULL, NULL, NULL);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: over-long needle, empty document");
+
+  CHECK(lk_doc_find(d, "abcd", 4, 0, &pos) == 0);
+  CHECK(lk_doc_find(e, "a", 1, 0, &pos) == 0);
+
+  lk_doc_destroy(d);
+  lk_doc_destroy(e);
+  END_TEST();
+}
+
+static void test_find_utf8_bytes(void) {
+  /* "na\xC3\xAFve caf\xC3\xA9" -- byte-literal search */
+  lk_document *d =
+      lk_doc_from_str(NULL, NULL, NULL, "na\xC3\xAFve caf\xC3\xA9", 12);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: UTF-8 needles match exact bytes");
+
+  CHECK(lk_doc_find(d, "\xC3\xAF", 2, 0, &pos) == 1);
+  CHECK_EQ(pos, 2);
+  CHECK(lk_doc_find(d, "caf\xC3\xA9", 5, 0, &pos) == 1);
+  CHECK_EQ(pos, 7);
+
+  /* a lone continuation byte is a legal byte-literal needle */
+  CHECK(lk_doc_find(d, "\xA9", 1, 0, &pos) == 1);
+  CHECK_EQ(pos, 11);
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_search_next(void) {
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "aaa ab aab", 10);
+  lk_u32 pos = 99;
+
+  BEGIN_TEST("find: search-next with advancing from");
+
+  /* overlapping matches: from = hit + 1 walks every occurrence */
+  CHECK(lk_doc_find(d, "aa", 2, 0, &pos) == 1);
+  CHECK_EQ(pos, 0);
+  CHECK(lk_doc_find(d, "aa", 2, pos + 1, &pos) == 1);
+  CHECK_EQ(pos, 1);
+  CHECK(lk_doc_find(d, "aa", 2, pos + 1, &pos) == 1);
+  CHECK_EQ(pos, 7);
+  CHECK(lk_doc_find(d, "aa", 2, pos + 1, &pos) == 0);
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_find_window_slide(void) {
+  /* Force the sliding-window path: a fragmented document longer than
+   * the 1024-byte window, with one match straddling the first window
+   * edge and another near the end. */
+  char chunk[100];
+  lk_document *d = lk_doc_new(NULL, NULL, NULL);
+  lk_u32 pos = 0;
+  lk_u32 i;
+
+  BEGIN_TEST("find: match straddles the window slide");
+
+  memset(chunk, 'x', sizeof(chunk));
+
+  /* 15 appended pieces of 100 bytes = 1500 bytes, all 'x' */
+  for (i = 0; i < 15; i++) {
+    CHECK(lk_doc_insert(d, i * 100, chunk, 100) == 1);
+  }
+
+  /* "needle" at 1020 crosses the first [0,1024) window boundary and
+   * (by the insert-in-middle split) its own piece seams */
+  CHECK(lk_doc_insert(d, 1020, "needle", 6) == 1);
+  CHECK(lk_doc_insert(d, 1500, "tail", 4) == 1);
+
+  CHECK(lk_doc_find(d, "needle", 6, 0, &pos) == 1);
+  CHECK_EQ(pos, 1020);
+  CHECK(lk_doc_find(d, "tail", 4, 0, &pos) == 1);
+  CHECK_EQ(pos, 1500);
+  CHECK(lk_doc_find(d, "needle", 6, 1021, &pos) == 0);
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+/* ================================================================
  * Runner
  * ================================================================ */
 
@@ -1380,6 +1565,17 @@ void lk_document_run_tests(void) {
   test_delta_seq_multiple_deltas();
   test_delta_seq_delete_then_insert();
   test_delta_seq_newline_edges();
+
+  printf("\nlk document find tests (weft-surface S2):\n");
+  test_find_basic();
+  test_find_from_offset();
+  test_find_not_found_and_bad_args();
+  test_find_spans_piece_boundary();
+  test_find_at_doc_end();
+  test_find_needle_longer_and_empty_doc();
+  test_find_utf8_bytes();
+  test_find_search_next();
+  test_find_window_slide();
 
   printf("\nlk edit history tests:\n");
   test_hist_empty_returns_zero();

@@ -407,9 +407,26 @@ round-trip incl. release-hook firing on annot removal; arena args
 valid at handler time, gone after clear; stale-locus detectability
 (edit between dispatch and handling → revision mismatch visible).
 
-**S2 — primitives**: `lk_doc_find` (+ piece-boundary tests),
-lcl-io wiring decision for the example runner.
-(`lk::editor_pos_at` landed in S1.)
+**S2 — primitives** — **DONE 2026-07-29**: `lk_doc_find` (+
+piece-boundary tests), lcl-io wiring for the example runner.
+(`lk::editor_pos_at` landed in S1.)  Landing notes:
+
+- `lk_doc_find` scans by chunked reconstruction: a window (stack
+  buffer, 1024 bytes; document-allocator heap window for larger
+  needles) filled via `lk_doc_get_text` and slid with
+  `needle_len - 1` bytes of overlap, so matches spanning any number
+  of piece boundaries are seen without piece-aware matching logic.
+  Binding: `lk::doc_find [d needle ?from]` → position or -1
+  (from defaults 0; empty needle is a hard error; from past the end
+  is just -1 so search-next never errors).
+- lcl-io wiring: the package's actual flag is `LCL_BUILD_IO`
+  (target `lcl_io`, entry point `lcl_register_io(interp)` in
+  `<lcl-io.h>`, procs in the `io` namespace).  lk gates it behind
+  `LK_LCL_IO` (default ON when the package dir exists, mirroring
+  the SDL auto-detect pattern); when ON, `lcl_lk_main` defines
+  `LK_HAVE_LCL_IO`, links `lcl_io`, and registers io after core +
+  lk.  `lcl_lk_test` stays hermetic — the io procs are exercised by
+  a manual smoke script through the runner, not the test suite.
 
 **S3 — weft-mini** (`examples/weft-mini.lcl`, pure Lcl, target
 ~300 lines): two panes; revision-driven plumbing producer

@@ -756,6 +756,95 @@ lk_revision lk_doc_revision(const lk_document *d) {
   return d->revision;
 }
 
+/* ---- Search ---- */
+
+/* Window size for lk_doc_find's chunked reconstruction (bytes). */
+#define DOC_FIND_WINDOW 1024
+
+/* Literal forward byte search, piece-table aware.
+ *
+ * Approach: chunked reconstruction into a sliding window.  The
+ * document is a piece list over two buffers, so a match may span any
+ * number of piece boundaries; rather than matching across pieces
+ * in-place, each round copies a contiguous window of the document
+ * (via lk_doc_get_text, which already walks pieces) into a stack
+ * buffer and scans it with memcmp.  The window then slides forward
+ * keeping needle_len - 1 bytes of overlap, so a match straddling a
+ * window edge is fully contained in the next fill.  Needles larger
+ * than the stack window get a heap window (document allocator) of
+ * needle_len + DOC_FIND_WINDOW, preserving the invariant that every
+ * fill can hold a whole match and still make forward progress. */
+int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
+                lk_u32 from, lk_u32 *out_pos) {
+  char stack_win[DOC_FIND_WINDOW];
+  char *win = stack_win;
+  lk_u32 win_cap = DOC_FIND_WINDOW;
+  lk_u32 base;
+  int found = 0;
+
+  if (!d || !needle || needle_len == 0 || !out_pos) {
+    return 0;
+  }
+
+  if (from > d->total_len || needle_len > d->total_len - from) {
+    return 0; /* covers the empty document and over-long needles */
+  }
+
+  if (needle_len > win_cap) {
+    if (needle_len > 0xFFFFFFFFu - DOC_FIND_WINDOW) {
+      win_cap = needle_len;
+    } else {
+      win_cap = needle_len + DOC_FIND_WINDOW;
+    }
+
+    win = (char *)d->alloc(d->ud, win_cap);
+
+    if (!win) {
+      return 0;
+    }
+  }
+
+  base = from;
+
+  while (!found && base <= d->total_len - needle_len) {
+    lk_u32 want = d->total_len - base;
+    lk_u32 got;
+    lk_u32 last;
+    lk_u32 i;
+
+    if (want > win_cap) {
+      want = win_cap;
+    }
+
+    got = lk_doc_get_text(d, base, win, want);
+
+    if (got < needle_len) {
+      break; /* defensive: cannot happen for an in-range base */
+    }
+
+    last = got - needle_len;
+
+    for (i = 0; i <= last; i++) {
+      if (win[i] == needle[0] &&
+          memcmp(win + i, needle, needle_len) == 0) {
+        *out_pos = base + i;
+        found = 1;
+        break;
+      }
+    }
+
+    /* slide, keeping needle_len - 1 bytes of overlap; got >=
+     * needle_len guarantees forward progress */
+    base += got - (needle_len - 1);
+  }
+
+  if (win != stack_win) {
+    d->dealloc(d->ud, win);
+  }
+
+  return found;
+}
+
 /* ---- Transactions ---- */
 
 /* Resolve delta byte pointers and notify every subscriber once. */
