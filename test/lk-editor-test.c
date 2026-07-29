@@ -76,6 +76,12 @@ static int fix_layout(ed_fix *f) {
   return lk_layout(lk_ui_tree(f->ui), &f->cfg, f->rects);
 }
 
+/* Anchor line of the viewport (top_byte is a row-start byte since
+ * the W1 viewport change; these tests assert line numbers). */
+static lk_u32 vp_top_line(ed_fix *f) {
+  return lk_doc_pos_to_line(f->doc, lk_editor_get_viewport(f->ed).top_byte);
+}
+
 static void fix_init_ex(ed_fix *f, const char *text, lk_i32 vw, lk_i32 vh,
                         int with_prop) {
   memset(f, 0, sizeof(*f));
@@ -219,6 +225,27 @@ static int send_wheel(ed_fix *f, lk_i32 dy) {
   lk_event_route(f->ui, &ev);
 
   return ev.handled;
+}
+
+static int send_wheel_ex(ed_fix *f, lk_i32 dx, lk_i32 dy, lk_u8 mods) {
+  lk_event ev;
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_WHEEL;
+  ev.target = f->node;
+  ev.mods = mods;
+  ev.data.wheel.dx = dx;
+  ev.data.wheel.dy = dy;
+  lk_event_route(f->ui, &ev);
+
+  return ev.handled;
+}
+
+/* Switch to character wrap and re-run layout (the wrap key is
+ * stamped by the layout hook). */
+static void fix_wrap(ed_fix *f) {
+  CHECK(lk_editor_set_wrap_mode(f->ed, LK_EDITOR_WRAP_CHARACTER) == 1);
+  fix_layout(f);
 }
 
 /* ---- render-list query helpers ---- */
@@ -1071,7 +1098,7 @@ static void test_viewport_wheel_scrolls(void) {
   /* wheel toward the user (dy = -1) scrolls down 3 lines, always
    * consumed (the editor owns its viewport) */
   CHECK(send_wheel(&f, -1) == 1);
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 3);
+  CHECK_EQ(vp_top_line(&f), 3);
 
   fix_layout(&f);
 
@@ -1082,7 +1109,7 @@ static void test_viewport_wheel_scrolls(void) {
 
   /* wheel away (dy = +1) scrolls back up */
   CHECK(send_wheel(&f, 1) == 1);
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 0);
+  CHECK_EQ(vp_top_line(&f), 0);
 
   lk_render_list_destroy(&rl);
   fix_destroy(&f);
@@ -1103,12 +1130,12 @@ static void test_viewport_scroll_clamps(void) {
   /* top clamp */
   CHECK(cmd_scroll(&f, -1000) == 0); /* already at (0,0) */
   fix_layout(&f);
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 0);
+  CHECK_EQ(vp_top_line(&f), 0);
 
   /* bottom clamp: 100 lines, 5 fit exactly -> max top = 95 */
   cmd_scroll(&f, 100000);
   fix_layout(&f);
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 95);
+  CHECK_EQ(vp_top_line(&f), 95);
   CHECK_EQ((unsigned)lk_editor_get_viewport(f.ed).y_offset, 0u);
 
   CHECK(fix_render(&f, &rl));
@@ -1119,7 +1146,7 @@ static void test_viewport_scroll_clamps(void) {
   /* wheel further down stays clamped */
   send_wheel(&f, -1);
   fix_layout(&f);
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 95);
+  CHECK_EQ(vp_top_line(&f), 95);
 
   lk_render_list_destroy(&rl);
   fix_destroy(&f);
@@ -1139,14 +1166,14 @@ static void test_viewport_scroll_to_cursor(void) {
 
   CHECK(cmd_move(&f, LK_ED_MOVE_DOC_END, 0) == 1);
   fix_layout(&f); /* pending scroll resolves here */
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 95);
+  CHECK_EQ(vp_top_line(&f), 95);
 
   CHECK(fix_render(&f, &rl));
   CHECK(run_is(&rl, nth_run(&rl, 4), "line 99"));
 
   CHECK(cmd_move(&f, LK_ED_MOVE_DOC_START, 0) == 1);
   fix_layout(&f);
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_line, 0);
+  CHECK_EQ(vp_top_line(&f), 0);
 
   lk_render_list_destroy(&rl);
   fix_destroy(&f);
@@ -1169,7 +1196,7 @@ static void test_viewport_partial_line_offset(void) {
   fix_layout(&f);
   vp = lk_editor_get_viewport(f.ed);
 
-  CHECK_EQ(vp.top_line, 1);
+  CHECK_EQ(lk_doc_pos_to_line(f.doc, vp.top_byte), 1);
   CHECK_EQ((unsigned)vp.y_offset, 8u);
 
   CHECK(fix_render(&f, &rl));
@@ -1183,7 +1210,7 @@ static void test_viewport_partial_line_offset(void) {
   cmd_move(&f, LK_ED_MOVE_DOC_END, 0);
   fix_layout(&f);
   vp = lk_editor_get_viewport(f.ed);
-  CHECK_EQ(vp.top_line, 1);
+  CHECK_EQ(lk_doc_pos_to_line(f.doc, vp.top_byte), 1);
   CHECK_EQ((unsigned)vp.y_offset, 8u);
 
   lk_render_list_destroy(&rl);
@@ -1450,6 +1477,788 @@ static void test_utf8_typing_backspace(void) {
   END_TEST();
 }
 
+/* ================================================================
+ * (h) wrap engine (docs/editor-wrap.md, stage W1).  Stub geometry:
+ * 8 px/codepoint, line height 16 -> width 80 = 10 codepoints/row.
+ * ================================================================ */
+
+/* one 20-codepoint line: rows [0,10) and [10,20] at width 80 */
+#define ED20 "abcdefghijklmnopqrst"
+
+/* Build nlines lines of ncols copies of per-line letters. */
+static void make_rows(char *buf, lk_u32 cap, int nlines, int ncols) {
+  int i;
+  int j;
+  lk_u32 off = 0;
+
+  for (i = 0; i < nlines && off + (lk_u32)ncols + 2 < cap; i++) {
+    for (j = 0; j < ncols; j++) {
+      buf[off++] = (char)('a' + i % 26);
+    }
+
+    if (i + 1 < nlines) {
+      buf[off++] = '\n';
+    }
+  }
+
+  buf[off] = '\0';
+}
+
+static void test_wrap_mode_api(void) {
+  ed_fix f;
+
+  BEGIN_TEST("wrap: mode API, WORD rejected");
+
+  fix_init(&f, "hello", 400, 80);
+
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_NONE);
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_WORD) == 0);
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_NONE);
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_CHARACTER) == 1);
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_CHARACTER);
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_CHARACTER) == 1);
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_NONE) == 1);
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_NONE);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_basic_rows(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: 20 cp line breaks into two 10 cp rows");
+
+  fix_init(&f, ED20, 80, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* NONE mode first: one run, full 160 px, no wrap (degenerate) */
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 1);
+  CHECK(run_is(&rl, nth_run(&rl, 0), ED20));
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 160u);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0); /* no cache in NONE */
+
+  fix_wrap(&f);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "abcdefghij"));
+  CHECK(run_is(&rl, nth_run(&rl, 1), "klmnopqrst"));
+  CHECK(nth_run(&rl, 0)->rect.x == 0 && nth_run(&rl, 0)->rect.y == 0);
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 80u);
+  CHECK(nth_run(&rl, 1)->rect.x == 0 && nth_run(&rl, 1)->rect.y == 16);
+
+  /* back to NONE: the single-run shape returns */
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_NONE) == 1);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 1);
+  CHECK(run_is(&rl, nth_run(&rl, 0), ED20));
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_break_utf8(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *cur;
+  char text[32];
+  int i;
+
+  BEGIN_TEST("wrap: multi-byte codepoints at the break");
+
+  /* 12 x e-acute (2 bytes each, 24 bytes, 12 cp): break at byte 20 */
+  for (i = 0; i < 12; i++) {
+    text[i * 2] = '\xC3';
+    text[i * 2 + 1] = '\xA9';
+  }
+
+  text[24] = '\0';
+  fix_init(&f, text, 80, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK_EQ(nth_run(&rl, 0)->run_len, 20); /* 10 whole codepoints */
+  CHECK_EQ(nth_run(&rl, 1)->run_len, 4);
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 80u);
+  CHECK_EQ((unsigned)nth_run(&rl, 1)->rect.w, 16u);
+
+  /* cursor at the break byte renders at the NEXT row's start */
+  cmd_setcur(&f, 20, 0);
+  lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  cur = find_cursor_fill(&rl);
+  CHECK(cur && cur->rect.x == 0 && cur->rect.y == 16);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_tab_at_edge(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: tab that would pass the width breaks first");
+
+  /* "abcdefghi\tx": 9 cp end at x=72; next tab stop 96 > 80 -> the
+   * tab starts row 1 and advances to 32 there (row-relative stops) */
+  fix_init(&f, "abcdefghi\tx", 80, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "abcdefghi"));
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 72u);
+  CHECK(run_is(&rl, nth_run(&rl, 1), "x"));
+  CHECK(nth_run(&rl, 1)->rect.x == 32 && nth_run(&rl, 1)->rect.y == 16);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_empty_row_progress(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: empty-row progress guarantee");
+
+  /* width 8 = one codepoint per row */
+  fix_init(&f, "abc", 8, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 3);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 3);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "a"));
+  CHECK(run_is(&rl, nth_run(&rl, 2), "c"));
+  CHECK(nth_run(&rl, 2)->rect.y == 32);
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+
+  /* width 4: NOTHING fits, one boundary is taken anyway */
+  fix_init(&f, "abc", 4, 80);
+  fix_wrap(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 3);
+  fix_destroy(&f);
+
+  END_TEST();
+}
+
+static void test_wrap_row_ownership(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *cur;
+
+  BEGIN_TEST("wrap: break belongs to next row, EOL to final");
+
+  fix_init(&f, ED20, 80, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+  lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid);
+
+  /* cursor at the break byte (10): NEXT row's start */
+  cmd_setcur(&f, 10, 0);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  cur = find_cursor_fill(&rl);
+  CHECK(cur && cur->rect.x == 0 && cur->rect.y == 16);
+
+  /* end-of-line caret: final row, past its last codepoint */
+  cmd_setcur(&f, 20, 0);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  cur = find_cursor_fill(&rl);
+  CHECK(cur && cur->rect.x == 80 && cur->rect.y == 16);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_row_commands(void) {
+  ed_fix f;
+
+  BEGIN_TEST("wrap: ROW vs LINE START/END + HOME/END keys");
+
+  /* unwrapped: ROW variants are identical to the logical ones */
+  fix_init(&f, "ab\ncd", 400, 80);
+  cmd_setcur(&f, 4, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_ROW_START, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 3);
+  CHECK(cmd_move(&f, LK_ED_MOVE_ROW_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+  fix_destroy(&f);
+
+  fix_init(&f, ED20, 80, 80);
+  fix_wrap(&f);
+
+  /* cursor on row 1: ROW_START -> the break; LINE_START -> 0 */
+  cmd_setcur(&f, 15, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_ROW_START, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 10);
+  CHECK(cmd_move(&f, LK_ED_MOVE_LINE_START, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  /* cursor on row 0: ROW_END -> the break byte (renders at row 1's
+   * start per the ownership rule); LINE_END -> the line end */
+  cmd_setcur(&f, 5, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_ROW_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 10);
+  cmd_setcur(&f, 5, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_LINE_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 20);
+
+  /* the default keymap: HOME/END are the ROW variants, CTRL+HOME/END
+   * remain document motion */
+  cmd_setcur(&f, 15, 0);
+  CHECK(send_key(&f, LKK_HOME, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 10);
+  CHECK(send_key(&f, LKK_END, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 20);
+  CHECK(send_key(&f, LKK_HOME, LK_MOD_CTRL) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  CHECK(send_key(&f, LKK_END, LK_MOD_CTRL) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 20);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_motion_rows_and_seams(void) {
+  ed_fix f;
+
+  BEGIN_TEST("wrap: UP/DOWN cross rows and line seams");
+
+  /* line 0 = 20 cp (2 rows), line 1 = "xy" (starts at byte 21) */
+  fix_init(&f, ED20 "\nxy", 80, 80);
+  fix_wrap(&f);
+
+  cmd_setcur(&f, 2, 0); /* row 0, x = 16 */
+
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 12); /* row 1 of line 0 */
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 23); /* line 1, clamped to "xy" end */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 12); /* seam back up, sticky 16 */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 2);
+
+  /* UP on the first ROW goes to 0; DOWN on the last row to the end */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  cmd_setcur(&f, 22, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 23);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_sticky_x_rows(void) {
+  ed_fix f;
+  char buf[64];
+
+  BEGIN_TEST("wrap: sticky x through wrapped rows");
+
+  /* one 30 cp line: rows at 0/10/20 */
+  make_rows(buf, sizeof(buf), 1, 30);
+  fix_init(&f, buf, 80, 80);
+  fix_wrap(&f);
+
+  cmd_setcur(&f, 25, 0); /* row 2, x = 40 */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 15);
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 5);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 15);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 25);
+
+  /* sticky at the right edge clamps INSIDE a non-final target row
+   * (the row-end position is the break, owned by the next row) */
+  cmd_setcur(&f, 30, 0); /* EOL caret on the final row, x = 80 */
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 19);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 30); /* sticky 80 restored */
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_click_rows(void) {
+  ed_fix f;
+
+  BEGIN_TEST("wrap: click on row 2 and at the right edge");
+
+  fix_init(&f, ED20, 80, 80);
+  fix_wrap(&f);
+
+  /* row 1 (y=20): x=8 -> boundary 1 within the row -> byte 11 */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 8, 20) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 11);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 8, 20);
+
+  /* right edge of row 0: the break position (renders on row 1) */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 80, 4) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 10);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 80, 4);
+
+  /* far right of the final row clamps to the line end */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 500, 20) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 20);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 500, 20);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_selection_rows(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *r0;
+  const lk_render_cmd *r1;
+  const lk_render_cmd *r2;
+  char buf[64];
+
+  BEGIN_TEST("wrap: selection head/body/tail across rows");
+
+  /* one 30 cp line, 3 rows */
+  make_rows(buf, sizeof(buf), 1, 30);
+  fix_init(&f, buf, 80, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  /* [5,15): head on row 0, tail on row 1 */
+  cmd_setcur(&f, 5, 0);
+  cmd_setcur(&f, 15, 1);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_sel_fills(&rl), 2);
+  r0 = nth_sel_fill(&rl, 0);
+  r1 = nth_sel_fill(&rl, 1);
+  CHECK(r0 && r0->rect.x == 40 && r0->rect.y == 0 && r0->rect.w == 40 &&
+        r0->rect.h == 16);
+  CHECK(r1 && r1->rect.x == 0 && r1->rect.y == 16 && r1->rect.w == 40);
+
+  /* [2,25): head row 0 + full-width body row 1 + tail row 2 -- all
+   * within ONE document line */
+  cmd_setcur(&f, 2, 0);
+  cmd_setcur(&f, 25, 1);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_sel_fills(&rl), 3);
+  r0 = nth_sel_fill(&rl, 0);
+  r1 = nth_sel_fill(&rl, 1);
+  r2 = nth_sel_fill(&rl, 2);
+  CHECK(r0 && r0->rect.x == 16 && r0->rect.y == 0 && r0->rect.w == 64);
+  CHECK(r1 && r1->rect.x == 0 && r1->rect.y == 16 && r1->rect.w == 80 &&
+        r1->rect.h == 16);
+  CHECK(r2 && r2->rect.x == 0 && r2->rect.y == 32 && r2->rect.w == 40);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_splice_touched_line_only(void) {
+  ed_fix f;
+  char buf[64];
+
+  BEGIN_TEST("wrap: edit re-measures only the touched line");
+
+  /* 3 lines x 12 cp = 2 rows each, all visible (h = 96) */
+  make_rows(buf, sizeof(buf), 3, 12);
+  fix_init(&f, buf, 80, 96);
+  fix_wrap(&f);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2);
+
+  /* no-newline edit in line 1 (foreign, straight to the doc) */
+  CHECK(lk_doc_insert(f.doc, lk_doc_line_start(f.doc, 1) + 2, "ZZ", 2) == 1);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2); /* untouched, still valid */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 0); /* dirtied */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2); /* untouched */
+
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 2); /* 14 cp: still 2 rows */
+
+  /* delete-then-insert at one position (replace as ONE transaction
+   * through the editor: two sequential deltas, same line) */
+  cmd_setcur(&f, lk_doc_line_start(f.doc, 1), 0);
+  cmd_setcur(&f, lk_doc_line_start(f.doc, 1) + 4, 1);
+  CHECK(cmd_ins(&f, "Q") == 1);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 0);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_splice_newlines(void) {
+  ed_fix f;
+  char buf[80];
+  lk_u32 l1;
+
+  BEGIN_TEST("wrap: newline splices shift entries by index");
+
+  /* 4 lines x 12 cp = 8 rows, all visible (h = 128) */
+  make_rows(buf, sizeof(buf), 4, 12);
+  fix_init(&f, buf, 80, 128);
+  fix_wrap(&f);
+
+  /* one-newline insert inside line 0: fresh invalid entry after it,
+   * old lines 1-2 shift down with their shapes intact */
+  CHECK(lk_doc_insert(f.doc, 6, "\n", 1) == 1);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0); /* dirtied */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 0); /* fresh entry */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2); /* old line 1, shape kept */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 3), 2); /* old line 2 */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 4), 2); /* old line 3 */
+
+  /* one-newline delete joins them back */
+  CHECK(lk_doc_delete(f.doc, 6, 1) == 1);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 3), 2);
+
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+
+  /* N-lines-replaced-with-M in one transaction: delete "\n...\n"
+   * spanning two newlines (begins AND ends exactly on a newline,
+   * merging lines 1-2 away), insert one newline back.  Lines within
+   * the replaced range re-measure; the line BELOW it shifts by index
+   * with its shape intact. */
+  l1 = lk_doc_line_start(f.doc, 1);
+  lk_doc_begin(f.doc, 42);
+  CHECK(lk_doc_delete(f.doc, l1 - 1, 14) == 1); /* "\n" + line1 + "\n" */
+  CHECK(lk_doc_insert(f.doc, l1 - 1, "\n", 1) == 1);
+  lk_doc_commit(f.doc);
+
+  CHECK_EQ(lk_doc_line_count(f.doc), 3);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0); /* replaced range */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 0);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2); /* old line 3, shape kept */
+
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_generation_invalidation(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: width change + invalidate_layout re-measure");
+
+  fix_init(&f, ED20, 80, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+
+  /* widen the viewport (split-divider drag): one generation bump,
+   * relayout at the new width unwraps the line */
+  f.cfg.viewport_w = 160;
+  fix_frame(&f, 1);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 1);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 1);
+  CHECK(run_is(&rl, nth_run(&rl, 0), ED20));
+
+  /* explicit invalidation hook: stale until the next layout */
+  lk_editor_invalidate_layout(f.ed);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 1);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_anchor_right_affinity(void) {
+  ed_fix f;
+  char buf[2048];
+  lk_u32 old_top;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: insert AT top_byte keeps content anchored");
+
+  make_lines(buf, sizeof(buf), 10);
+  fix_init(&f, buf, 400, 80);
+  fix_wrap(&f);
+
+  cmd_scroll(&f, 3);
+  fix_layout(&f);
+  old_top = lk_editor_get_viewport(f.ed).top_byte;
+  CHECK_EQ(old_top, lk_doc_line_start(f.doc, 3));
+
+  /* insertion exactly at the anchor: RIGHT affinity shifts the
+   * anchor past the inserted bytes (before any layout runs) */
+  CHECK(lk_doc_insert(f.doc, old_top, "NEW\n", 4) == 1);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, old_top + 4);
+
+  /* the viewport still shows the content the user was reading */
+  fix_layout(&f);
+  memset(&rl, 0, sizeof(rl));
+  CHECK(fix_render(&f, &rl));
+  CHECK(run_is(&rl, nth_run(&rl, 0), "line 3"));
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_distant_reanchor(void) {
+  ed_fix f;
+  char buf[2200];
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: distant jump measures only the target region");
+
+  /* 100 lines x 20 cp = 2 rows each; 5 rows visible */
+  make_rows(buf, sizeof(buf), 100, 20);
+  fix_init(&f, buf, 80, 80);
+  fix_wrap(&f);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2); /* viewport measured */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 50), 0);
+
+  /* jump far outside the materialized window */
+  lk_editor_set_cursor(f.ed, lk_doc_line_start(f.doc, 90));
+  fix_layout(&f);
+
+  /* bottom-placed: anchor backs up 4 rows from (line 90, row 0) */
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte,
+           lk_doc_line_start(f.doc, 88));
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 88), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 90), 2);
+
+  /* the intervening lines were NEVER measured (no full walk), and
+   * neither were the doc-end lines (bottom clamp skipped) */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 20), 0);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 50), 0);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 87), 0);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 95), 0);
+
+  /* cursor is visible on the last row */
+  memset(&rl, 0, sizeof(rl));
+  lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid);
+  CHECK(fix_render(&f, &rl));
+
+  {
+    const lk_render_cmd *cur = find_cursor_fill(&rl);
+
+    CHECK(cur && cur->rect.x == 0 && cur->rect.y == 64);
+  }
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_scroll_rows_and_page(void) {
+  ed_fix f;
+  char buf[2200];
+
+  BEGIN_TEST("wrap: wheel scrolls rows, PAGE moves by rows");
+
+  make_rows(buf, sizeof(buf), 100, 20);
+  fix_init(&f, buf, 80, 80);
+  fix_wrap(&f);
+
+  /* wheel down 3 VISUAL rows: line 1, row 1 */
+  CHECK(send_wheel(&f, -1) == 1);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte,
+           lk_doc_line_start(f.doc, 1) + 10);
+  CHECK(send_wheel(&f, 1) == 1);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, 0);
+
+  /* PAGE_DOWN: 5 visible rows -> (line 2, row 1) */
+  cmd_setcur(&f, 0, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_PAGE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), lk_doc_line_start(f.doc, 2) + 10);
+  CHECK(cmd_move(&f, LK_ED_MOVE_PAGE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_scroll_extent_estimator(void) {
+  ed_fix f;
+  char buf[600];
+  lk_u32 l5;
+  lk_u32 off = 0;
+  int i;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap: unmeasured long line counts >1 row in extent");
+
+  /* 5 short lines, one 400-byte line (40 rows at width 80), one
+   * short line; viewport = 3 rows */
+  for (i = 0; i < 5; i++) {
+    memset(buf + off, (int)('a' + i), 10);
+    off += 10;
+    buf[off++] = '\n';
+  }
+
+  memset(buf + off, 'c', 400);
+  off += 400;
+  buf[off++] = '\n';
+  memset(buf + off, 'd', 10);
+  off += 10;
+  buf[off] = '\0';
+
+  fix_init(&f, buf, 80, 48);
+  fix_wrap(&f);
+  l5 = lk_doc_line_start(f.doc, 5);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 5), 0); /* long line unmeasured */
+
+  /* distant scroll by 25 rows: the ESTIMATOR must credit the long
+   * line ~40 rows so the target lands INSIDE it (row 20); a
+   * 1-row-per-line lie would run past it to the document end */
+  CHECK(cmd_scroll(&f, 25) == 1);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, l5 + 200);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, l5 + 200);
+
+  memset(&rl, 0, sizeof(rl));
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 3);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "cccccccccc"));
+
+  /* overscroll clamps exactly: the last viewport-full is rows 38-39
+   * of the long line plus the final line */
+  cmd_scroll(&f, 100000);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, l5 + 380);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 3);
+  CHECK(run_is(&rl, nth_run(&rl, 2), "dddddddddd"));
+
+  /* and all the way back up */
+  cmd_scroll(&f, -100000);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, 0);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_hscroll_follow_cursor(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *cur;
+
+  BEGIN_TEST("hscroll: NONE mode follows the cursor");
+
+  fix_init(&f, ED20, 80, 80); /* 160 px line in an 80 px view */
+  memset(&rl, 0, sizeof(rl));
+  lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid);
+
+  CHECK_EQ(lk_editor_scroll_x(f.ed), 0);
+
+  /* cursor to EOL: scroll right so it sits margin (16 px) inside */
+  cmd_setcur(&f, 20, 0);
+  fix_layout(&f);
+  CHECK_EQ((unsigned)lk_editor_scroll_x(f.ed), 96u);
+  CHECK(fix_render(&f, &rl));
+  cur = find_cursor_fill(&rl);
+  CHECK(cur && cur->rect.x == 64 && cur->rect.y == 0);
+  CHECK(nth_run(&rl, 0)->rect.x == -96);
+
+  /* hit-testing rides the same origin: x=64 is the line end */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 64, 4) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 20);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 64, 4);
+
+  /* back to the start: scroll returns to 0 */
+  cmd_setcur(&f, 0, 0);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_scroll_x(f.ed), 0);
+  CHECK(fix_render(&f, &rl));
+  CHECK(nth_run(&rl, 0)->rect.x == 0);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_hscroll_wheel(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("hscroll: SHIFT+wheel and wheel-dx in NONE mode");
+
+  fix_init(&f, ED20, 80, 80);
+  memset(&rl, 0, sizeof(rl));
+
+  /* SHIFT + wheel toward the user scrolls right by 3 advances */
+  CHECK(send_wheel_ex(&f, 0, -1, LK_MOD_SHIFT) == 1);
+  CHECK_EQ((unsigned)lk_editor_scroll_x(f.ed), 24u);
+  fix_layout(&f);
+  CHECK_EQ((unsigned)lk_editor_scroll_x(f.ed), 24u);
+  CHECK(fix_render(&f, &rl));
+  CHECK(nth_run(&rl, 0)->rect.x == -24);
+
+  /* native dx maps too */
+  CHECK(send_wheel_ex(&f, 2, 0, 0) == 1);
+  CHECK_EQ((unsigned)lk_editor_scroll_x(f.ed), 72u);
+
+  /* SHIFT + wheel away scrolls back left */
+  CHECK(send_wheel_ex(&f, 0, 1, LK_MOD_SHIFT) == 1);
+  CHECK_EQ((unsigned)lk_editor_scroll_x(f.ed), 48u);
+
+  /* layout soft-clamps against the widest measured line */
+  lk_editor_scroll_x_wheel(f.ed, 100);
+  fix_layout(&f);
+  CHECK_EQ((unsigned)lk_editor_scroll_x(f.ed), 96u); /* 160-80+16 */
+
+  /* wrapping forces horizontal scroll off; SHIFT+wheel goes back to
+   * the vertical path */
+  fix_wrap(&f);
+  CHECK_EQ(lk_editor_scroll_x(f.ed), 0);
+  CHECK(send_wheel_ex(&f, 0, -1, LK_MOD_SHIFT) == 1);
+  CHECK_EQ(lk_editor_scroll_x(f.ed), 0);
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, 10); /* 3 rows down,
+                                                          clamped */
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
 /* ---- runner ---- */
 
 void lk_editor_run_tests(void) {
@@ -1500,4 +2309,26 @@ void lk_editor_run_tests(void) {
 
   printf("\nlk editor utf8 tests:\n");
   test_utf8_typing_backspace();
+
+  printf("\nlk editor wrap tests (stage W1):\n");
+  test_wrap_mode_api();
+  test_wrap_basic_rows();
+  test_wrap_break_utf8();
+  test_wrap_tab_at_edge();
+  test_wrap_empty_row_progress();
+  test_wrap_row_ownership();
+  test_wrap_row_commands();
+  test_wrap_motion_rows_and_seams();
+  test_wrap_sticky_x_rows();
+  test_wrap_click_rows();
+  test_wrap_selection_rows();
+  test_wrap_splice_touched_line_only();
+  test_wrap_splice_newlines();
+  test_wrap_generation_invalidation();
+  test_wrap_anchor_right_affinity();
+  test_wrap_distant_reanchor();
+  test_wrap_scroll_rows_and_page();
+  test_wrap_scroll_extent_estimator();
+  test_hscroll_follow_cursor();
+  test_hscroll_wheel();
 }

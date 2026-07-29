@@ -58,7 +58,16 @@ typedef struct lk_document lk_document;
  * pointers are valid ONLY during the notification: `inserted` points
  * into the add buffer, `deleted` into transaction-scoped scratch
  * captured before the delete applied.  Listeners that need the bytes
- * longer must copy. */
+ * longer must copy.
+ *
+ * Coordinate contract (pinned, docs/editor-wrap.md section 7): delta
+ * coordinates are SEQUENTIAL -- each delta's positions are expressed
+ * in the document state produced by all preceding deltas of the same
+ * transaction, in array order.  Replaying the deltas one by one
+ * against a copy of the pre-transaction bytes reproduces the
+ * post-transaction document exactly; listeners that maintain
+ * position-derived structures (history, annotations, wrap caches)
+ * must transform per delta, in order. */
 typedef struct lk_doc_delta {
   lk_u32 start;
   lk_u32 deleted_len;

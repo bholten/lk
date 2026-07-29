@@ -985,6 +985,54 @@ static const lk_render_cmd *sp_find_fill(const lk_render_list *rl,
   return NULL;
 }
 
+static void test_span_across_wrap_break(void) {
+  sp_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *r0;
+  const lk_render_cmd *r1;
+  const lk_render_cmd *r2;
+  const lk_render_cmd *r3;
+
+  BEGIN_TEST("span render: span crosses a wrap break");
+
+  /* one 20 cp line wrapped at width 80 (10 cp/row); span [5,15)
+   * covers the tail of row 0 and the head of row 1 */
+  sp_init(&f, "abcdefghijklmnopqrst", 80, 80);
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_CHARACTER) == 1);
+  memset(&rl, 0, sizeof(rl));
+
+  sp_set_one(&f, 5, 15, LK_SPAN_FG);
+  sp_layout(&f);
+  CHECK(sp_render(&f, &rl));
+
+  CHECK_EQ(sp_count_runs(&rl), 4);
+  CHECK_EQ(sp_count_runs_colored(&rl, SP_FG), 2);
+  r0 = sp_nth_run(&rl, 0);
+  r1 = sp_nth_run(&rl, 1);
+  r2 = sp_nth_run(&rl, 2);
+  r3 = sp_nth_run(&rl, 3);
+
+  CHECK(sp_run_is(&rl, r0, "abcde"));
+  CHECK(r0 && r0->rect.x == 0 && r0->rect.y == 0 && r0->rect.w == 40);
+  CHECK(r0 && !col_eq(r0->color, SP_FG));
+
+  CHECK(sp_run_is(&rl, r1, "fghij"));
+  CHECK(r1 && r1->rect.x == 40 && r1->rect.y == 0 && r1->rect.w == 40);
+  CHECK(r1 && col_eq(r1->color, SP_FG));
+
+  CHECK(sp_run_is(&rl, r2, "klmno"));
+  CHECK(r2 && r2->rect.x == 0 && r2->rect.y == 16 && r2->rect.w == 40);
+  CHECK(r2 && col_eq(r2->color, SP_FG));
+
+  CHECK(sp_run_is(&rl, r3, "pqrst"));
+  CHECK(r3 && r3->rect.x == 40 && r3->rect.y == 16 && r3->rect.w == 40);
+  CHECK(r3 && !col_eq(r3->color, SP_FG));
+
+  lk_render_list_destroy(&rl);
+  sp_destroy(&f);
+  END_TEST();
+}
+
 static void test_span_midline_three_runs(void) {
   sp_fix f;
   lk_render_list rl;
@@ -1612,4 +1660,5 @@ void lk_annot_run_tests(void) {
   test_span_utf8_boundary_clamp();
   test_span_replace_and_clear();
   test_span_producer_end_to_end();
+  test_span_across_wrap_break();
 }

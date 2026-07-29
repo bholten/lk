@@ -8,8 +8,10 @@
  * lk_editor is ONE view over an application-owned lk_document:
  * cursor byte offset (always codepoint-boundary-aligned), selection
  * anchor, sticky x-pixel for vertical motion, anchored viewport
- * {top_line, y_offset}, drag state, tab settings, and a transient
- * per-frame geometry block filled by the widget's layout hook.
+ * {top_byte, y_offset} over visual rows, wrap mode + cache and
+ * horizontal scroll (docs/editor-wrap.md), drag state, tab settings,
+ * and a transient per-frame geometry block filled by the widget's
+ * layout hook.
  *
  * The editor lives in the application environment (like the document
  * and history), never in lk_state or the intern pool.  The tree
@@ -36,12 +38,16 @@ typedef struct lk_editor lk_editor;
  ** Anchored viewport (docs/editor.md section 9)
  **/
 
-/* Not an absolute pixel offset: top_line anchors the first (possibly
- * partially) visible document line, y_offset is the pixel offset into
- * that line, kept in [0, line_h).  Nothing ever multiplies
- * line_count * line_height into an lk_i32. */
+/* Not an absolute pixel offset: top_byte anchors the first (possibly
+ * partially) visible VISUAL ROW -- it is a row-start byte offset (a
+ * line start when wrapping is off), y_offset is the pixel offset into
+ * that row, kept in [0, line_h).  Nothing ever multiplies
+ * row_count * line_height into an lk_i32.  Edits transform the
+ * anchor with RIGHT affinity: an insertion exactly at top_byte
+ * shifts the anchor past the inserted bytes, so the content being
+ * read stays at the top of the viewport. */
 typedef struct lk_editor_viewport {
-  lk_u32 top_line;
+  lk_u32 top_byte;
   lk_i32 y_offset;
 } lk_editor_viewport;
 
@@ -91,6 +97,27 @@ void lk_editor_scroll_to_cursor(lk_editor *e);
 /* Tab settings (v1 pinned: TAB inserts spaces, tab_size = 4; literal
  * \t bytes render via segment-wise tab-stop expansion). */
 lk_u32 lk_editor_tab_size(const lk_editor *e);
+
+/**
+ ** Wrap modes (docs/editor-wrap.md section 5)
+ **/
+
+typedef enum lk_editor_wrap_mode {
+  LK_EDITOR_WRAP_NONE = 0,
+  LK_EDITOR_WRAP_CHARACTER,
+  LK_EDITOR_WRAP_WORD /* rejected until implemented */
+} lk_editor_wrap_mode;
+
+/* Set the wrap mode.  Returns 1 on success, 0 when the mode is
+ * unsupported (WORD, for now).  Default: LK_EDITOR_WRAP_NONE. */
+int lk_editor_set_wrap_mode(lk_editor *e, lk_editor_wrap_mode m);
+lk_editor_wrap_mode lk_editor_wrap_mode_get(const lk_editor *e);
+
+/* Invalidate all cached wrap layout (one generation bump, no sweep).
+ * The escape hatch for backends that mutate their metrics in place
+ * (font hot-reload, DPI change) -- such changes are invisible to the
+ * wrap key, which only compares width/font/tab/backend-pointer. */
+void lk_editor_invalidate_layout(lk_editor *e);
 
 /**
  ** Styled spans (docs/editor.md section 10, stage C)
@@ -175,7 +202,14 @@ typedef enum lk_editor_cmd_id {
   LK_ED_UNDO,
   LK_ED_REDO,
   LK_ED_SET_CURSOR,   /* arg: set_cursor */
-  LK_ED_SCROLL_LINES, /* arg: lines (signed; does not move the cursor) */
+  LK_ED_SCROLL_LINES, /* arg: lines (signed; does not move the cursor;
+                         visual rows when wrapping) */
+  /* Appended after v1 (values above are recorded as transaction
+   * origins and must not shift): visual-row HOME/END.  Identical to
+   * LINE_START/END when wrapping is off; the default keymap binds
+   * HOME/END here. */
+  LK_ED_MOVE_ROW_START,
+  LK_ED_MOVE_ROW_END,
   LK_ED__COUNT
 } lk_editor_cmd_id;
 
@@ -244,6 +278,21 @@ int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
 /* Drag flag (pointer-capture selection drags). */
 void lk_editor_set_drag(lk_editor *e, int on);
 int lk_editor_dragging(const lk_editor *e);
+
+/* Horizontal wheel input in wheel ticks (one tick = 3 space
+ * advances); positive scrolls right.  No-op while wrapping is
+ * active.  The upper clamp (against the widest measured visible
+ * line) is applied at the next layout. */
+void lk_editor_scroll_x_wheel(lk_editor *e, lk_i32 ticks);
+
+/* Current horizontal scroll in px (0 while wrapping). */
+lk_i32 lk_editor_scroll_x(const lk_editor *e);
+
+/* Debug/test observability: row count of the line's wrap-cache entry,
+ * 0 when the line is unmeasured or stale at the current wrap
+ * generation (or wrapping is off).  Lets tests assert WHICH lines a
+ * pass measured without timing. */
+lk_u32 lk_editor_wrap_rows(const lk_editor *e, lk_u32 line);
 
 #ifdef __cplusplus
 }
