@@ -522,6 +522,10 @@ void lk_ui_destroy(lk_ui *ui) {
     ui_dealloc(ui, ui->node_states);
   }
 
+  if (ui->geom) {
+    ui_dealloc(ui, ui->geom);
+  }
+
   if (ui->overlays) {
     ui_dealloc(ui, ui->overlays);
   }
@@ -674,6 +678,36 @@ lk_theme *lk_ui_theme(lk_ui *ui) {
 
 const lk_style *lk_ui_styles(const lk_ui *ui) {
   return ui ? ui->styles : NULL;
+}
+
+lk_widget_geom *lk_ui_geom(lk_ui *ui) {
+  const lk_tree *t;
+  lk_u32 nc;
+
+  if (!ui) {
+    return NULL;
+  }
+
+  t = ui->prev; /* current tree (mirrors lk_ui_resolve_styles) */
+  nc = t ? t->node_count : 0;
+
+  if (nc > ui->geom_cap) {
+    if (ui->geom) {
+      ui_dealloc(ui, ui->geom);
+    }
+
+    ui->geom =
+        (lk_widget_geom *)ui_alloc(ui, (lk_u32)(sizeof(lk_widget_geom) * nc));
+
+    if (!ui->geom) {
+      ui->geom_cap = 0;
+      return NULL;
+    }
+
+    ui->geom_cap = nc;
+  }
+
+  return ui->geom;
 }
 
 void lk_ui_set_clipboard(lk_ui *ui, lk_clipboard_get_fn get_fn,

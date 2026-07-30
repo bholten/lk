@@ -81,6 +81,7 @@ static const str_enum prop_table[] = {
     {"split_ratio", UIP_SPLIT_RATIO},
     {"editor",      UIP_EDITOR     },
     {"grow",        UIP_GROW       },
+    {"value",       UIP_VALUE      },
     {NULL,          0              }
 };
 
@@ -837,6 +838,7 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   switch (key_val) {
   case UIP_TEXT:
   case UIP_TOOLTIP:
+  case UIP_VALUE:
     lv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3]));
     break;
   case UIP_FOCUSABLE:
@@ -1540,6 +1542,17 @@ static int c_lk_state_set(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
+  /* Keys below LKS_USER are internal widget state — scripts never
+   * poke widget state (initial values are props, e.g. the dropdown's
+   * `value`).  App-owned state starts at LKS_USER. */
+  if (key < (long)LKS_USER) {
+    lcl_set_error(interp,
+                  "lk::state_set: keys below 256 (LKS_USER) are internal "
+                  "widget state");
+
+    return LCL_RC_ERR;
+  }
+
   nid = lk_intern_cid(ui->intern, node_str);
 
   /* Value: try int, then string */
@@ -1586,6 +1599,16 @@ static int c_lk_state_get(lcl_interp *interp, int argc, lcl_value **argv,
 
   if (lcl_value_to_int(argv[2], &key) != LCL_OK) {
     lcl_set_error(interp, "lk::state_get: key must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  /* Same barrier as lk::state_set: internal widget state is not
+   * script-visible. */
+  if (key < (long)LKS_USER) {
+    lcl_set_error(interp,
+                  "lk::state_get: keys below 256 (LKS_USER) are internal "
+                  "widget state");
 
     return LCL_RC_ERR;
   }

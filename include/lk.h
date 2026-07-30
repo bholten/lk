@@ -140,9 +140,25 @@ typedef enum lk_prop_key {
                main-axis size is the basis; the child still grows.
                Clamped to [0, 4096] at distribution time. */
 
+  UIP_VALUE, /* string (interned, like TEXT): dropdown initial /
+                controlled selection by option text.  Priority:
+                LKS_SELECTED_INDEX state (user interaction) > this
+                prop (first option whose TEXT matches) > index 0 --
+                the same state > prop > default pattern as
+                UIP_SPLIT_RATIO.  An unmatched value falls back to
+                index 0. */
+
   UIP__COUNT
 } lk_prop_key;
 
+/* Retained per-node state keys.
+ *
+ * INTERNAL WIDGET STATE -- not API.  Keys below LKS_USER belong to
+ * the built-in widgets: hosts must not read or write them directly,
+ * and the Lcl bindings reject them (script-visible state starts at
+ * LKS_USER).  Retained keys hold user interaction state only; derived
+ * per-frame geometry lives in the lk_widget_geom scratch (see
+ * lk_layout_cfg.geom), never here. */
 typedef enum lk_state_key {
   LKS_SCROLL_X = 1,
   LKS_SCROLL_Y,
@@ -151,47 +167,20 @@ typedef enum lk_state_key {
   LKS_SELECTION_END,
   LKS_EXPANDED,
   LKS_TEXT_BUF,
-  LKS_CURSOR_X,
-  LKS_SCROLL_MAX,
   LKS_SELECTED_INDEX, /* dropdown: index of currently selected option */
   LKS_HOVER_INDEX,    /* dropdown: index of option under cursor while open */
   LKS_FOCUSED,        /* i32 0/1: kept in sync with the UI focus by the
                          lk_focus_* functions so widget render code (which
                          only sees lk_state) can tell if its node is
                          focused */
-  LKS_TRIGGER_X,      /* dropdown: trigger rect stashed by the layout pass
-                         so event handling can distinguish trigger clicks
-                         from popup-padding clicks (Lean overlay support,
-                         see docs/overlays.md) */
-  LKS_TRIGGER_Y,
-  LKS_TRIGGER_W,
-  LKS_TRIGGER_H,
-  LKS_SEL_X0,         /* text_input: selection endpoint x-offsets (px from
-                         text origin), computed via x_from_index during
-                         measure — like LKS_CURSOR_X, derived geometry in
-                         retained state (design-coherence list, docs/TODO.md) */
-  LKS_SEL_X1,
-  LKS_TEXT_ORIGIN_X,  /* text_input: content origin x (rect.x + inset)
-                         stashed by the layout pass so click-to-position
-                         (which has no layout rects) can map pointer x to
-                         a byte index — same coherence-debt pattern as the
-                         dropdown LKS_TRIGGER_* keys */
-  LKS_FONT_ID,        /* text_input: resolved font stashed by the layout
-                         pass; event handlers have no styles */
-  LKS_FONT_SIZE,
   LKS_SPLIT_RATIO,    /* split: divider position in per-mille (0..1000),
                          written by dragging.  Overrides UIP_SPLIT_RATIO. */
   LKS_SPLIT_DRAGGING, /* split: 1 while the divider is being dragged
                          (pointer captured by the split node) */
-  LKS_SPLIT_CX,       /* split: content rect stashed by the layout pass
-                         (same coherence-debt pattern as LKS_TRIGGER_* /
-                         LKS_TEXT_ORIGIN_X — derived geometry in retained
-                         state, see design-coherence list in docs/TODO.md).
-                         The event handler uses it to hit the divider
-                         band and map pointer position to a ratio. */
-  LKS_SPLIT_CY,
-  LKS_SPLIT_CW,
-  LKS_SPLIT_CH,
+  LKS_POPUP_SCROLL,   /* dropdown: popup scroll offset in px when the
+                         option list overflows DROPDOWN_POPUP_MAX_HEIGHT.
+                         User scroll position (wheel / keyboard), so it is
+                         retained state; reset to 0 on open and close. */
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -827,6 +816,13 @@ typedef struct lk_ui {
   lk_u8 *node_states;
   lk_u32 nstates_cap;
 
+  /* Per-frame widget geometry scratch (see lk_widget_geom).  Owned by
+   * the ui, sized by lk_ui_geom.  Widget EVENT handlers read it, so a
+   * host that routes events must pass this array (lk_ui_geom) as
+   * cfg->geom when laying out; NULL until the host does. */
+  union lk_widget_geom *geom;
+  lk_u32 geom_cap;
+
   /* Clipboard (optional, platform-specific) */
   lk_clipboard_get_fn clipboard_get;
   lk_clipboard_set_fn clipboard_set;
@@ -995,12 +991,66 @@ typedef struct lk_text_backend {
   lk_u16 (*register_font)(void *ud, const char *path);
 } lk_text_backend;
 
+/**
+ * Per-frame widget geometry scratch.
+ *
+ * Derived geometry the layout passes compute for render and event
+ * handling -- never retained, never host-written.  A parallel array
+ * indexed by lk_ix, allocated alongside rects[]: lk_ui owns one
+ * (lk_ui_geom) that the SDL run loop wires up automatically;
+ * tree-driving hosts may supply their own.  lk_layout zeroes
+ * cfg->geom and widgets fill their own slots; lk_render_build passes
+ * each node its slot, and widget EVENT handlers read ui->geom -- so
+ * hosts that route events must pass lk_ui_geom(ui) as cfg->geom.
+ *
+ * cfg->geom == NULL is always safe; widgets degrade: the text-input
+ * cursor bar and selection highlight do not render and
+ * click-to-position bubbles, the dropdown treats every
+ * expanded-trigger click as a toggle and its popup cannot
+ * wheel-scroll, split dividers cannot be dragged, and scroll
+ * containers render no bar and ignore wheel events.
+ *
+ * Field meaning is per-kind; each union arm is owned and documented
+ * by its widget's file.
+ */
+typedef union lk_widget_geom {
+  struct {
+    lk_i32 cursor_x, sel_x0, sel_x1; /* px from text origin (measure) */
+    lk_i32 origin_x;                 /* content origin x (layout) */
+    lk_u16 font_id, font_size;       /* resolved font (layout) */
+    lk_u8 placed;                    /* 1 once layout stored origin/font */
+  } text;                            /* UIK_TEXT_INPUT (lk-text-input.c) */
+  struct {
+    lk_i32 x, y, w, h;   /* trigger rect; w > 0 marks validity */
+    lk_u16 row_h, inset; /* popup option row height / content inset */
+  } trigger;             /* UIK_DROPDOWN (lk-dropdown.c) */
+  struct {
+    lk_i32 x, y, w, h; /* content rect; w > 0 marks validity */
+  } content;           /* UIK_SPLIT_H / UIK_SPLIT_V (lk-split.c) */
+  struct {
+    lk_i32 max; /* max scroll offset (0 = content fits) */
+  } scroll;     /* UIK_SCROLL (lk-scroll.c) */
+} lk_widget_geom;
+
 typedef struct lk_layout_cfg {
   const lk_text_backend *text;   /* NULL = all text measures as 0x0 */
   lk_i32 viewport_w, viewport_h;
   const struct lk_style *styles; /* NULL = read tree props directly */
   lk_state *state;               /* NULL ok; widgets may use for cursor etc. */
+  lk_widget_geom *geom;          /* NULL ok; per-frame geometry scratch,
+                                    >= t->node_count entries like rects[].
+                                    Pass lk_ui_geom(ui) when widget event
+                                    handlers should see this layout's
+                                    geometry. */
 } lk_layout_cfg;
+
+/* The ui's per-frame geometry scratch, grown to cover the CURRENT
+ * tree (call after lk_ui_end_frame, before lk_layout, each frame).
+ * Returns the array to pass as cfg->geom -- widget event handlers
+ * read the same array through the ui, which is what makes
+ * geometry-dependent events (click-to-position, divider drags, popup
+ * scrolling) work.  NULL only on NULL ui or allocation failure. */
+lk_widget_geom *lk_ui_geom(lk_ui *ui);
 
 /* Compute layout rects for every node in the tree. rects[] must be
  * at least t->node_count elements (indexed by lk_ix).  Returns 1 on
@@ -1149,11 +1199,13 @@ typedef struct lk_render_list {
 /* Build a render list from a laid-out tree.  rects[] indexed by lk_ix
  * (from lk_layout).  Reuses existing capacity in out; resets count.
  * state may be NULL; passed through to widget render functions.
+ * geom is the per-frame geometry scratch the layout pass filled
+ * (cfg->geom; NULL degrades as documented on lk_widget_geom).
  * Returns 1 on success, 0 on failure.
  */
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     const lk_style *styles, const lk_state *state,
-                    lk_render_list *out);
+                    const lk_widget_geom *geom, lk_render_list *out);
 
 /* Append overlay render commands to an existing render list, iterating
  * the ui's overlay stack bottom-to-top (topmost draws last).  Call
@@ -1199,9 +1251,11 @@ typedef struct lk_widget_def {
                 const lk_rect *content, const lk_layout_cfg *cfg,
                 lk_rect *rects);
 
+  /* geom is THIS node's per-frame geometry slot (&cfg->geom[n]) or
+   * NULL when the host laid out without a geometry scratch. */
   void (*render)(const lk_tree *t, lk_ix n, const lk_rect *rect,
                  const lk_style *style, const lk_state *state,
-                 lk_render_list *out);
+                 const lk_widget_geom *geom, lk_render_list *out);
 
   /* Widget-level event handler. Called at TARGET phase before the global
    * handler. Return 1 if handled (stops propagation), 0 to continue. */

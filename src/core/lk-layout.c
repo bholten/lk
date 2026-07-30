@@ -184,6 +184,10 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
 
   memset(rects, 0, sizeof(lk_rect) * t->node_count);
 
+  if (cfg->geom) {
+    memset(cfg->geom, 0, sizeof(lk_widget_geom) * t->node_count);
+  }
+
   sizes =
       (lk_size *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_size) * t->node_count));
 
@@ -202,11 +206,12 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
 
   layout_pass(t, cfg, sizes, rects, t->root);
 
-  /* Overlay support: stash dropdown trigger rects in retained state
-   * so dropdown event handling can reason about geometry.
-   * See docs/overlays.md. */
-  if (cfg->state) {
-    lk_dropdown_store_trigger_rects(t, rects, cfg->state);
+  /* Per-frame geometry scratch: widgets stash derived geometry the
+   * event handlers need but cannot compute (trigger rects, text
+   * origin, split content rects).  NULL geom skips the stash; the
+   * degraded behaviors are documented on lk_widget_geom. */
+  if (cfg->geom) {
+    lk_dropdown_store_trigger_rects(t, rects, cfg);
     lk_text_input_store_geometry(t, rects, cfg);
     lk_split_store_geometry(t, rects, cfg);
   }

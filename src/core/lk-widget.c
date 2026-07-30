@@ -434,12 +434,13 @@ static int layout_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
 static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
-                          lk_render_list *out) {
+                          const lk_widget_geom *geom, lk_render_list *out) {
   lk_render_cmd cmd;
 
   (void)t;
   (void)n;
   (void)state;
+  (void)geom;
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
@@ -449,9 +450,10 @@ static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
 static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
                          const lk_style *style, const lk_state *state,
-                         lk_render_list *out) {
+                         const lk_widget_geom *geom, lk_render_list *out) {
   lk_u32 sid = lk_node_text_id(t, n);
   (void)state;
+  (void)geom;
 
   if (sid != 0) {
     lk_render_cmd cmd;
@@ -468,13 +470,14 @@ static void render_label(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
 static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
-                          lk_render_list *out) {
+                          const lk_widget_geom *geom, lk_render_list *out) {
   lk_i32 pad = style->padding;
   lk_i32 bw = style->border_width;
   lk_i32 inset = pad + bw;
   lk_u32 sid = lk_node_text_id(t, n);
   lk_render_cmd cmd;
   (void)state;
+  (void)geom;
 
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;

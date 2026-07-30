@@ -870,7 +870,7 @@ static void sp_destroy(sp_fix *f) {
 
 static int sp_render(sp_fix *f, lk_render_list *rl) {
   return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL,
-                         lk_ui_state(f->ui), rl);
+                         lk_ui_state(f->ui), NULL, rl);
 }
 
 /* test palette (distinct from the theme and the selection color) */

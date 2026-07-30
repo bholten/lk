@@ -5,10 +5,19 @@
  * Cursor position (byte index, codepoint-boundary-aligned) in
  * LKS_CURSOR_POS.  Selection range in LKS_SELECTION_START /
  * LKS_SELECTION_END.  Cursor motion and deletion are codepoint-wise
- * (lk-utf8.h).  Cursor/selection pixel x-offsets are computed during
- * measure via the text backend's x_from_index and stored in
- * LKS_CURSOR_X / LKS_SEL_X0 / LKS_SEL_X1.  POINTER_DOWN positions the
- * cursor via index_from_x (requires lk_ui_set_text_backend).
+ * (lk-utf8.h).
+ *
+ * Derived geometry lives in the per-frame lk_widget_geom scratch
+ * (geom->text arm), never in retained state: measure computes the
+ * cursor and selection pixel x-offsets via the backend's
+ * x_from_index (cursor_x / sel_x0 / sel_x1); the layout pass stores
+ * the content origin x and resolved font (origin_x / font_id /
+ * font_size, `placed` flag) via lk_text_input_store_geometry so
+ * POINTER_DOWN click-to-position — which sees neither rects nor
+ * styles — can map pointer x to a byte index through index_from_x
+ * (requires lk_ui_set_text_backend AND a ui geom scratch wired as
+ * cfg->geom).  Without geom the cursor bar and selection highlight
+ * do not render and clicks bubble to the host's click-to-focus.
  *
  * The host feeds the edited text back as UIP_TEXT each frame for rendering.
  */
@@ -239,11 +248,12 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = m.h + inset * 2;
 
   /* Compute cursor and selection pixel offsets via x_from_index and
-   * store them in state for render (which has no text backend).
-   * Derived geometry in retained state (LKS_CURSOR_X / LKS_SEL_X0/X1)
-   * is on the design-coherence list (docs/TODO.md): it belongs in
-   * per-frame scratch parallel to rects[]. */
-  if (cfg->state) {
+   * stash them in the per-frame geometry scratch for render (which
+   * has no text backend).  NULL geom: the cursor bar and selection
+   * highlight simply do not render. */
+  if (cfg->geom) {
+    lk_widget_geom *g = &cfg->geom[n];
+
     nid = t->nodes[n].id;
     {
       lk_i32 cursor_pos = get_cursor(cfg->state, nid, (lk_i32)text.len);
@@ -252,31 +262,29 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
       lk_i32 lo = sel_s < sel_e ? sel_s : sel_e;
       lk_i32 hi = sel_s < sel_e ? sel_e : sel_s;
 
-      lk_state_set(cfg->state, nid, LKS_CURSOR_X,
-                   lk_v_i32(run_x_from_ix(cfg, n, text, (lk_u32)cursor_pos)));
-      lk_state_set(cfg->state, nid, LKS_SEL_X0,
-                   lk_v_i32(run_x_from_ix(cfg, n, text, (lk_u32)lo)));
-      lk_state_set(cfg->state, nid, LKS_SEL_X1,
-                   lk_v_i32(run_x_from_ix(cfg, n, text, (lk_u32)hi)));
+      g->text.cursor_x = run_x_from_ix(cfg, n, text, (lk_u32)cursor_pos);
+      g->text.sel_x0 = run_x_from_ix(cfg, n, text, (lk_u32)lo);
+      g->text.sel_x1 = run_x_from_ix(cfg, n, text, (lk_u32)hi);
     }
   }
 }
 
 /* Stash per-node geometry the event handler needs but cannot compute
- * (no rects, no styles at event time): the text content origin x and
- * the resolved font.  Called by lk_layout after rects are final —
- * same coherence-debt pattern as lk_dropdown_store_trigger_rects
- * (derived geometry in retained state; see docs/TODO.md). */
+ * (no rects, no styles at event time) into the per-frame geometry
+ * scratch: the text content origin x and the resolved font.  Called
+ * by lk_layout after rects are final; the `placed` flag marks slots a
+ * layout pass actually stored (a zeroed slot means no layout yet —
+ * click-to-position bubbles). */
 void lk_text_input_store_geometry(const lk_tree *t, const lk_rect *rects,
                                   const lk_layout_cfg *cfg) {
   lk_ix n;
 
-  if (!t || !rects || !cfg || !cfg->state) {
+  if (!t || !rects || !cfg || !cfg->geom) {
     return;
   }
 
   for (n = 1; n < (lk_ix)t->node_count; n++) {
-    lk_node_id nid;
+    lk_widget_geom *g;
     lk_i32 pad;
     lk_i32 bw;
 
@@ -287,14 +295,12 @@ void lk_text_input_store_geometry(const lk_tree *t, const lk_rect *rects,
     pad = cfg->styles ? cfg->styles[n].padding
                       : lk_node_prop_i32(t, n, UIP_PADDING, 0);
     bw = cfg->styles ? cfg->styles[n].border_width : 0;
-    nid = t->nodes[n].id;
+    g = &cfg->geom[n];
 
-    lk_state_set(cfg->state, nid, LKS_TEXT_ORIGIN_X,
-                 lk_v_i32(rects[n].x + pad + bw));
-    lk_state_set(cfg->state, nid, LKS_FONT_ID,
-                 lk_v_i32(cfg->styles ? (lk_i32)cfg->styles[n].font_id : 0));
-    lk_state_set(cfg->state, nid, LKS_FONT_SIZE,
-                 lk_v_i32(cfg->styles ? (lk_i32)cfg->styles[n].font_size : 0));
+    g->text.origin_x = rects[n].x + pad + bw;
+    g->text.font_id = cfg->styles ? (lk_u16)cfg->styles[n].font_id : 0;
+    g->text.font_size = cfg->styles ? (lk_u16)cfg->styles[n].font_size : 0;
+    g->text.placed = 1;
   }
 }
 
@@ -302,6 +308,7 @@ void lk_text_input_store_geometry(const lk_tree *t, const lk_rect *rects,
 
 static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
                               const lk_style *style, const lk_state *state,
+                              const lk_widget_geom *geom,
                               lk_render_list *out) {
   lk_i32 pad = style->padding;
   lk_i32 bw = style->border_width;
@@ -321,30 +328,24 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
   text = get_text(t, n, state, &sid);
 
   /* Selection highlight — endpoint x-offsets were computed via
-   * x_from_index during measure and stashed in LKS_SEL_X0/X1
-   * (render has no text backend). */
-  if (state) {
+   * x_from_index during measure and stashed in the geometry scratch
+   * (render has no text backend).  No geom, no highlight. */
+  if (state && geom) {
     lk_i32 sel_s = get_sel_start(state, nid, (lk_i32)text.len);
     lk_i32 sel_e = get_sel_end(state, nid, (lk_i32)text.len);
 
-    if (sel_s != sel_e) {
-      lk_value x0_v = lk_state_get(state, nid, LKS_SEL_X0);
-      lk_value x1_v = lk_state_get(state, nid, LKS_SEL_X1);
-
-      if (x0_v.tag == UIV_I32 && x1_v.tag == UIV_I32 &&
-          (lk_i32)x1_v.as.i > (lk_i32)x0_v.as.i) {
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.op = LK_ROP_FILL_RECT;
-        cmd.rect.x = rect->x + inset + (lk_i32)x0_v.as.i;
-        cmd.rect.y = rect->y + inset;
-        cmd.rect.w = (lk_i32)x1_v.as.i - (lk_i32)x0_v.as.i;
-        cmd.rect.h = rect->h - inset * 2;
-        cmd.color.r = 80;
-        cmd.color.g = 120;
-        cmd.color.b = 200;
-        cmd.color.a = 128;
-        lk_render_list_push(out, cmd);
-      }
+    if (sel_s != sel_e && geom->text.sel_x1 > geom->text.sel_x0) {
+      memset(&cmd, 0, sizeof(cmd));
+      cmd.op = LK_ROP_FILL_RECT;
+      cmd.rect.x = rect->x + inset + geom->text.sel_x0;
+      cmd.rect.y = rect->y + inset;
+      cmd.rect.w = geom->text.sel_x1 - geom->text.sel_x0;
+      cmd.rect.h = rect->h - inset * 2;
+      cmd.color.r = 80;
+      cmd.color.g = 120;
+      cmd.color.b = 200;
+      cmd.color.a = 128;
+      lk_render_list_push(out, cmd);
     }
   }
 
@@ -364,15 +365,16 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
   }
 
   /* Cursor bar — only when this node holds keyboard focus.  The
-   * LKS_FOCUSED flag is kept in sync by the lk_focus_* functions. */
-  if (state) {
+   * LKS_FOCUSED flag is kept in sync by the lk_focus_* functions;
+   * the pixel offset comes from the geometry scratch (no geom, no
+   * cursor bar). */
+  if (state && geom) {
     lk_value f_v = lk_state_get(state, nid, LKS_FOCUSED);
-    lk_value cx_v = lk_state_get(state, nid, LKS_CURSOR_X);
 
-    if (f_v.tag == UIV_I32 && f_v.as.i != 0 && cx_v.tag == UIV_I32) {
+    if (f_v.tag == UIV_I32 && f_v.as.i != 0) {
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect.x = rect->x + inset + (lk_i32)cx_v.as.i;
+      cmd.rect.x = rect->x + inset + geom->text.cursor_x;
       cmd.rect.y = rect->y + inset;
       cmd.rect.w = 1;
       cmd.rect.h = rect->h - inset * 2;
@@ -526,30 +528,29 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
      * text backend (installed by lk_ui_set_text_backend; NULL means
      * the feature is off and the event bubbles so the host's built-in
      * click-to-focus still runs).  Text origin and resolved font come
-     * from state, stashed by lk_text_input_store_geometry during
-     * layout — event handlers see neither rects nor styles. */
-    lk_value v;
+     * from the ui's per-frame geometry scratch, stashed by
+     * lk_text_input_store_geometry during layout — event handlers see
+     * neither rects nor styles.  No geom (or no layout yet: `placed`
+     * unset) also bubbles. */
+    const lk_widget_geom *g;
     lk_i32 origin_x;
     lk_u16 font_id;
     lk_u16 font_size;
     lk_u32 ix;
 
-    if (!ui->text) {
+    if (!ui->text || !ui->geom || (lk_u32)n >= ui->geom_cap) {
       return 0;
     }
 
-    v = lk_state_get(st, nid, LKS_TEXT_ORIGIN_X);
+    g = &ui->geom[n];
 
-    if (v.tag != UIV_I32) {
+    if (!g->text.placed) {
       return 0; /* no layout pass has stashed geometry yet */
     }
 
-    origin_x = (lk_i32)v.as.i;
-
-    v = lk_state_get(st, nid, LKS_FONT_ID);
-    font_id = (v.tag == UIV_I32) ? (lk_u16)v.as.i : 0;
-    v = lk_state_get(st, nid, LKS_FONT_SIZE);
-    font_size = (v.tag == UIV_I32) ? (lk_u16)v.as.i : 0;
+    origin_x = g->text.origin_x;
+    font_id = g->text.font_id;
+    font_size = g->text.font_size;
 
     /* index_from_x snaps to the nearest boundary and clamps to
      * [0, len] per the contract; re-clamp defensively. */

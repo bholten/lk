@@ -4,7 +4,11 @@
  * Clips children, scrolls vertically via wheel events, displays a
  * scroll bar indicator.  Children are stacked vertically like a column.
  *
- * Scroll offset stored in LKS_SCROLL_Y, max offset in LKS_SCROLL_MAX.
+ * Scroll offset (user interaction state) stays in LKS_SCROLL_Y; the
+ * max offset is DERIVED during layout, so it lives in the per-frame
+ * geometry scratch (geom->scroll.max), read back by render (bar
+ * geometry) and the wheel handler (clamping).  Without a geom
+ * scratch the bar does not render and wheel events bubble.
  */
 
 #include <string.h>
@@ -37,22 +41,6 @@ static lk_i32 get_scroll_y(const lk_state *state, lk_node_id nid) {
   }
 
   v = lk_state_get(state, nid, LKS_SCROLL_Y);
-
-  if (v.tag == UIV_I32) {
-    return (lk_i32)v.as.i;
-  }
-
-  return 0;
-}
-
-static lk_i32 get_scroll_max(const lk_state *state, lk_node_id nid) {
-  lk_value v;
-
-  if (!state) {
-    return 0;
-  }
-
-  v = lk_state_get(state, nid, LKS_SCROLL_MAX);
 
   if (v.tag == UIV_I32) {
     return (lk_i32)v.as.i;
@@ -143,9 +131,14 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   scroll_y = get_scroll_y(cfg->state, nid);
   scroll_y = clamp(scroll_y, 0, scroll_max);
 
-  /* Store scroll_max and clamped scroll_y in state */
+  /* scroll_max is derived geometry: per-frame scratch, not retained
+   * state.  The clamped scroll_y write-back IS retained interaction
+   * state (normalizing a stale offset after content shrank). */
+  if (cfg->geom) {
+    cfg->geom[n].scroll.max = scroll_max;
+  }
+
   if (cfg->state) {
-    lk_state_set(cfg->state, nid, LKS_SCROLL_MAX, lk_v_i32(scroll_max));
     lk_state_set(cfg->state, nid, LKS_SCROLL_Y, lk_v_i32(scroll_y));
   }
 
@@ -183,7 +176,7 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
 static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
-                          lk_render_list *out) {
+                          const lk_widget_geom *geom, lk_render_list *out) {
   lk_node_id nid = t->nodes[n].id;
   lk_i32 scroll_max;
   lk_render_cmd cmd;
@@ -195,8 +188,9 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
   cmd.color = style->bg;
   lk_render_list_push(out, cmd);
 
-  /* Scroll bar (rendered before CLIP_BEGIN so not clipped) */
-  scroll_max = get_scroll_max(state, nid);
+  /* Scroll bar (rendered before CLIP_BEGIN so not clipped).  The max
+   * offset is layout-derived geometry; no geom, no bar. */
+  scroll_max = geom ? geom->scroll.max : 0;
 
   if (scroll_max > 0) {
     lk_i32 scroll_y = get_scroll_y(state, nid);
@@ -256,9 +250,15 @@ static int event_scroll(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
+  /* Clamping needs the layout-derived max from the ui's geometry
+   * scratch (events run after layout).  No geom: bubble. */
+  if (!ui->geom || (lk_u32)n >= ui->geom_cap) {
+    return 0;
+  }
+
   st = lk_ui_state(ui);
   nid = t->nodes[n].id;
-  scroll_max = get_scroll_max(st, nid);
+  scroll_max = ui->geom[n].scroll.max;
 
   if (scroll_max <= 0) {
     return 0;

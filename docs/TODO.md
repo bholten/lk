@@ -510,14 +510,18 @@ None block shipping the budget app; revisit as the app surfaces them.
   (2026-07-25): popup geometry goes through `lk_anchor_resolve` —
   flips above the trigger when overflowing the bottom, clamps x/y
   into the viewport (`docs/overlays.md` step 3).
-- **Dropdown popup doesn't scroll.**  Long option lists past
-  `DROPDOWN_POPUP_MAX_HEIGHT` (240 px) hide overflow invisibly.  Fix:
-  either enable scroll inside popup, or raise the cap and let it clip.
-- **`value` prop on dropdown is not wired.**  Initial selection defaults
-  to the first option.  To preset selection, the app must call
-  `lk::state_set $ui <dd_id> LKS_SELECTED_INDEX <i>` — awkward.  Fix:
-  DSL-level `value "Food"` prop that does the text-to-index lookup and
-  sets state.
+- ~~**Dropdown popup doesn't scroll.**~~ Fixed (polish F3): popups
+  taller than `DROPDOWN_POPUP_MAX_HEIGHT` scroll via `LKS_POPUP_SCROLL`
+  (wheel over the open popup, keyboard hover navigation scrolls the
+  hovered row into view, offset clamped, reset on open/close) with a
+  clipped option list and a track+thumb overflow indicator drawn from
+  the trigger's `scrollbar_track`/`scrollbar_thumb` style fields.
+- ~~**`value` prop on dropdown is not wired.**~~ Fixed (polish F3):
+  `UIP_VALUE` (string, interned) selects the option whose TEXT matches.
+  Priority `LKS_SELECTED_INDEX` state > `UIP_VALUE` prop > index 0 —
+  the `split_ratio` state>prop>default pattern.  Exposed as `value` in
+  the Lcl prop table and the DSL `_prop_schema`; no state poking
+  needed (and none possible — see the LKS_USER barrier below).
 - **`lk_v_none()` leaves the union uninitialized.**  Reading `.as.i` on a
   NONE value yields garbage.  Low-impact (callers should check `.tag`)
   but trivially hardened by zero-initing the union.
@@ -555,21 +559,28 @@ shipping.
   `ui->pending_dropped`).  `lk_ui_flush_events` drains outside
   routing (the SDL run loop calls it after `end_frame` and after the
   event-poll loop).
-- **Widget-private state keys are a public flat enum.**  `LKS_*` keys are
-  encapsulated by convention only; the dropdown `-value` gap (above)
-  forces hosts to poke `LKS_SELECTED_INDEX` directly — the one live
-  violation of "scripts never poke internal widget state".
-- **Derived geometry stored in retained state.**  `LKS_CURSOR_X` /
-  `LKS_SCROLL_MAX` are computed during measure/layout but written to
-  `lk_state`, making those passes non-idempotent.  Text-contract stage C
-  extended the pattern rather than fixing it: `LKS_SEL_X0`/`X1` (selection
-  endpoint x), `LKS_TEXT_ORIGIN_X`, `LKS_FONT_ID`/`LKS_FONT_SIZE`
-  (stashed by `lk_text_input_store_geometry`, mirroring the dropdown
-  trigger-rect stash).  The split work extended it again:
-  `LKS_SPLIT_CX`/`CY`/`CW`/`CH` (content rect stashed by
-  `lk_split_store_geometry` so the drag handler can map pointer
-  position to a ratio).  All of it belongs in per-frame scratch
-  parallel to `rects[]`.
+- ~~**Widget-private state keys are a public flat enum.**~~ Resolved
+  (polish F3), with one honest deferral: `UIP_VALUE` removed the last
+  legitimate reason for scripts to poke widget state, so the Lcl
+  `lk::state_set`/`state_get` procs now reject keys below `LKS_USER`
+  (256) — "scripts never poke widget state" is enforced, not
+  conventional.  The C enum itself stays in `lk.h` (widget files and
+  tests reference it heavily; moving it to an internal header was
+  judged more churn than value) behind an explicit "INTERNAL WIDGET
+  STATE — not API" comment block.
+- ~~**Derived geometry stored in retained state.**~~ Resolved (polish
+  F3): all derived geometry moved to the per-frame `lk_widget_geom`
+  scratch — a union-per-kind array parallel to `rects[]`, carried in
+  `lk_layout_cfg.geom`, passed to render (`lk_render_build` geom
+  param → per-node slot in the widget `render` vtable) and read by
+  widget event handlers through `ui->geom` (host wires `lk_ui_geom(ui)`
+  as `cfg->geom`; the SDL run loop does).  Migrated and deleted:
+  `LKS_CURSOR_X`, `LKS_SEL_X0/X1`, `LKS_TEXT_ORIGIN_X`,
+  `LKS_FONT_ID/SIZE` (text input), `LKS_TRIGGER_*` (dropdown, plus
+  popup row metrics), `LKS_SPLIT_C*` (split content rect), and
+  `LKS_SCROLL_MAX` (scroll).  Measure/layout no longer write derived
+  values into retained state; `lk_state` holds interaction state only.
+  NULL geom degrades safely (documented on `lk_widget_geom`).
 
 ## Deferred
 

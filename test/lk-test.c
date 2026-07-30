@@ -2337,7 +2337,7 @@ static void test_render_empty_tree(void) {
   BEGIN_TEST("render: empty tree returns success");
 
   memset(&rl, 0, sizeof(rl));
-  ok = lk_render_build(t, NULL, NULL, NULL, &rl);
+  ok = lk_render_build(t, NULL, NULL, NULL, NULL, &rl);
   CHECK_EQ((unsigned)ok, 1u);
   CHECK_EQ(rl.count, 0u);
 
@@ -2361,7 +2361,7 @@ static void test_render_window_only(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 3u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
     CHECK_EQ((unsigned)rl.cmds[0].rect.w, 800u);
@@ -2398,7 +2398,7 @@ static void test_render_window_column_label(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* FILL_RECT + CLIP_BEGIN + DRAW_TEXT + CLIP_END */
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -2437,7 +2437,7 @@ static void test_render_button_with_padding(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* window FILL + CLIP_BEGIN + button FILL + button TEXT + CLIP_END */
     CHECK_EQ(rl.count, 5u);
     CHECK_EQ((unsigned)rl.cmds[0].op, (unsigned)LK_ROP_FILL_RECT);
@@ -2485,7 +2485,7 @@ static void test_render_larger_tree(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT + CLIP_END = 7 */
     CHECK_EQ(rl.count, 7u);
     lk_render_list_destroy(&rl);
@@ -2519,13 +2519,13 @@ static void test_render_build_reuse(void) {
     memset(&rl, 0, sizeof(rl));
 
     /* first build: FILL + CLIP_BEGIN + TEXT + CLIP_END = 4 */
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     cap_after_first = rl.cap;
     CHECK(cap_after_first > 0);
 
     /* second build on same list — count resets, cap stays */
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     CHECK_EQ(rl.count, 4u);
     CHECK_EQ(rl.cap, cap_after_first);
 
@@ -3477,7 +3477,7 @@ static void test_widget_override_render(void) {
 
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     count_before = rl.count;
 
     /* Override LABEL to emit nothing */
@@ -3487,7 +3487,7 @@ static void test_widget_override_render(void) {
     lk_widget_register(UIK_LABEL, &override);
 
     rl.count = 0;
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     count_after = rl.count;
 
     CHECK(count_after < count_before);
@@ -5185,7 +5185,7 @@ static void test_layout_with_resolved_styles(void) {
     {
       lk_render_list rl;
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, rects, styles, NULL, &rl);
+      lk_render_build(t, rects, styles, NULL, NULL, &rl);
       /* button FILL_RECT at rl.cmds[2] (after window FILL + CLIP_BEGIN)
        * button TEXT at rl.cmds[3]
        * text should be inset by 20 from button rect
@@ -5254,7 +5254,7 @@ static void test_layout_style_tree_prop_override(void) {
     {
       lk_render_list rl;
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, rects, styles, NULL, &rl);
+      lk_render_build(t, rects, styles, NULL, NULL, &rl);
       if (rl.count >= 4) {
         CHECK_EQ((unsigned)rl.cmds[3].rect.x,
                  (unsigned)(rl.cmds[2].rect.x + 5));
@@ -5926,7 +5926,7 @@ static void test_render_uses_style_colors(void) {
     lk_layout(t, &cfg, rects);
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, rects, styles, NULL, &rl);
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
     /* Find the button FILL_RECT — should have our custom green bg */
     found_btn_fill = 0;
@@ -6147,7 +6147,7 @@ static void test_render_deferred_props_emit_text(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
 
     text_count = 0;
     for (i = 0; i < rl.count; i++) {
@@ -6249,7 +6249,7 @@ static void test_text_input_render(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
     /* window: FILL + CLIP_BEGIN, text_input: FILL + TEXT, window: CLIP_END */
     /* => at least 5 ops */
     CHECK(rl.count >= 4u);
@@ -6797,6 +6797,36 @@ static lk_rect *run_layout_with_state(lk_tree *t, lk_i32 vw, lk_i32 vh,
   return rects;
 }
 
+/* helper: layout the ui's current tree with retained state AND the
+ * ui-owned per-frame geometry scratch wired (lk_ui_geom), the way
+ * the SDL run loop does — geometry-dependent widget events (wheel
+ * clamping, divider drags, click-to-position) read ui->geom, so
+ * tests that route such events must lay out through this. */
+static lk_rect *run_layout_ui(lk_ui *ui, lk_i32 vw, lk_i32 vh) {
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  const lk_tree *cur = lk_ui_tree(ui);
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = vw;
+  cfg.viewport_h = vh;
+  cfg.state = lk_ui_state(ui);
+  cfg.geom = lk_ui_geom(ui);
+
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * cur->node_count);
+  if (!rects) {
+    return NULL;
+  }
+
+  if (!lk_layout(cur, &cfg, rects)) {
+    free(rects);
+    return NULL;
+  }
+
+  return rects;
+}
+
 /* Build: window > column > scroll(h=100) > labels
  * Column respects scroll's measured UIP_H, unlike window which fills viewport.
  */
@@ -6938,7 +6968,7 @@ static void test_scroll_render_clips(void) {
   CHECK(r != NULL);
   if (r) {
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(cur, r, NULL, NULL, &rl);
+    lk_render_build(cur, r, NULL, NULL, NULL, &rl);
 
     for (i = 0; i < rl.count; i++) {
       if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) found_clip_begin++;
@@ -6971,8 +7001,9 @@ static void test_scroll_wheel_event(void) {
 
   sc_id = cur->nodes[sc].id;
 
-  /* Need to do layout first so scroll_max is computed */
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  /* Layout with the ui geom scratch wired: the wheel handler clamps
+   * against the layout-derived max in ui->geom */
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
     /* Scroll on the scroll node itself */
@@ -7009,17 +7040,17 @@ static void test_scroll_clamp_bounds(void) {
 
   sc_id = cur->nodes[sc].id;
 
-  /* Layout to compute scroll_max */
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  /* Layout computes the max into the per-frame geom scratch */
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
-    scroll_max = (lk_i32)lk_state_get(st, sc_id, LKS_SCROLL_MAX).as.i;
+    scroll_max = lk_ui_geom(ui)[sc].scroll.max;
     CHECK(scroll_max > 0);
 
     /* Set scroll_y way past max, then do layout again to clamp */
     lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(scroll_max + 1000));
     free(r);
-    r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+    r = run_layout_ui(ui, 800, 600);
     if (r) {
       v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
       CHECK_EQ((unsigned)(lk_i32)v.as.i, (unsigned)scroll_max);
@@ -7028,7 +7059,7 @@ static void test_scroll_clamp_bounds(void) {
 
     /* Set scroll_y negative, layout clamps to 0 */
     lk_state_set(st, sc_id, LKS_SCROLL_Y, lk_v_i32(-100));
-    r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+    r = run_layout_ui(ui, 800, 600);
     if (r) {
       v = lk_state_get(st, sc_id, LKS_SCROLL_Y);
       CHECK_EQ((unsigned)(lk_i32)v.as.i, 0u);
@@ -7057,8 +7088,8 @@ static void test_scroll_wheel_bubbles(void) {
   sc_id = cur->nodes[sc].id;
   first_child = cur->nodes[sc].first_child;
 
-  /* Layout to compute scroll_max */
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  /* Layout with the ui geom scratch (wheel clamping reads it) */
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
     /* Send wheel to child label, should bubble to scroll */
@@ -7120,15 +7151,16 @@ static void test_scroll_bar_rendered(void) {
   BEGIN_TEST("scroll: scroll bar rendered when content > viewport");
 
   sc_id = cur->nodes[sc].id;
+  (void)sc_id;
 
-  r = run_layout_with_state((lk_tree *)cur, 800, 600, st);
+  r = run_layout_ui(ui, 800, 600);
   CHECK(r != NULL);
   if (r) {
-    lk_i32 smax = (lk_i32)lk_state_get(st, sc_id, LKS_SCROLL_MAX).as.i;
+    lk_i32 smax = lk_ui_geom(ui)[sc].scroll.max;
     CHECK(smax > 0);
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(cur, r, NULL, st, &rl);
+    lk_render_build(cur, r, NULL, st, lk_ui_geom(ui), &rl);
 
     /* Count FILL_RECTs. Should include: window bg, scroll bg,
      * scroll track, scroll thumb = at least 4 FILL_RECTs
@@ -7258,7 +7290,7 @@ static void test_border_render_four_fill_rects(void) {
     lk_layout(t, &cfg, rects);
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, rects, styles, NULL, &rl);
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
     /* Count FILL_RECTs with border color */
     border_count = 0;
@@ -7370,11 +7402,11 @@ static void test_border_zero_no_extra_commands(void) {
 
     /* Render with border_width=0 */
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, rects, styles, NULL, &rl);
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
     /* Render without styles (fallback, also no border) */
     memset(&rl2, 0, sizeof(rl2));
-    lk_render_build(t, rects, NULL, NULL, &rl2);
+    lk_render_build(t, rects, NULL, NULL, NULL, &rl2);
 
     /* Same number of commands — no border extras */
     CHECK_EQ(rl.count, rl2.count);
@@ -7435,7 +7467,7 @@ static void test_border_theme_integration(void) {
     lk_layout(t, &cfg, rects);
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, rects, styles, NULL, &rl);
+    lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
     /* Should find 4 FILL_RECTs with the theme border color */
     border_count = 0;
@@ -8468,7 +8500,7 @@ static void test_overlay_modal_scrim(void) {
   lk_overlay_push(ui, &ov);
 
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
   main_count = rl.count;
   lk_render_build_overlays(ui, rects, &cfg, &rl);
 
@@ -8493,7 +8525,7 @@ static void test_overlay_modal_scrim(void) {
 
   rl.count = 0;
   rl.bytes_count = 0;
-  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
   main_count = rl.count;
   lk_render_build_overlays(ui, rects, &cfg, &rl);
   CHECK(rl.count > main_count);
@@ -8552,7 +8584,7 @@ static void test_container_bg_renders(void) {
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
 
   found = 0;
 
@@ -8684,7 +8716,7 @@ static void test_hidden_subtree_render_hit(void) {
 
     /* Render: only the visible label's text is emitted. */
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(cur, rects, NULL, lk_ui_state(ui), &rl);
+    lk_render_build(cur, rects, NULL, lk_ui_state(ui), NULL, &rl);
     draw_text_count = 0;
 
     for (i = 0; i < rl.count; i++) {
@@ -8938,7 +8970,7 @@ static void test_tooltip_render_on_top(void) {
   CHECK_EQ(lk_overlay_count(ui), 1u);
 
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, cfg.styles, cfg.state, NULL, &rl);
   main_count = rl.count;
   lk_render_build_overlays(ui, rects, &cfg, &rl);
 
@@ -9266,11 +9298,13 @@ static void test_text_input_cursor_only_when_focused(void) {
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   cfg.state = lk_ui_state(ui);
+  cfg.geom = lk_ui_geom(ui);
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
   /* Focused: render list contains the 1px cursor bar */
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), &rl);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom,
+                  &rl);
   focused_count = rl.count;
   cursor_found = 0;
   for (i = 0; i < rl.count; i++) {
@@ -9282,7 +9316,8 @@ static void test_text_input_cursor_only_when_focused(void) {
 
   /* Unfocused: exactly the cursor command disappears */
   lk_focus_clear(ui);
-  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), &rl);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom,
+                  &rl);
   CHECK_EQ(rl.count + 1, focused_count);
   cursor_found = 0;
   for (i = 0; i < rl.count; i++) {
@@ -9323,7 +9358,8 @@ static void test_dropdown_padding_click_stays_open(void) {
   lk_ui_resolve_styles(ui);
   cfg.styles = lk_ui_styles(ui);
   cfg.state = st;
-  lk_layout(lk_ui_tree(ui), &cfg, rects); /* stores trigger rect */
+  cfg.geom = lk_ui_geom(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects); /* stores trigger rect in geom */
 
   tr = rects[dd];
 
@@ -9439,6 +9475,556 @@ static void test_dropdown_hover_follows_pointer(void) {
   }
 
   free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+/* ================================================================
+ * Tests: per-frame geometry scratch (Stage F3) + dropdown value /
+ * popup scrolling
+ * ================================================================ */
+
+static void test_geom_scratch_populated(void) {
+  /* The layout pass fills each widget's geom arm with exact stub
+   * values (styles NULL: insets from tree props, fonts 0). */
+  lk_ix dd;
+  lk_ui *ui = make_dropdown_ui(&dd);
+  lk_rect *r;
+  lk_widget_geom *geom;
+
+  BEGIN_TEST("geom: layout fills the dropdown trigger arm");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    geom = lk_ui_geom(ui);
+    CHECK(geom != NULL);
+    CHECK_EQ((unsigned)geom[dd].trigger.x, (unsigned)r[dd].x);
+    CHECK_EQ((unsigned)geom[dd].trigger.y, (unsigned)r[dd].y);
+    CHECK_EQ((unsigned)geom[dd].trigger.w, (unsigned)r[dd].w);
+    CHECK_EQ((unsigned)geom[dd].trigger.h, (unsigned)r[dd].h);
+    /* stub text: h 16 -> max(16, 12) + 2*4 pad = 24; styles NULL ->
+     * inset 0 */
+    CHECK_EQ((unsigned)geom[dd].trigger.row_h, 24u);
+    CHECK_EQ((unsigned)geom[dd].trigger.inset, 0u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_geom_null_degrades_safely(void) {
+  /* NULL cfg->geom (and no ui geom wired): layout, render, and the
+   * geometry-dependent events must all be safe — cursor bar absent,
+   * click-to-position bubbles, wheel bubbles past the scroll. */
+  lk_ix ti;
+  lk_ui *ui = make_text_input_ui("ab", &ti);
+  lk_state *st = lk_ui_state(ui);
+  lk_rect *r;
+  lk_render_list rl;
+  lk_event ev;
+  lk_u32 i;
+  int cursor_found;
+
+  BEGIN_TEST("geom: NULL scratch degrades safely");
+
+  r = run_layout_with_state((lk_tree *)lk_ui_tree(ui), 800, 600, st);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* Render without geom: no 1px cursor bar even though focused */
+    memset(&rl, 0, sizeof(rl));
+    lk_render_build(lk_ui_tree(ui), r, NULL, st, NULL, &rl);
+    cursor_found = 0;
+
+    for (i = 0; i < rl.count; i++) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+        cursor_found = 1;
+      }
+    }
+
+    CHECK(!cursor_found);
+    lk_render_list_destroy(&rl);
+
+    /* Click-to-position bubbles despite an installed text backend */
+    lk_ui_set_text_backend(ui, lk_text_backend_stub());
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = ti;
+    ev.data.pointer.x = 5;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 0u);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+
+  /* Scroll: wheel without geom bubbles (no max to clamp against) */
+  {
+    lk_ix sc;
+    lk_ui *sui = make_scroll_ui(10, &sc);
+    lk_state *sst = lk_ui_state(sui);
+    lk_node_id sc_id = lk_ui_tree(sui)->nodes[sc].id;
+    lk_rect *sr =
+        run_layout_with_state((lk_tree *)lk_ui_tree(sui), 800, 600, sst);
+
+    CHECK(sr != NULL);
+
+    if (sr) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_WHEEL;
+      ev.target = sc;
+      ev.data.wheel.dy = -1;
+      lk_event_route(sui, &ev);
+      CHECK_EQ((unsigned)ev.handled, 0u);
+      CHECK_EQ((unsigned)(lk_i32)lk_state_get(sst, sc_id, LKS_SCROLL_Y).as.i,
+               0u);
+      free(sr);
+    }
+
+    lk_ui_destroy(sui);
+  }
+}
+
+/* make_dropdown_ui + a UIP_VALUE prop on the dropdown. */
+static lk_ui *make_dropdown_value_ui(const char *value, lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd, o1, o2, o3;
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  lk_tree_add_prop(t, dd, UIP_VALUE, lk_v_cstr(t->intern, value));
+  o1 = lk_tree_add_node_s(t, lk_str_c("o1"), UIK_OPTION);
+  lk_tree_add_prop(t, o1, UIP_TEXT, lk_v_cstr(t->intern, "Apple"));
+  o2 = lk_tree_add_node_s(t, lk_str_c("o2"), UIK_OPTION);
+  lk_tree_add_prop(t, o2, UIP_TEXT, lk_v_cstr(t->intern, "Banana"));
+  o3 = lk_tree_add_node_s(t, lk_str_c("o3"), UIK_OPTION);
+  lk_tree_add_prop(t, o3, UIP_TEXT, lk_v_cstr(t->intern, "Cherry"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+  lk_tree_append_child(t, dd, o1);
+  lk_tree_append_child(t, dd, o2);
+  lk_tree_append_child(t, dd, o3);
+  lk_ui_end_frame(ui);
+
+  *out_dd = lk_tree_find_by_id(lk_ui_tree(ui),
+                               lk_intern_id(ui->intern, lk_str_c("dd")));
+  return ui;
+}
+
+/* str_id of the trigger's DRAW_TEXT in a fresh render of the tree. */
+static lk_u32 dropdown_rendered_text_id(lk_ui *ui, lk_ix dd) {
+  lk_rect *r = run_layout_ui(ui, 800, 600);
+  lk_render_list rl;
+  lk_u32 i;
+  lk_u32 found = 0;
+
+  if (!r) {
+    return 0;
+  }
+
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build(lk_ui_tree(ui), r, NULL, lk_ui_state(ui), lk_ui_geom(ui),
+                  &rl);
+
+  for (i = 0; i < rl.count; i++) {
+    if (rl.cmds[i].op == LK_ROP_DRAW_TEXT && rl.cmds[i].rect.x >= r[dd].x &&
+        rl.cmds[i].rect.x < r[dd].x + r[dd].w &&
+        rl.cmds[i].rect.y >= r[dd].y &&
+        rl.cmds[i].rect.y < r[dd].y + r[dd].h) {
+      found = rl.cmds[i].str_id;
+    }
+  }
+
+  lk_render_list_destroy(&rl);
+  free(r);
+  return found;
+}
+
+static void test_dropdown_value_prop(void) {
+  /* UIP_VALUE selects the matching option initially; user interaction
+   * (state) overrides it afterwards; an unmatched value falls back to
+   * option 0. */
+  lk_ix dd;
+  lk_ui *ui = make_dropdown_value_ui("Banana", &dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_u32 banana_id = lk_intern_cid(ui->intern, "Banana");
+  lk_u32 apple_id = lk_intern_cid(ui->intern, "Apple");
+  lk_event ev;
+
+  BEGIN_TEST("dropdown: value prop = state > prop > 0 priority");
+
+  /* Initial render shows the prop-selected option */
+  CHECK_EQ(dropdown_rendered_text_id(ui, dd), banana_id);
+
+  /* Keyboard: open (hover starts at the effective selection, 1),
+   * move up, commit -> state now holds 0 */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_DOWN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 1);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_UP;
+  lk_event_route(ui, &ev);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_KEY_DOWN;
+  ev.target = dd;
+  ev.data.key.keycode = LKK_RETURN;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((int)lk_state_get(st, dd_id, LKS_SELECTED_INDEX).as.i, 0);
+
+  /* State overrides the (unchanged) prop */
+  CHECK_EQ(dropdown_rendered_text_id(ui, dd), apple_id);
+
+  END_TEST();
+  lk_ui_destroy(ui);
+
+  /* Unmatched value: falls back to option 0 */
+  {
+    lk_ix dd2;
+    lk_ui *ui2 = make_dropdown_value_ui("Durian", &dd2);
+    lk_u32 apple2 = lk_intern_cid(ui2->intern, "Apple");
+
+    CHECK_EQ(dropdown_rendered_text_id(ui2, dd2), apple2);
+    lk_ui_destroy(ui2);
+  }
+}
+
+/* A dropdown with `count` options ("Item 0".."Item N-1"), enough to
+ * overflow DROPDOWN_POPUP_MAX_HEIGHT when count * 24 > 240. */
+static lk_ui *make_big_dropdown_ui(int count, lk_ix *out_dd) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, dd;
+  int i;
+  char idbuf[16];
+  char txtbuf[24];
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  dd = lk_tree_add_node_s(t, lk_str_c("dd"), UIK_DROPDOWN);
+  lk_tree_add_prop(t, dd, UIP_FOCUSABLE, lk_v_bool(1));
+  lk_tree_add_prop(t, dd, UIP_W, lk_v_i32(140));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, dd);
+
+  for (i = 0; i < count; i++) {
+    lk_ix o;
+
+    sprintf(idbuf, "o%d", i);
+    sprintf(txtbuf, "Item %d", i);
+    o = lk_tree_add_node_s(t, lk_str_c(idbuf), UIK_OPTION);
+    lk_tree_add_prop(t, o, UIP_TEXT, lk_v_cstr(t->intern, txtbuf));
+    lk_tree_append_child(t, dd, o);
+  }
+
+  lk_ui_end_frame(ui);
+
+  *out_dd = lk_tree_find_by_id(lk_ui_tree(ui),
+                               lk_intern_id(ui->intern, lk_str_c("dd")));
+  return ui;
+}
+
+static void test_dropdown_popup_scroll_wheel(void) {
+  /* 15 options * 24 px = 360 > 240 -> inner 240 (inset 0 without
+   * styles), max scroll 120.  Wheel over the open popup scrolls,
+   * clamped at both ends; the overlay render clips, offsets the
+   * visible options, and draws a track + thumb indicator. */
+  lk_ix dd;
+  lk_ui *ui = make_big_dropdown_ui(15, &dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("dropdown: wheel scrolls the open popup (clamped)");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    open_dropdown(ui, dd);
+    CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Wheel up at the top: clamped at 0 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = dd;
+    ev.data.wheel.dy = 1;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Wheel down: one row per step (24 px).  Targeted at an option
+     * node — the option ignores wheel, so it bubbles to the dropdown
+     * (the overlay hit-test path). */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = lk_ui_tree(ui)->nodes[dd].first_child;
+    ev.data.wheel.dy = -1;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 24);
+
+    /* Ten more: clamped at max = 360 - 240 = 120 */
+    {
+      int k;
+
+      for (k = 0; k < 10; k++) {
+        memset(&ev, 0, sizeof(ev));
+        ev.type = LK_EVENT_WHEEL;
+        ev.target = dd;
+        ev.data.wheel.dy = -1;
+        lk_event_route(ui, &ev);
+      }
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 120);
+
+    /* Overlay render: clip + offset options + indicator */
+    {
+      lk_layout_cfg cfg;
+      lk_render_list rl;
+      lk_u32 i;
+      int clip_found = 0;
+      lk_u32 text_count = 0;
+      lk_u32 first_text = 0;
+      lk_u32 bar_fills = 0;
+      lk_u32 item5 = lk_intern_cid(ui->intern, "Item 5");
+
+      memset(&cfg, 0, sizeof(cfg));
+      cfg.text = lk_text_backend_stub();
+      cfg.viewport_w = 800;
+      cfg.viewport_h = 600;
+      cfg.state = st;
+      cfg.geom = lk_ui_geom(ui);
+
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build_overlays(ui, r, &cfg, &rl);
+
+      for (i = 0; i < rl.count; i++) {
+        if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) {
+          clip_found = 1;
+        }
+
+        if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
+          if (text_count == 0) {
+            first_text = rl.cmds[i].str_id;
+          }
+
+          text_count++;
+        }
+
+        if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 6) {
+          bar_fills++;
+        }
+      }
+
+      CHECK(clip_found);
+      /* Scrolled by 120 px = 5 rows: rows 5..14 visible = 10 texts */
+      CHECK_EQ(text_count, 10u);
+      CHECK_EQ(first_text, item5);
+      /* Indicator = track + thumb */
+      CHECK_EQ(bar_fills, 2u);
+
+      lk_render_list_destroy(&rl);
+    }
+
+    /* Reopen resets the offset */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = dd;
+    ev.data.pointer.x = r[dd].x + 5;
+    ev.data.pointer.y = r[dd].y + 5;
+    lk_event_route(ui, &ev); /* closes (click on trigger) */
+    CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+    open_dropdown(ui, dd);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_popup_scroll_keyboard(void) {
+  /* Down/Up keep the hovered row inside the 240 px inner viewport;
+   * reopening scrolls the remembered selection back into view. */
+  lk_ix dd;
+  lk_ui *ui = make_big_dropdown_ui(15, &dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_rect *r;
+  lk_event ev;
+  int k;
+
+  BEGIN_TEST("dropdown: keyboard navigation scrolls hover into view");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* Open via Down: hover 0, scroll 0 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = dd;
+    ev.data.key.keycode = LKK_DOWN;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Walk down to row 10: bottom = 11*24 = 264 -> scroll 24 */
+    for (k = 0; k < 10; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_DOWN;
+      lk_event_route(ui, &ev);
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 10);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 24);
+
+    /* Walk to the last row: scroll clamps at max 120 */
+    for (k = 0; k < 10; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_DOWN;
+      lk_event_route(ui, &ev);
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 14);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 120);
+
+    /* Walk back up to row 0: scroll follows the hover back to 0 */
+    for (k = 0; k < 14; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_UP;
+      lk_event_route(ui, &ev);
+    }
+
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 0);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    /* Select row 14, reopen: the remembered selection is scrolled
+     * into view on open */
+    for (k = 0; k < 14; k++) {
+      memset(&ev, 0, sizeof(ev));
+      ev.type = LK_EVENT_KEY_DOWN;
+      ev.target = dd;
+      ev.data.key.keycode = LKK_DOWN;
+      lk_event_route(ui, &ev);
+    }
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = dd;
+    ev.data.key.keycode = LKK_RETURN;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_SELECTED_INDEX).as.i, 14);
+    CHECK_EQ((unsigned)lk_state_get(st, dd_id, LKS_EXPANDED).as.i, 0u);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_KEY_DOWN;
+    ev.target = dd;
+    ev.data.key.keycode = LKK_DOWN;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_HOVER_INDEX).as.i, 14);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 120);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_dropdown_popup_short_unaffected(void) {
+  /* A popup that fits emits no clip and no indicator, and wheel keeps
+   * the offset at 0 (consumed so the page under the popup never
+   * scrolls). */
+  lk_ix dd;
+  lk_ui *ui = make_dropdown_ui(&dd);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id dd_id = lk_intern_id(ui->intern, lk_str_c("dd"));
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("dropdown: short popup unaffected by scrolling");
+
+  r = run_layout_ui(ui, 800, 600);
+  CHECK(r != NULL);
+
+  if (r) {
+    open_dropdown(ui, dd);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_WHEEL;
+    ev.target = dd;
+    ev.data.wheel.dy = -1;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((int)lk_state_get(st, dd_id, LKS_POPUP_SCROLL).as.i, 0);
+
+    {
+      lk_layout_cfg cfg;
+      lk_render_list rl;
+      lk_u32 i;
+      int clip_found = 0;
+      lk_u32 bar_fills = 0;
+
+      memset(&cfg, 0, sizeof(cfg));
+      cfg.text = lk_text_backend_stub();
+      cfg.viewport_w = 800;
+      cfg.viewport_h = 600;
+      cfg.state = st;
+      cfg.geom = lk_ui_geom(ui);
+
+      memset(&rl, 0, sizeof(rl));
+      lk_render_build_overlays(ui, r, &cfg, &rl);
+
+      for (i = 0; i < rl.count; i++) {
+        if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN ||
+            rl.cmds[i].op == LK_ROP_CLIP_END) {
+          clip_found = 1;
+        }
+
+        if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 6) {
+          bar_fills++;
+        }
+      }
+
+      CHECK(!clip_found);
+      CHECK_EQ(bar_fills, 0u);
+      lk_render_list_destroy(&rl);
+    }
+
+    free(r);
+  }
+
   END_TEST();
   lk_ui_destroy(ui);
 }
@@ -9604,7 +10190,7 @@ static void test_render_text_carries_font(void) {
   CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
 
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, styles, NULL, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, styles, NULL, NULL, &rl);
 
   found = 0;
   for (i = 0; i < rl.count; i++) {
@@ -9618,7 +10204,7 @@ static void test_render_text_carries_font(void) {
 
   /* Without styles (fallback path): default theme sets no fonts,
    * so DRAW_TEXT carries 0/0 */
-  lk_render_build(lk_ui_tree(ui), rects, NULL, NULL, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, NULL, NULL, &rl);
   found = 0;
   for (i = 0; i < rl.count; i++) {
     if (rl.cmds[i].op == LK_ROP_DRAW_TEXT) {
@@ -9883,19 +10469,19 @@ static void test_text_input_cursor_x_from_index(void) {
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
+  (void)v;
 
-  /* Cursor after e-acute (byte 3, 2 codepoints in) -> 16 px */
+  /* Cursor after e-acute (byte 3, 2 codepoints in) -> 16 px, written
+   * to the per-frame geom scratch by measure */
   lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(3));
   CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
-  v = lk_state_get(st, ti_id, LKS_CURSOR_X);
-  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
-  CHECK_EQ((unsigned)v.as.i, 16u);
+  CHECK_EQ((unsigned)cfg.geom[ti].text.cursor_x, 16u);
 
   /* Cursor at end (byte 6, 3 codepoints) -> 24 px == measure().w */
   lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(6));
   CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
-  v = lk_state_get(st, ti_id, LKS_CURSOR_X);
-  CHECK_EQ((unsigned)v.as.i, 24u);
+  CHECK_EQ((unsigned)cfg.geom[ti].text.cursor_x, 24u);
 
   free(rects);
   END_TEST();
@@ -9931,20 +10517,16 @@ static void test_text_input_selection_rect_exact(void) {
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
   CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
 
-  /* Endpoint x-offsets stashed by measure are exact: 1 cp -> 8 px,
-   * 3 cp -> 24 px */
-  {
-    lk_value v = lk_state_get(st, ti_id, LKS_SEL_X0);
-    CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
-    CHECK_EQ((unsigned)v.as.i, 8u);
-    v = lk_state_get(st, ti_id, LKS_SEL_X1);
-    CHECK_EQ((unsigned)v.as.i, 24u);
-  }
+  /* Endpoint x-offsets stashed by measure in the geom scratch are
+   * exact: 1 cp -> 8 px, 3 cp -> 24 px */
+  CHECK_EQ((unsigned)cfg.geom[ti].text.sel_x0, 8u);
+  CHECK_EQ((unsigned)cfg.geom[ti].text.sel_x1, 24u);
 
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, NULL, st, &rl);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, st, cfg.geom, &rl);
 
   /* Selection fill is the only command with alpha 128.  Anchor the
    * x assertion to the DRAW_TEXT origin so the render-side inset
@@ -10001,11 +10583,11 @@ static void test_text_input_click_to_position(void) {
   cfg.viewport_w = 800;
   cfg.viewport_h = 600;
   cfg.state = st;
+  cfg.geom = lk_ui_geom(ui);
   CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects)); /* stashes origin */
 
-  v = lk_state_get(st, ti_id, LKS_TEXT_ORIGIN_X);
-  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_I32);
-  origin = (lk_i32)v.as.i;
+  CHECK_EQ((unsigned)cfg.geom[ti].text.placed, 1u);
+  origin = cfg.geom[ti].text.origin_x;
   CHECK_EQ((unsigned)origin, (unsigned)rects[ti].x);
 
   /* No backend installed on the UI: event bubbles (handled == 0) */
@@ -10161,7 +10743,7 @@ static void test_split_h_layout_default_ratio(void) {
       lk_u32 i;
 
       memset(&rl, 0, sizeof(rl));
-      lk_render_build(t, r, NULL, NULL, &rl);
+      lk_render_build(t, r, NULL, NULL, NULL, &rl);
 
       for (i = 0; i < rl.count; i++) {
         if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.x == 197 &&
@@ -10328,7 +10910,7 @@ static void test_split_zero_children_bg_only(void) {
     lk_u32 fills = 0;
 
     memset(&rl, 0, sizeof(rl));
-    lk_render_build(t, r, NULL, NULL, &rl);
+    lk_render_build(t, r, NULL, NULL, NULL, &rl);
 
     /* window bg + split bg, nothing else */
     for (i = 0; i < rl.count; i++) {
@@ -10443,7 +11025,7 @@ static void test_split_drag_sequence(void) {
 
   BEGIN_TEST("split: drag sequence updates ratio via capture");
 
-  r = run_layout_with_state((lk_tree *)cur, 400, 300, st);
+  r = run_layout_ui(ui, 400, 300);
   CHECK(r != NULL);
 
   if (r) {
@@ -10500,7 +11082,7 @@ static void test_split_drag_sequence(void) {
     CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 102);
 
     free(r);
-    r = run_layout_with_state((lk_tree *)cur, 400, 300, st);
+    r = run_layout_ui(ui, 400, 300);
     CHECK(r != NULL);
     if (r) {
       CHECK_EQ((unsigned)r[c1].w, 40u);
@@ -11547,6 +12129,12 @@ int main(void) {
   test_text_input_cursor_only_when_focused();
   test_dropdown_padding_click_stays_open();
   test_dropdown_hover_follows_pointer();
+  test_geom_scratch_populated();
+  test_geom_null_degrades_safely();
+  test_dropdown_value_prop();
+  test_dropdown_popup_scroll_wheel();
+  test_dropdown_popup_scroll_keyboard();
+  test_dropdown_popup_short_unaffected();
 
   /* split panes + pointer capture */
   printf("\nlk split tests:\n");

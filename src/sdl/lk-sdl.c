@@ -773,6 +773,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       lcfg.viewport_h = win->height;
       lcfg.styles = styles;
       lcfg.state = lk_ui_state(win->ui);
+      /* Per-frame geometry scratch: the ui-owned array, so widget
+       * event handlers see exactly what this layout computed. */
+      lcfg.geom = lk_ui_geom(win->ui);
 
       if (lk_layout(cur, &lcfg, win->rects)) {
         have_rects = 1;
@@ -889,8 +892,16 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
         }
       } else if (lk_ev.type == LK_EVENT_WHEEL) {
         if (have_rects) {
-          lk_ev.target =
-              lk_hit_test(cur, win->rects, win->mouse_x, win->mouse_y);
+          /* Overlay-first, like pointer events: wheel over an open
+           * dropdown popup must scroll the popup, not the page
+           * underneath it. */
+          lk_ev.target = lk_hit_test_overlay(win->ui, win->rects, &lcfg,
+                                             win->mouse_x, win->mouse_y);
+
+          if (lk_ev.target == 0) {
+            lk_ev.target =
+                lk_hit_test(cur, win->rects, win->mouse_x, win->mouse_y);
+          }
         }
       } else if (lk_ev.type == LK_EVENT_KEY_DOWN ||
                  lk_ev.type == LK_EVENT_KEY_UP || lk_ev.type == LK_EVENT_TEXT) {
@@ -950,7 +961,7 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
     /* 5. Render */
     lk_render_build(cur, win->rects, lk_ui_styles(win->ui),
-                    lk_ui_state(win->ui), &win->rl);
+                    lk_ui_state(win->ui), lcfg.geom, &win->rl);
 
     /* 5b. Overlays (the ui's overlay stack: dropdown popups, subtree
      * overlays) draw on top of the main tree.  See docs/overlays.md. */

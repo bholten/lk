@@ -59,9 +59,11 @@ static int layout_editor(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
 static void render_editor(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
-                          lk_render_list *out) {
+                          const lk_widget_geom *geom, lk_render_list *out) {
   const lk_editor *e;
   lk_render_cmd cmd;
+
+  (void)geom; /* the editor owns its transient geometry block */
 
   /* Background fill (also the degraded rendering for a missing or
    * stale editor ref). */
