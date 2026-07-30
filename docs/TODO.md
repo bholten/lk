@@ -360,6 +360,42 @@ decides **how it looks**.
   `Dict::merge`-composable); theme rules take selector dicts.
 
 
+## Roadmap after the polish round (2026-07-29 milestone)
+
+State at this milestone: editor track, wrap track, weft-surface
+track (interior presentations + weft-mini), and the polish round
+(grow layout, queued events + FOCUS_CHANGED, editor scrollbar,
+coherence batch) are all complete — 459 core + 109 Lcl tests, seven
+examples. lk has no known architectural clunk. Agreed sequence from
+here:
+
+1. **Full-weft spin-off** (own repo, Brennan-led): lk as a
+   submodule (mirroring how lk vendors lcl); `weft-mini.lcl` stays
+   here as the canonical example. Its opening design doc starts
+   from `docs/weft-surface.md` §2's feature map — everything left
+   is app/producer code (buffer manager, plumb rules as data,
+   shell execute, syntax highlighting producer) plus the toolkit
+   asks below.
+2. **Multi-view cursor sync** — deliberately HELD until full-weft
+   exists as a real consumer (two panes over one buffer). The
+   substrate (document change protocol, sequential deltas) has
+   been ready since editor stage A; design it against real use.
+3. **Lcl ergonomics** (Brennan, in parallel): short-circuit
+   `and`/`or`; a pattern package (`packages/lcl-pattern`, for
+   plumb-rules-as-data); `catch` lazy-compile (or loud docs);
+   `sort_by` keyfn; C-proc arity errors naming the proc;
+   a deliberate decision on `"$list"` interpolation semantics.
+4. **On-demand toolkit items with recorded landing spots**: word
+   wrap (one fit-policy function, `docs/editor-wrap.md` §2);
+   `align_self` (unlocks revisiting the ROW/COLUMN cross-axis
+   default, `docs/grow-layout.md` §4); annot persistence lift
+   (per-type presentation serialization decision,
+   `docs/weft-surface.md` §1.4); tree-sitter as a producer (weft
+   repo); output-record/inline-block layout design
+   (`docs/weft-surface.md` §4); cursor blink / time source;
+   column selection; the out-of-core widget registration protocol
+   (`docs/editor.md` §2).
+
 ## Up Next
 
 ### ~~1. Border rendering~~ ✓
