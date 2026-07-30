@@ -7,6 +7,10 @@
 #include <lcl-io.h>
 #endif
 
+#ifdef LK_HAVE_LCL_REGEX
+#include <lcl-regex.h>
+#endif
+
 #include "lcl-lk.h"
 #include "lk-sdl.h"
 
@@ -36,6 +40,10 @@ int main(int argc, char **argv) {
    * a UI library (docs/weft-surface.md section 3).  The runner is
    * where the io::* procs belong. */
   lcl_register_io(interp);
+#endif
+
+#ifdef LK_HAVE_LCL_REGEX
+  lcl_register_regex(interp);
 #endif
 
 #ifdef LK_DSL_PATH

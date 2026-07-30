@@ -78,6 +78,7 @@ lk::annot_layer_register $store "emphasis"
 ;; underlined phrase sits in the opening lines, before the first
 ;; TODO marker.
 let emph_at [String::find $src "piece table"]
+
 if [>= $emph_at 0] {
     lk::annot_add $store $emph_at [+ $emph_at [String::length "piece table"]] "emphasis" #{style emph}
 }
@@ -86,8 +87,10 @@ if [>= $emph_at 0] {
 var scan_base 0
 var scan_rest $src
 var scanning 1
+
 while $scanning {
     let i [String::find $scan_rest "TODO"]
+
     if [< $i 0] {
         set! scanning 0
     } else {
@@ -104,14 +107,17 @@ while $scanning {
 ;; current revision, and the anchors have already tracked the change.
 proc produce_spans {} {
     var spans ()
+
     foreach id [lk::annot_in_range $store 0 [lk::doc_len $doc]] {
         let sp [lk::annot_span $store $id]
+
         if [== [lk::annot_meta $store $id "style"] todo] {
             set! spans [List::push $spans #{start [get $sp 0] end [get $sp 1] fg (255 214 102) bg (82 62 18)}]
         } else {
             set! spans [List::push $spans #{start [get $sp 0] end [get $sp 1] fg (130 200 255) underline 1}]
         }
     }
+
     lk::editor_set_spans $ed $doc $spans
 }
 
@@ -165,6 +171,7 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
         if [number? $goto_val] {
             var ln [int $goto_val]
             let lc [lk::doc_line_count $doc]
+
             if [< $ln 1] { set! ln 1 }
             if [> $ln $lc] { set! ln $lc }
             ;; set_cursor requests scroll-to-cursor: the distant

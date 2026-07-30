@@ -29,6 +29,7 @@ app "Hello Lcl" #{font $font font_size 16} {
         if [== [get $ev type] key_down] {
             puts "Key: [get $ev keycode]"
         }
+
         return 0
     }]
 
@@ -44,6 +45,7 @@ app "Hello Lcl" #{font $font font_size 16} {
 
             scroll "item_list" #{h 200 padding 8 gap 4} {
                 var i 0
+
                 while [< $i 20] {
                     label "item_$i" #{text "Item $i — scroll me!"}
                     set! i [+ $i 1]

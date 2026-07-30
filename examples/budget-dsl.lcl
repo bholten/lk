@@ -13,31 +13,38 @@ var next_id 3
 
 proc total {} {
     var sum 0.0
+
     foreach row $rows {
         let amt [get $row amount]
         set! sum [+ $sum [float $amt]]
     }
+
     return $sum
 }
 
 proc update_row {rid field value} {
     var out ()
+
     foreach row $rows {
         if [== [get $row id] $rid] {
             set! row [put $row $field $value]
         }
+
         set! out [List::push $out $row]
     }
+
     set! rows $out
 }
 
 proc remove_row_by_id {rid} {
     var out ()
+
     foreach row $rows {
         if [!= [get $row id] $rid] {
             set! out [List::push $out $row]
         }
     }
+
     set! rows $out
 }
 
@@ -68,16 +75,19 @@ app "Budget" #{font $font font_size 16 width 720 height 500} {
         let rid [get $args 0]
         let col [get $args 1]
         let val [get $cmd source_value]
+
         update_row $rid $col $val
     }]
 
     on Action [lambda {cmd} {
         let args [get $cmd args]
         let verb [get $args 0]
+
         if [== $verb add_row] {
             set! rows [List::push $rows #{id $next_id name "" amount "0.00" category "Food"}]
             set! next_id [+ $next_id 1]
         }
+
         if [== $verb remove_row] {
             let target [get $args 1]
             remove_row_by_id $target
@@ -98,17 +108,21 @@ app "Budget" #{font $font font_size 16 width 720 height 500} {
 
             foreach r $rows {
                 let rid [get $r id]
+
                 row "r_$rid" #{gap 8} {
                     text_input "name_$rid" #{text [get $r name] w 180 focusable 1
                                              present (field_edit ($rid name))}
+
                     text_input "amt_$rid" #{text [get $r amount] w 100 focusable 1
                                             present (field_edit ($rid amount))}
+
                     dropdown "cat_$rid" #{w 140 focusable 1 present (field_edit ($rid category))} {
                         option "opt_food_$rid" #{text "Food"}
                         option "opt_transport_$rid" #{text "Transport"}
                         option "opt_rent_$rid" #{text "Rent"}
                         option "opt_other_$rid" #{text "Other"}
                     }
+
                     button "rm_$rid" #{text "X" w 40 tag danger present (action (remove_row $rid))}
                 }
             }

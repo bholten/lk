@@ -29,13 +29,16 @@ app "Modal Demo" #{font $font font_size 16 width 520 height 320} {
 
     on Action [lambda {cmd} {
         let verb [get [get $cmd args] 0]
+
         if [== $verb open_confirm] {
             lk::overlay_push $lk_dsl::_ui #{kind modal anchor center owner_id delete content_root_id confirm_box}
         }
+
         if [== $verb do_delete] {
             set! status "Deleted!"
             lk::overlay_pop $lk_dsl::_ui
         }
+
         if [== $verb cancel] {
             lk::overlay_pop $lk_dsl::_ui
         }
