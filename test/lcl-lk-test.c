@@ -1874,6 +1874,111 @@ static void test_dsl_props_tooltip_split_ratio(void) {
   END_TEST();
 }
 
+static void test_state_internal_keys_blocked(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("state procs reject internal widget keys (< LKS_USER)");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"main\" \"window\"]\n"
+    "lk::set_root $t $w\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  /* Scripts never poke widget state: builtin keys error */
+  eval_expect_err(interp, "lk::state_set $ui \"main\" 6 1",
+                  "lk::state_set", "internal widget state", NULL);
+  eval_expect_err(interp, "lk::state_get $ui \"main\" 6",
+                  "lk::state_get", "internal widget state", NULL);
+
+  /* App-owned keys (>= LKS_USER = 256) still round-trip */
+  eval_ok(interp, "lk::state_set $ui \"main\" 300 7", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  eval_ok(interp, "lk::state_get $ui \"main\" 300", &r);
+  if (r) {
+    long v;
+    CHECK(lcl_value_to_int(r, &v) == LCL_OK);
+    CHECK(v == 7);
+    lcl_ref_dec(r);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_value_prop_binding(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("value prop settable via lk::prop (string coercion)");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"w\" \"window\"]\n"
+    "let dd [lk::node $t \"dd\" \"dropdown\"]\n"
+    "lk::prop $t $dd \"value\" \"Banana\"\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $dd\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  {
+    lk_tree *t = dsl_tree(interp);
+    CHECK(t != NULL);
+    if (t) {
+      lk_ix n = dsl_find(t, "dd");
+      const char *v;
+      CHECK(n != 0);
+      v = dsl_prop_str(t, n, UIP_VALUE);
+      CHECK(v != NULL && strcmp(v, "Banana") == 0);
+    }
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_dsl_prop_value(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_tree *t;
+
+  BEGIN_TEST("dsl: value prop on dropdown");
+  interp = make_dsl_interp();
+  dsl_begin(interp);
+
+  eval_ok(interp,
+    "dropdown v_dd #{value \"Banana\"} {\n"
+    "    option v_o1 #{text \"Apple\"}\n"
+    "    option v_o2 #{text \"Banana\"}\n"
+    "}",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  t = dsl_tree(interp);
+  CHECK(t != NULL);
+  if (t) {
+    lk_ix dd = dsl_find(t, "v_dd");
+    const char *v;
+    CHECK(dd != 0);
+    v = dsl_prop_str(t, dd, UIP_VALUE);
+    CHECK(v != NULL && strcmp(v, "Banana") == 0);
+  }
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_dsl_prop_grow(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -4129,6 +4234,9 @@ int main(void) {
   test_dsl_props_layout();
   test_dsl_props_bools();
   test_dsl_props_tooltip_split_ratio();
+  test_state_internal_keys_blocked();
+  test_value_prop_binding();
+  test_dsl_prop_value();
   test_dsl_prop_grow();
   test_prop_grow_negative_errors();
   test_dsl_tag();

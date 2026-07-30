@@ -22,8 +22,10 @@
  * Dragging uses the pointer-capture facility (lk_capture_set): the
  * divider keeps receiving POINTER_MOVE/UP while the cursor is outside
  * the band.  Divider geometry is always derived from the split's own
- * laid-out rect (render) or its stashed content rect (events) — never
- * recomputed from ancestors.
+ * laid-out rect (render) or its content rect stashed in the per-frame
+ * geometry scratch (geom->content, written by lk_split_store_geometry
+ * from lk_layout; events read it via ui->geom) — never recomputed
+ * from ancestors.  Without a geom scratch dragging is disabled.
  */
 
 #include <string.h>
@@ -352,38 +354,40 @@ static void render_split(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
 static void render_split_h(const lk_tree *t, lk_ix n, const lk_rect *rect,
                            const lk_style *style, const lk_state *state,
-                           lk_render_list *out) {
+                           const lk_widget_geom *geom, lk_render_list *out) {
+  (void)geom; /* divider derives from the node's own rect */
   render_split(t, n, rect, style, state, out, 1);
 }
 
 static void render_split_v(const lk_tree *t, lk_ix n, const lk_rect *rect,
                            const lk_style *style, const lk_state *state,
-                           lk_render_list *out) {
+                           const lk_widget_geom *geom, lk_render_list *out) {
+  (void)geom; /* divider derives from the node's own rect */
   render_split(t, n, rect, style, state, out, 0);
 }
 
 /* ---- Event handling ---- */
 
-/* Fetch the content rect stashed by the layout pass.  Returns 0 when
- * absent (layout never ran with state). */
-static int split_stashed_content(const lk_state *state, lk_node_id nid,
-                                 lk_rect *out) {
-  lk_value w;
+/* Fetch the content rect stashed in the ui's per-frame geometry
+ * scratch by the layout pass.  Returns 0 when absent (no geom wired,
+ * or layout never ran) — dragging is then disabled. */
+static int split_stashed_content(const lk_ui *ui, lk_ix n, lk_rect *out) {
+  const lk_widget_geom *g;
 
-  if (!state) {
+  if (!ui->geom || (lk_u32)n >= ui->geom_cap) {
     return 0;
   }
 
-  w = lk_state_get(state, nid, LKS_SPLIT_CW);
+  g = &ui->geom[n];
 
-  if (w.tag != UIV_I32 || (lk_i32)w.as.i <= 0) {
+  if (g->content.w <= 0) {
     return 0;
   }
 
-  out->x = get_i32(state, nid, LKS_SPLIT_CX);
-  out->y = get_i32(state, nid, LKS_SPLIT_CY);
-  out->w = (lk_i32)w.as.i;
-  out->h = get_i32(state, nid, LKS_SPLIT_CH);
+  out->x = g->content.x;
+  out->y = g->content.y;
+  out->w = g->content.w;
+  out->h = g->content.h;
 
   return 1;
 }
@@ -401,7 +405,7 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
     return 0;
   }
 
-  if (!st || !split_stashed_content(st, nid, &content)) {
+  if (!st || !split_stashed_content(ui, n, &content)) {
     return 0;
   }
 
@@ -505,7 +509,7 @@ void lk_split_store_geometry(const lk_tree *t, const lk_rect *rects,
                              const lk_layout_cfg *cfg) {
   lk_ix n;
 
-  if (!t || !rects || !cfg || !cfg->state) {
+  if (!t || !rects || !cfg || !cfg->geom) {
     return;
   }
 
@@ -514,7 +518,7 @@ void lk_split_store_geometry(const lk_tree *t, const lk_rect *rects,
     lk_i32 pad;
     lk_i32 bw;
     lk_i32 inset;
-    lk_node_id nid;
+    lk_widget_geom *g;
 
     if (kind != (lk_u16)UIK_SPLIT_H && kind != (lk_u16)UIK_SPLIT_V) {
       continue;
@@ -525,13 +529,11 @@ void lk_split_store_geometry(const lk_tree *t, const lk_rect *rects,
     bw = cfg->styles ? cfg->styles[n].border_width : 0;
     inset = pad + bw;
 
-    nid = t->nodes[n].id;
-    lk_state_set(cfg->state, nid, LKS_SPLIT_CX, lk_v_i32(rects[n].x + inset));
-    lk_state_set(cfg->state, nid, LKS_SPLIT_CY, lk_v_i32(rects[n].y + inset));
-    lk_state_set(cfg->state, nid, LKS_SPLIT_CW,
-                 lk_v_i32(rects[n].w - inset * 2));
-    lk_state_set(cfg->state, nid, LKS_SPLIT_CH,
-                 lk_v_i32(rects[n].h - inset * 2));
+    g = &cfg->geom[n];
+    g->content.x = rects[n].x + inset;
+    g->content.y = rects[n].y + inset;
+    g->content.w = rects[n].w - inset * 2;
+    g->content.h = rects[n].h - inset * 2;
   }
 }
 

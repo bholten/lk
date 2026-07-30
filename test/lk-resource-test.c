@@ -515,7 +515,7 @@ static void test_arena_build_resets(void) {
 
   cap_before = rl.bytes_cap;
 
-  CHECK(lk_render_build(t, rects, NULL, NULL, &rl) == 1);
+  CHECK(lk_render_build(t, rects, NULL, NULL, NULL, &rl) == 1);
 
   /* Count reset, capacity reused. */
   CHECK_EQ(rl.bytes_count, 0);

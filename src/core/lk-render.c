@@ -145,7 +145,8 @@ static void init_fallback_styles(void) {
  * render in the overlay pass). */
 static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
                        const lk_style *styles, const lk_state *state,
-                       lk_render_list *out, int ignore_start_hidden) {
+                       const lk_widget_geom *geom, lk_render_list *out,
+                       int ignore_start_hidden) {
   lk_ix *stack;
   lk_u32 sp;
   /* Stack needs room for each node plus a CLIP_END marker per clipping
@@ -208,7 +209,8 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
     }
 
     if (def && def->render) {
-      def->render(t, n, &rects[n], node_style, state, out);
+      def->render(t, n, &rects[n], node_style, state, geom ? &geom[n] : NULL,
+                  out);
     } else if (node_style->bg.a > 0) {
       /* Render-less kinds (containers: column, row, spacer) get their
        * background from the engine — widgets with a render fn own
@@ -318,7 +320,7 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
 
 int lk_render_build(const lk_tree *t, const lk_rect *rects,
                     const lk_style *styles, const lk_state *state,
-                    lk_render_list *out) {
+                    const lk_widget_geom *geom, lk_render_list *out) {
   if (!t || !out) {
     return 0;
   }
@@ -337,14 +339,14 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     return 0;
   }
 
-  return render_walk(t, t->root, rects, styles, state, out, 0);
+  return render_walk(t, t->root, rects, styles, state, geom, out, 0);
 }
 
 /* Internal (declared in lk-overlay.h): append the subtree rooted at
  * start, ignoring UIP_HIDDEN on start itself. */
 int lk_render_build_from(const lk_tree *t, lk_ix start, const lk_rect *rects,
                          const lk_style *styles, const lk_state *state,
-                         lk_render_list *out) {
+                         const lk_widget_geom *geom, lk_render_list *out) {
   if (!t || !out || !rects) {
     return 0;
   }
@@ -353,7 +355,7 @@ int lk_render_build_from(const lk_tree *t, lk_ix start, const lk_rect *rects,
     return 0;
   }
 
-  return render_walk(t, start, rects, styles, state, out, 1);
+  return render_walk(t, start, rects, styles, state, geom, out, 1);
 }
 
 void lk_render_list_destroy(lk_render_list *rl) {

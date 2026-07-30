@@ -343,7 +343,7 @@ static const lk_render_cmd *find_cursor_fill(const lk_render_list *rl) {
 
 static int fix_render(ed_fix *f, lk_render_list *rl) {
   return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL,
-                         lk_ui_state(f->ui), rl);
+                         lk_ui_state(f->ui), NULL, rl);
 }
 
 /* Build "line 0\nline 1\n...\nline N-1" (no trailing newline). */

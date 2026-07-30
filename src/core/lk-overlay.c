@@ -361,7 +361,8 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
 
       if (overlay_content_geometry(t, ov, rects, cfg, scratch, &cix,
                                    &orect)) {
-        lk_render_build_from(t, cix, scratch, cfg->styles, cfg->state, out);
+        lk_render_build_from(t, cix, scratch, cfg->styles, cfg->state,
+                             cfg->geom, out);
       }
 
       lk_sys_dealloc(NULL, scratch);

@@ -10,6 +10,6 @@
  * built main-tree render list. */
 int lk_render_build_from(const lk_tree *t, lk_ix start, const lk_rect *rects,
                          const lk_style *styles, const lk_state *state,
-                         lk_render_list *out);
+                         const lk_widget_geom *geom, lk_render_list *out);
 
 #endif /* LK_OVERLAY_H */
