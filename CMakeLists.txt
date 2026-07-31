@@ -10,6 +10,18 @@ set(CMAKE_C_STANDARD 90)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+option(LK_ENABLE_CLANG_TIDY "Run clang-tidy alongside compilation" OFF)
+
+if(LK_ENABLE_CLANG_TIDY)
+  find_program(LK_CLANG_TIDY_EXE clang-tidy)
+  if(NOT LK_CLANG_TIDY_EXE)
+    message(FATAL_ERROR "LK_ENABLE_CLANG_TIDY=ON but clang-tidy was not found")
+  endif()
+  # Applied per-target below rather than via CMAKE_C_CLANG_TIDY: the
+  # repo-root .clang-tidy pins -std=c89, so only the C89 targets are
+  # tidied (SDL C11 targets and the fetched Lcl tree are skipped).
+endif()
+
 set(LK_SOURCES
   src/core/lk-alloc.c
   src/core/lk-intern.c
@@ -47,10 +59,12 @@ add_library(lk_core STATIC ${LK_SOURCES})
 
 # Shared library for language bindings (Python, etc.)
 add_library(lk_shared SHARED ${LK_SOURCES})
+
 target_include_directories(lk_shared
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(lk_shared PRIVATE -Wall -Wextra -pedantic)
+
 set_target_properties(lk_shared PROPERTIES OUTPUT_NAME "lk")
 
 target_include_directories(lk_core
@@ -69,6 +83,11 @@ target_include_directories(lk_test PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_compile_options(lk_test PRIVATE -Wall -Wextra -pedantic)
+
+if(LK_ENABLE_CLANG_TIDY)
+  set_target_properties(lk_core lk_shared lk_test PROPERTIES
+    C_CLANG_TIDY "${LK_CLANG_TIDY_EXE}")
+endif()
 
 find_package(SDL3 QUIET)
 find_package(SDL3_ttf QUIET)
@@ -100,43 +119,46 @@ else()
 endif()
 
 # ---- Lcl scripting bindings ----
-
 option(LK_BUILD_LCL "Build Lcl scripting bindings" OFF)
 
 if(LK_BUILD_LCL)
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/submodules/lcl/packages/lcl-io/CMakeLists.txt)
-    set(LK_LCL_IO_DEFAULT ON)
-  else()
-    set(LK_LCL_IO_DEFAULT OFF)
-  endif()
-  option(LK_LCL_IO "Register the Lcl IO package (io::*) in lcl_lk_main" ${LK_LCL_IO_DEFAULT})
 
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/submodules/lcl/packages/lcl-regex/CMakeLists.txt)
-    set(LK_LCL_REGEX_DEFAULT ON)
-  else()
-    set(LK_LCL_REGEX_DEFAULT OFF)
-  endif()
-  option(LK_LCL_REGEX "Register the Lcl regex package (regex::*) in lcl_lk_main" ${LK_LCL_REGEX_DEFAULT})
+  option(LK_LCL_IO "Register the Lcl IO package (io::*) in lcl_lk_main" ON)
+  option(LK_LCL_REGEX "Register the Lcl regex package (regex::*) in lcl_lk_main" ON)
 
+  # Lcl's build options must be forced into the cache BEFORE
+  # FetchContent_MakeAvailable -- it configures the subproject
+  # immediately, so anything set after it is ignored on first run.
   set(LCL_BUILD_SHARED OFF CACHE BOOL "" FORCE)
   set(LCL_BUILD_STATIC ON CACHE BOOL "" FORCE)
   set(LCL_BUILD_CLI OFF CACHE BOOL "" FORCE)
+
   if(LK_LCL_IO)
     set(LCL_BUILD_IO ON CACHE BOOL "" FORCE)
   else()
     set(LCL_BUILD_IO OFF CACHE BOOL "" FORCE)
   endif()
+
   if(LK_LCL_REGEX)
     set(LCL_BUILD_REGEX ON CACHE BOOL "" FORCE)
   else()
     set(LCL_BUILD_REGEX OFF CACHE BOOL "" FORCE)
   endif()
-  add_subdirectory(submodules/lcl)
+
+  include(FetchContent)
+  FetchContent_Declare(
+    lcl
+    GIT_REPOSITORY https://github.com/bholten/lcl.git
+    GIT_TAG        6b0b09537a20516103363a05c9cf37c8aa7734d4
+  )
+  FetchContent_MakeAvailable(lcl)
 
   add_library(lcl_lk STATIC src/lcl/lcl-lk.c)
+
   target_include_directories(lcl_lk
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
   target_link_libraries(lcl_lk PUBLIC lk_core lcl::lcl)
   target_compile_options(lcl_lk PRIVATE -Wall -Wextra -pedantic)
 
@@ -145,22 +167,29 @@ if(LK_BUILD_LCL)
     target_link_libraries(lcl_lk PUBLIC lk_sdl)
 
     add_executable(lcl_lk_main src/lcl/lcl-lk-main.c)
+
     target_link_libraries(lcl_lk_main PRIVATE lcl_lk)
+
     target_include_directories(lcl_lk_main PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/include
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
+
     target_compile_definitions(lcl_lk_main PRIVATE
       LK_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
+
     if(LK_LCL_IO)
       target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_IO)
       target_link_libraries(lcl_lk_main PRIVATE lcl_io)
     endif()
+
     if(LK_LCL_REGEX)
       target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_REGEX)
       target_link_libraries(lcl_lk_main PRIVATE lcl_regex)
     endif()
+
     target_compile_options(lcl_lk_main PRIVATE -Wall -Wextra)
+
     set_target_properties(lcl_lk_main PROPERTIES
       C_STANDARD 11
       C_STANDARD_REQUIRED OFF
@@ -168,11 +197,20 @@ if(LK_BUILD_LCL)
   endif()
 
   add_executable(lcl_lk_test test/lcl-lk-test.c)
+
   target_link_libraries(lcl_lk_test PRIVATE lcl_lk)
+
   target_include_directories(lcl_lk_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
   target_compile_definitions(lcl_lk_test PRIVATE
     TEST_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
   target_compile_options(lcl_lk_test PRIVATE -Wall -Wextra -pedantic)
+
+  if(LK_ENABLE_CLANG_TIDY)
+    set_target_properties(lcl_lk lcl_lk_test PROPERTIES
+      C_CLANG_TIDY "${LK_CLANG_TIDY_EXE}")
+  endif()
+
 endif()
