@@ -683,6 +683,19 @@ unsigned char lk_doc_get_byte(const lk_document *d, lk_u32 pos) {
   }
 
   piece = &d->pieces[piece_idx];
+
+  /* find_piece_at_pos lands boundary positions at the END of the
+   * earlier piece (the insert-side contract).  A read must resolve
+   * to the next piece's first byte instead: one past the earlier
+   * piece's bytes is outside its contents, and at the add-buffer
+   * frontier it is unwritten memory. */
+  while (offset_in_piece >= piece->length &&
+         piece_idx + 1 < d->pieces_len) {
+    offset_in_piece -= piece->length;
+    piece_idx++;
+    piece = &d->pieces[piece_idx];
+  }
+
   src = get_source_buffer(d, piece->source);
 
   return (unsigned char)src[piece->start + offset_in_piece];

@@ -1592,8 +1592,30 @@ static void test_find_window_slide(void) {
  * Runner
  * ================================================================ */
 
+static void test_doc_get_byte_piece_boundary(void) {
+  /* get_byte at a piece boundary must read the NEXT piece's first
+   * byte -- one past the earlier piece is outside its contents and,
+   * at the add-buffer frontier, unwritten memory (the flaky
+   * multiview cursor-snap failures; valgrind-visible). */
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "hello world", 11);
+
+  BEGIN_TEST("doc: get_byte at piece boundaries");
+
+  CHECK(lk_doc_insert(d, 5, "XX", 2)); /* [hello][XX][ world] */
+  CHECK_EQ(lk_doc_get_byte(d, 5), 'X'); /* original|add boundary */
+  CHECK_EQ(lk_doc_get_byte(d, 7), ' '); /* add|original boundary */
+
+  CHECK(lk_doc_insert(d, 12, "Z", 1)); /* [hello][XX][ worl][Z][d] */
+  CHECK_EQ(lk_doc_get_byte(d, 12), 'Z');
+  CHECK_EQ(lk_doc_get_byte(d, 13), 'd'); /* boundary at add frontier */
+
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
 void lk_document_run_tests(void) {
   printf("\nlk document tests (ported from weft):\n");
+  test_doc_get_byte_piece_boundary();
   test_doc_new_empty();
   test_doc_from_str();
   test_doc_insert_at_start();
