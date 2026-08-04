@@ -244,6 +244,19 @@ static void measure_text_input(const lk_tree *t, lk_ix n, const lk_size *sizes,
     m.w = 100;
   }
 
+  /* Height floor from a reference run, not the run's tight box: an
+   * empty input must still be one line tall, and the box must not
+   * change height with the ascenders/descenders of what is typed. */
+  {
+    lk_text_metrics ref;
+
+    measure_run(cfg, n, lk_str_c("Mg"), &ref);
+
+    if (m.h < ref.h) {
+      m.h = ref.h;
+    }
+  }
+
   *out_w = m.w + inset * 2;
   *out_h = m.h + inset * 2;
 

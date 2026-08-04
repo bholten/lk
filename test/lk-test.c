@@ -1631,6 +1631,41 @@ static void test_grow_thirds(void) {
   lk_tree_destroy(t);
 }
 
+static void test_grow_text_input_row(void) {
+  /* A grow-1 text input in a row takes the leftover main-axis space
+   * (the mini-bar shape: label + input filling the rest). */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, lb, ti;
+  lk_rect *r;
+
+  BEGIN_TEST("grow: text input fills row leftover");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  lb = lk_tree_add_node_s(t, lk_str_c("lb"), UIK_LABEL);
+  lk_tree_add_prop(t, lb, UIP_TEXT, lk_v_cstr(t->intern, "find:"));
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, lb);
+  lk_tree_append_child(t, row, ti);
+
+  r = run_layout(t, 500, 100);
+  CHECK(r != NULL);
+  if (r) {
+    /* stub: 8 px/cp -> label 40 wide; input gets 500 - 40 = 460 */
+    CHECK_EQ(r[lb].w, 40);
+    CHECK_EQ(r[ti].x, 40);
+    CHECK_EQ(r[ti].w, 460);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
 static void test_grow_one_two(void) {
   /* 100 @ 1:2 -> 33/67; 101 @ 1:2 -> 34/67 (both normative) */
   lk_tree *t = lk_tree_create(NULL);
@@ -6169,6 +6204,67 @@ static void test_render_deferred_props_emit_text(void) {
 /* ================================================================
  * Tests: text input widget
  * ================================================================ */
+
+/* A tight-box backend: like the stub but an empty run really measures
+ * zero-high (the shape SDL_ttf reports).  The stub's constant height
+ * masks empty-run height bugs. */
+static void tight_measure(void *ud, lk_str run, lk_u16 font_id,
+                          lk_u16 font_size, lk_text_metrics *out) {
+  const lk_text_backend *stub = lk_text_backend_stub();
+
+  (void)ud;
+  stub->measure(stub->ud, run, font_id, font_size, out);
+
+  if (out && run.len == 0) {
+    out->h = 0;
+    out->baseline = 0;
+  }
+}
+
+static void test_text_input_empty_height(void) {
+  /* An empty input is one reference-run line tall, not a zero-high
+   * sliver (mini-bar regression: find/replace inputs collapsed). */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_text_backend tb;
+  lk_layout_cfg cfg;
+  lk_rect *rects;
+  lk_ix w, row, ti;
+
+  BEGIN_TEST("text input: empty input keeps line height");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  /* themed apps resolve row cross-align START (grow-layout.md §4);
+   * opt in here so the input keeps its intrinsic height. */
+  lk_tree_add_prop(t, row, UIP_ALIGN, lk_v_i32(LK_ALIGN_START));
+  ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
+  lk_tree_add_prop(t, ti, UIP_GROW, lk_v_i32(1));
+
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, ti);
+
+  tb = *lk_text_backend_stub();
+  tb.measure = tight_measure;
+
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = &tb;
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 100;
+
+  rects = (lk_rect *)malloc(sizeof(lk_rect) * t->node_count);
+  CHECK(rects != NULL);
+  if (rects) {
+    CHECK(lk_layout(t, &cfg, rects));
+    /* reference run "Mg" under the tight backend is 16 px high */
+    CHECK_EQ(rects[ti].h, 16);
+    CHECK_EQ(rects[ti].w, 400);
+    free(rects);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
 
 /* Helper: build a UI with a focused text input, run one frame, return
  * the current tree.  Caller must destroy ui.
@@ -12047,6 +12143,7 @@ int main(void) {
 
   /* grow layout (docs/grow-layout.md) */
   test_grow_thirds();
+  test_grow_text_input_row();
   test_grow_one_two();
   test_grow_legacy_remainder_order();
   test_grow_mixed_legacy_and_grow();
@@ -12226,6 +12323,7 @@ int main(void) {
   /* text input widget */
   printf("\nlk text input tests:\n");
   test_text_input_measure();
+  test_text_input_empty_height();
   test_text_input_render();
   test_text_input_insert();
   test_text_input_emits_value_changed();

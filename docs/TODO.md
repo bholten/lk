@@ -413,7 +413,13 @@ here:
    editor + ptype'd 4-arg form).  Candidate designs when it comes up:
    window-level fallback matching for ptype-less key translators, or
    the larger move of threading an explicit context (form/keymap)
-   through the matcher instead of overloading presentations.
+   through the matcher instead of overloading presentations; deferred
+   focus (`lk_focus_request(ui, id)`) — `lk_focus_set` resolves
+   against the committed tree, so "open a panel and focus its input"
+   cannot work from a command handler (the widget exists only next
+   frame); weft carries an app-level retry loop (2026-08-05), a
+   one-shot request applied at end_frame when the node appears would
+   retire it.
 
 ## Up Next
 
