@@ -402,7 +402,15 @@ here:
    unblocked: the time source landed 2026-08-04 —
    `lk_ui_set_time_ms`/`lk_ui_time_ms`, SDL-stamped per frame,
    `lk::time_ms`); column selection; the out-of-core widget
-   registration protocol (`docs/editor.md` §2).
+   registration protocol (`docs/editor.md` §2); keybinding/matcher
+   context threading — translators only match at presentation-bearing
+   nodes, so the DSL's 3-arg "global" `keybinding` form silently does
+   nothing unless some node on the focused path carries a presentation
+   (weft tripped on this 2026-08-04; workaround: presentation per
+   editor + ptype'd 4-arg form).  Candidate designs when it comes up:
+   window-level fallback matching for ptype-less key translators, or
+   the larger move of threading an explicit context (form/keymap)
+   through the matcher instead of overloading presentations.
 
 ## Up Next
 
