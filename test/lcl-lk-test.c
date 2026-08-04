@@ -3301,6 +3301,7 @@ static void test_editor_command_errors(void) {
 static void test_editor_wrap_proc(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
+  lk_ui *ui = NULL;
 
   BEGIN_TEST("editor: wrap mode set/get round-trip + errors");
   interp = make_interp();
@@ -3312,23 +3313,68 @@ static void test_editor_wrap_proc(void) {
           &r);
   if (r) lcl_ref_dec(r);
 
-  /* Default NONE; none/character round-trip through the getter. */
+  /* Default NONE; all three modes round-trip through the getter. */
   check_str(interp, "lk::editor_wrap_get $e", "none");
   check_str(interp, "lk::editor_wrap $e character", "");
   check_str(interp, "lk::editor_wrap_get $e", "character");
+  check_str(interp, "lk::editor_wrap $e word", "");
+  check_str(interp, "lk::editor_wrap_get $e", "word");
   check_str(interp, "lk::editor_wrap $e none", "");
   check_str(interp, "lk::editor_wrap_get $e", "none");
 
-  /* word: a recognized name the engine rejects -- hard error listing
-   * the supported modes; the mode is left unchanged. */
-  eval_expect_err(interp, "lk::editor_wrap $e word", "'word'",
-                  "supported: none, character", NULL);
+  /* Bogus mode name: hard error listing the supported modes; the
+   * mode is left unchanged. */
+  eval_expect_err(interp, "lk::editor_wrap $e diagonal",
+                  "unknown mode 'diagonal'",
+                  "supported: none, character, word", NULL);
   check_str(interp, "lk::editor_wrap_get $e", "none");
 
-  /* Bogus mode name: same supported-modes listing. */
-  eval_expect_err(interp, "lk::editor_wrap $e diagonal",
-                  "unknown mode 'diagonal'", "supported: none, character",
-                  NULL);
+  /* Word mode wraps for real: "hello world foo" under the stub
+   * backend (8 px per codepoint) at width 80 breaks after "hello "
+   * (byte 6, not the char-fit floor 10) -- ROW_START from inside
+   * row 1 lands on the word break. */
+  r = NULL;
+  eval_ok(interp,
+          "let d2 [lk::doc_new \"hello world foo\"]\n"
+          "let e2 [lk::editor_new $ui $d2]\n"
+          "let t [lk::begin_frame $ui]\n"
+          "let w [lk::node $t \"w\" \"window\"]\n"
+          "let n [lk::node $t \"ed\" \"editor\"]\n"
+          "lk::set_root $t $w\n"
+          "lk::append_child $t $w $n\n"
+          "lk::prop $t $n focusable 1\n"
+          "lk::prop $t $n editor $e2\n"
+          "lk::end_frame $ui\n"
+          "lk::editor_wrap $e2 word",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  r = NULL;
+  eval_ok(interp, "$ui", &r);
+  if (r) {
+    CHECK(lcl_opaque_get(r, "lk_ui", (void **)&ui) == LCL_OK);
+    lcl_ref_dec(r);
+  }
+  CHECK(ui != NULL);
+
+  if (ui) {
+    lk_rect rects[8];
+    lk_layout_cfg cfg;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.text = lk_text_backend_stub();
+    cfg.viewport_w = 80;
+    cfg.viewport_h = 80;
+    cfg.state = lk_ui_state(ui);
+    lk_ui_set_text_backend(ui, lk_text_backend_stub());
+    CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects));
+
+    check_int(interp, "lk::editor_command $e2 set_cursor 8", 1);
+    check_int(interp, "lk::editor_command $e2 move_row_start", 1);
+    check_int(interp, "lk::editor_cursor $e2", 6);
+    check_int(interp, "lk::editor_command $e2 move_line_start", 1);
+    check_int(interp, "lk::editor_cursor $e2", 0);
+  }
 
   /* Arity and type errors. */
   eval_expect_err(interp, "lk::editor_wrap $e", "lk::editor_wrap",

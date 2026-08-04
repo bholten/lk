@@ -392,7 +392,10 @@ here:
    `sort_by` keyfn; C-proc arity errors naming the proc;
    a deliberate decision on `"$list"` interpolation semantics.
 4. **On-demand toolkit items with recorded landing spots**: word
-   wrap (one fit-policy function, `docs/editor-wrap.md` §2);
+   wrap — LANDED 2026-08-05 exactly at the recorded spot (the §2
+   fit-policy post-processing in `ed_measure_breaks`,
+   `docs/editor-wrap.md` §2; `LK_EDITOR_WRAP_WORD` +
+   `lk::editor_wrap word` now accepted);
    `align_self` (unlocks revisiting the ROW/COLUMN cross-axis
    default, `docs/grow-layout.md` §4); annot persistence lift
    (per-type presentation serialization decision,

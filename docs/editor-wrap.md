@@ -108,9 +108,19 @@ if (x_from_index(seg, font, size, ix) > remaining_width)
 - Tabs advance to the next `tab_size × space-advance` stop relative
   to the CURRENT VISUAL ROW's x = 0 (weft behavior); a tab that
   would land past the width breaks first.
-- Word wrap later = a different fit policy in this one function
-  (prefer the last whitespace boundary at-or-before the fit point,
-  char-fallback for unbreakable runs). Nothing outside changes.
+- Word wrap (landed 2026-08-05) = a different fit policy in this one
+  function, a post-processing of the character-fit floor: prefer the
+  most recent breakable boundary at-or-before the fit point within
+  the current row — a boundary whose immediately-preceding codepoint
+  is an ASCII space (0x20); a tab boundary is inherently breakable
+  (tabs are already segment separators), and no other Unicode is
+  special-cased, so NBSP never breaks. The break lands AFTER the
+  whitespace (trailing spaces stay on the upper row, standard
+  text-area behavior). With no breakable boundary in the row (an
+  unbreakable run wider than the viewport) the char-fit floor stands
+  unchanged, progress guarantee included. The scan is over row-local
+  bytes already in hand — cost stays O(rows) backend calls per line.
+  Nothing outside changed.
 
 
 ## 3. Viewport anchor, rows, motion
@@ -180,11 +190,11 @@ demo reasoning, withdrawn. Minimal implementation, active only in
 typedef enum lk_editor_wrap_mode {
   LK_EDITOR_WRAP_NONE = 0,
   LK_EDITOR_WRAP_CHARACTER,
-  LK_EDITOR_WRAP_WORD        /* rejected until implemented */
+  LK_EDITOR_WRAP_WORD        /* implemented 2026-08-05, section 2 */
 } lk_editor_wrap_mode;
 
 int lk_editor_set_wrap_mode(lk_editor *e, lk_editor_wrap_mode m);
-                             /* 0 if unsupported (WORD, for now) */
+                             /* 0 on unknown mode / alloc failure */
 lk_editor_wrap_mode lk_editor_wrap_mode_get(const lk_editor *e);
 void lk_editor_invalidate_layout(lk_editor *e);  /* §1 escape hatch */
 ```
@@ -194,10 +204,10 @@ void lk_editor_invalidate_layout(lk_editor *e);  /* §1 escape hatch */
   mid-word breaks aren't enshrined as anyone's default experience,
   and no interim policy calcifies in docs. Applications choose;
   the demo calls `lk::editor_wrap $ed character` explicitly — the
-  API on camera. When WORD lands, apps that want text-area
+  API on camera. WORD landed 2026-08-05; apps that want text-area
   behavior switch one atom.
-- Lcl: `lk::editor_wrap $e none|character|word` (unsupported →
-  hard error listing supported modes, DSL-v2 style);
+- Lcl: `lk::editor_wrap $e none|character|word` (an unknown mode
+  name → hard error listing supported modes, DSL-v2 style);
   `lk::editor_wrap_get $e` returns the mode name.
 
 
@@ -306,7 +316,17 @@ for a second consumer.
   script-side codepoint counting cannot be exact (`String::length`
   is `strlen`), so `lk::doc_char_col` was added with the §8 column
   definition pinned at the proc.
-- **Deferred**: word wrap (one fit-policy function, §2); wrap-width
+- **Word wrap.** DONE (2026-08-05): the §2 fit policy landed as a
+  post-processing of the character-fit floor inside the one break
+  finder (`ed_measure_breaks`); `lk_editor_set_wrap_mode` accepts
+  WORD and `lk::editor_wrap` takes `word`. Nothing outside the
+  break finder changed. Gate: stub-exact tests — space break vs the
+  char-fit floor with cursor/motion/hit-testing over the boundary,
+  unbreakable-run fallback incl. the progress guarantee,
+  trailing-space-stays with a multi-space run, tab-boundary break,
+  character↔word↔none switching (row counts change), edit-splice
+  under word mode; Lcl round-trip + a wrapped ROW_START assertion.
+- **Deferred**: wrap-width
   override; gutter/line numbers; horizontal scrollbar rendering;
   backend metric generations + cluster-caret `index_at_x`
   (text-contract v2, §1/§2); `lk_doc_line_change` (§7).

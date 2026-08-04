@@ -248,6 +248,12 @@ static void fix_wrap(ed_fix *f) {
   fix_layout(f);
 }
 
+/* Same, word wrap. */
+static void fix_wrap_word(ed_fix *f) {
+  CHECK(lk_editor_set_wrap_mode(f->ed, LK_EDITOR_WRAP_WORD) == 1);
+  fix_layout(f);
+}
+
 /* ---- render-list query helpers ---- */
 
 static lk_u32 count_runs(const lk_render_list *rl) {
@@ -1699,13 +1705,15 @@ static void make_rows(char *buf, lk_u32 cap, int nlines, int ncols) {
 static void test_wrap_mode_api(void) {
   ed_fix f;
 
-  BEGIN_TEST("wrap: mode API, WORD rejected");
+  BEGIN_TEST("wrap: mode API, all three modes round-trip");
 
   fix_init(&f, "hello", 400, 80);
 
   CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_NONE);
-  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_WORD) == 0);
+  CHECK(lk_editor_set_wrap_mode(f.ed, (lk_editor_wrap_mode)99) == 0);
   CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_NONE);
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_WORD) == 1);
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_WORD);
   CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_CHARACTER) == 1);
   CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_CHARACTER);
   CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_CHARACTER) == 1);
@@ -2368,6 +2376,213 @@ static void test_wrap_scroll_extent_estimator(void) {
   END_TEST();
 }
 
+/* ---- word wrap (docs/editor-wrap.md section 2 word policy) ---- */
+
+static void test_wrap_word_break_basic(void) {
+  ed_fix f;
+  lk_render_list rl;
+  const lk_render_cmd *cur;
+
+  BEGIN_TEST("wrap word: break after the last space that fits");
+
+  /* "hello world foo": the char-fit floor is byte 10 (mid-"world");
+   * the word policy backs up to byte 6, AFTER the space */
+  fix_init(&f, "hello world foo", 80, 80);
+  fix_wrap_word(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "hello "));
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 48u);
+  CHECK(run_is(&rl, nth_run(&rl, 1), "world foo"));
+  CHECK(nth_run(&rl, 1)->rect.x == 0 && nth_run(&rl, 1)->rect.y == 16);
+
+  /* row ownership holds at the word break: the break byte renders at
+   * the NEXT row's start */
+  lk_focus_set(f.ui, lk_ui_tree(f.ui), f.nid);
+  cmd_setcur(&f, 6, 0);
+  fix_layout(&f);
+  CHECK(fix_render(&f, &rl));
+  cur = find_cursor_fill(&rl);
+  CHECK(cur && cur->rect.x == 0 && cur->rect.y == 16);
+
+  /* motion over the boundary: DOWN from byte 2 (x = 16) lands at
+   * sticky x on row 1 -> byte 8; UP returns */
+  cmd_setcur(&f, 2, 0);
+  CHECK(cmd_move(&f, LK_ED_MOVE_DOWN, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 8);
+  CHECK(cmd_move(&f, LK_ED_MOVE_UP, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 2);
+
+  /* hit-testing: row 1 x=8 -> byte 7; past row 0's short content
+   * clamps to the break byte */
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 8, 20) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 7);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 8, 20);
+  CHECK(send_pointer(&f, LK_EVENT_POINTER_DOWN, 80, 4) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 6);
+  send_pointer(&f, LK_EVENT_POINTER_UP, 80, 4);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_word_unbreakable_fallback(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap word: unbreakable run falls back to char breaks");
+
+  /* 12 codepoints, no whitespace: identical to character wrap */
+  fix_init(&f, "aaaaaaaaaaaa", 80, 80);
+  fix_wrap_word(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "aaaaaaaaaa"));
+  CHECK(run_is(&rl, nth_run(&rl, 1), "aa"));
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+
+  /* progress guarantee survives the word policy: width 4 fits
+   * NOTHING, one boundary per row is taken anyway */
+  fix_init(&f, "abc", 4, 80);
+  fix_wrap_word(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 3);
+  fix_destroy(&f);
+
+  END_TEST();
+}
+
+static void test_wrap_word_trailing_spaces(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap word: a space run stays on the upper row");
+
+  /* "hello   world": the break lands AFTER the last space (byte 8);
+   * all three spaces stay on row 0 */
+  fix_init(&f, "hello   world", 80, 80);
+  fix_wrap_word(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "hello   "));
+  CHECK_EQ((unsigned)nth_run(&rl, 0)->rect.w, 64u);
+  CHECK(run_is(&rl, nth_run(&rl, 1), "world"));
+  CHECK(nth_run(&rl, 1)->rect.x == 0 && nth_run(&rl, 1)->rect.y == 16);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_word_tab_boundary(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap word: a tab boundary is breakable");
+
+  /* "ab\tcdefghijk": tab stop at 32, segment 72 px overflows; the
+   * char-fit floor is byte 9 (mid-word) and the scan backs up to the
+   * tab boundary (byte 3) -- the whole word moves to row 1 */
+  fix_init(&f, "ab\tcdefghijk", 80, 80);
+  fix_wrap_word(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 2);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "ab"));
+  CHECK(run_is(&rl, nth_run(&rl, 1), "cdefghijk"));
+  CHECK(nth_run(&rl, 1)->rect.x == 0 && nth_run(&rl, 1)->rect.y == 16);
+  CHECK_EQ((unsigned)nth_run(&rl, 1)->rect.w, 72u);
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_word_mode_switch(void) {
+  ed_fix f;
+  lk_render_list rl;
+
+  BEGIN_TEST("wrap word: character <-> word <-> none rewraps");
+
+  /* "aaaa bbbbbb cccc": character = 2 rows (break at 10), word = 3
+   * rows (breaks at 5 and 12) */
+  fix_init(&f, "aaaa bbbbbb cccc", 80, 80);
+  fix_wrap(&f);
+  memset(&rl, 0, sizeof(rl));
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK(fix_render(&f, &rl));
+  CHECK(run_is(&rl, nth_run(&rl, 0), "aaaa bbbbb"));
+
+  /* switch: one generation bump, stale until the next layout */
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_WORD) == 1);
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_WORD);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 3);
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 3);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "aaaa "));
+  CHECK(run_is(&rl, nth_run(&rl, 1), "bbbbbb "));
+  CHECK(run_is(&rl, nth_run(&rl, 2), "cccc"));
+
+  /* word -> none: the single-run shape returns */
+  CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_NONE) == 1);
+  CHECK(lk_editor_wrap_mode_get(f.ed) == LK_EDITOR_WRAP_NONE);
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 0); /* no cache in NONE */
+  CHECK(fix_render(&f, &rl));
+  CHECK_EQ(count_runs(&rl), 1);
+  CHECK(run_is(&rl, nth_run(&rl, 0), "aaaa bbbbbb cccc"));
+
+  lk_render_list_destroy(&rl);
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_wrap_word_splice(void) {
+  ed_fix f;
+
+  BEGIN_TEST("wrap word: edit splice re-measures the touched line");
+
+  /* 3 x "hello world foo" = 2 word rows each, all visible (h = 96) */
+  fix_init(&f, "hello world foo\nhello world foo\nhello world foo", 80,
+           96);
+  fix_wrap_word(&f);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2);
+
+  /* no-newline edit in line 1 (foreign, straight to the doc): only
+   * that line is dirtied, and it re-wraps to 3 word rows ("wide " /
+   * "hello " / "world foo" -> breaks at 5 and 11) */
+  CHECK(lk_doc_insert(f.doc, lk_doc_line_start(f.doc, 1), "wide ", 5) == 1);
+
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2); /* untouched, still valid */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 0); /* dirtied */
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 2), 2); /* untouched */
+
+  fix_layout(&f);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
+  CHECK_EQ(lk_editor_wrap_rows(f.ed, 1), 3);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
 static void test_hscroll_follow_cursor(void) {
   ed_fix f;
   lk_render_list rl;
@@ -2734,6 +2949,12 @@ void lk_editor_run_tests(void) {
   test_wrap_distant_reanchor();
   test_wrap_scroll_rows_and_page();
   test_wrap_scroll_extent_estimator();
+  test_wrap_word_break_basic();
+  test_wrap_word_unbreakable_fallback();
+  test_wrap_word_trailing_spaces();
+  test_wrap_word_tab_boundary();
+  test_wrap_word_mode_switch();
+  test_wrap_word_splice();
   test_hscroll_follow_cursor();
   test_hscroll_wheel();
 

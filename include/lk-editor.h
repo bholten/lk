@@ -105,11 +105,12 @@ lk_u32 lk_editor_tab_size(const lk_editor *e);
 typedef enum lk_editor_wrap_mode {
   LK_EDITOR_WRAP_NONE = 0,
   LK_EDITOR_WRAP_CHARACTER,
-  LK_EDITOR_WRAP_WORD /* rejected until implemented */
+  LK_EDITOR_WRAP_WORD /* break after the last space/tab that fits;
+                         char fallback for unbreakable runs */
 } lk_editor_wrap_mode;
 
-/* Set the wrap mode.  Returns 1 on success, 0 when the mode is
- * unsupported (WORD, for now).  Default: LK_EDITOR_WRAP_NONE. */
+/* Set the wrap mode.  Returns 1 on success, 0 on an unknown mode or
+ * allocation failure.  Default: LK_EDITOR_WRAP_NONE. */
 int lk_editor_set_wrap_mode(lk_editor *e, lk_editor_wrap_mode m);
 lk_editor_wrap_mode lk_editor_wrap_mode_get(const lk_editor *e);
 

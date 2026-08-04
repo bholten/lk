@@ -120,8 +120,7 @@ static const str_enum ed_cmd_table[] = {
     {NULL,                   0                         }
 };
 
-/* Wrap-mode names, mirroring lk_editor_wrap_mode.  "word" is a valid
- * name but the engine rejects it until word wrap is implemented. */
+/* Wrap-mode names, mirroring lk_editor_wrap_mode. */
 static const str_enum wrap_mode_table[] = {
     {"none",      LK_EDITOR_WRAP_NONE     },
     {"character", LK_EDITOR_WRAP_CHARACTER},
@@ -4017,9 +4016,9 @@ static int c_lk_editor_selection(lcl_interp *interp, int argc,
 /* lk::editor_wrap [editor, mode] -> ""
  *
  * mode is "none" | "character" | "word" (docs/editor-wrap.md section
- * 5).  An unknown name and a mode the engine rejects (word, until
- * word wrap is implemented) are both hard errors listing the
- * supported modes, DSL-v2 style. */
+ * 5).  An unknown name is a hard error listing the supported modes,
+ * DSL-v2 style; an engine rejection (allocation failure) is a hard
+ * error too. */
 static int c_lk_editor_wrap(lcl_interp *interp, int argc, lcl_value **argv,
                             lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -4045,7 +4044,7 @@ static int c_lk_editor_wrap(lcl_interp *interp, int argc, lcl_value **argv,
 
     sprintf(err,
             "lk::editor_wrap: unknown mode '%.48s' "
-            "(supported: none, character)",
+            "(supported: none, character, word)",
             mode_str);
     lcl_set_error(interp, err);
 
@@ -4056,8 +4055,8 @@ static int c_lk_editor_wrap(lcl_interp *interp, int argc, lcl_value **argv,
     static char err[160];
 
     sprintf(err,
-            "lk::editor_wrap: mode '%.48s' is not implemented yet "
-            "(supported: none, character)",
+            "lk::editor_wrap: the engine rejected mode '%.48s' "
+            "(supported: none, character, word)",
             mode_str);
     lcl_set_error(interp, err);
 

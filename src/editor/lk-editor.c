@@ -880,13 +880,13 @@ static int ed_break_push(lk_editor *e, ed_line_wrap *w, lk_u32 rel) {
   return 1;
 }
 
-/* THE fit policy (character wrap): byte length of the longest prefix
- * of the tab-free segment seg[0..len) whose pixel extent fits in
- * avail.  One backend fit query (nearest boundary) plus one
- * floor-correction -- never per-codepoint accumulation.  Word wrap
- * later is a different policy in this ONE function (prefer the last
- * whitespace boundary at-or-before this result, char-fallback for
- * unbreakable runs); nothing outside changes. */
+/* THE character-fit floor: byte length of the longest prefix of the
+ * tab-free segment seg[0..len) whose pixel extent fits in avail.
+ * One backend fit query (nearest boundary) plus one floor-correction
+ * -- never per-codepoint accumulation.  Word wrap post-processes
+ * this result in ed_measure_breaks (which holds the row-local bytes
+ * the backward whitespace scan needs); nothing outside the break
+ * finder changes. */
 static lk_u32 ed_fit_prefix(const lk_editor *e, const lk_text_backend *tb,
                             const char *seg, lk_u32 len, lk_i32 avail) {
   lk_u32 ix;
@@ -912,6 +912,16 @@ static lk_u32 ed_fit_prefix(const lk_editor *e, const lk_text_backend *tb,
  * relative to the CURRENT VISUAL ROW's x = 0; a tab that would land
  * past the width breaks first.  Empty-row progress guarantee: when
  * nothing fits on an empty row, one boundary is taken anyway.
+ * WORD mode is a post-processing of the character-fit floor: prefer
+ * the most recent breakable boundary at-or-before it within the
+ * current row -- a boundary whose preceding codepoint is an ASCII
+ * space (0x20) or a tab (a tab boundary is inherently breakable; no
+ * other Unicode is special-cased, so NBSP never breaks).  The break
+ * lands AFTER the whitespace: trailing spaces stay on the upper row.
+ * With no breakable boundary in the row (an unbreakable run wider
+ * than the viewport) the char-fit floor stands unchanged, progress
+ * guarantee included.  The scan is over row-local bytes already in
+ * hand -- no extra backend queries.
  * Writes the final row's end x to *out_last_x (for the estimator).
  * Returns 0 only on allocation failure. */
 static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
@@ -974,13 +984,29 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
         continue;
       }
 
-      if (!ed_break_push(e, w, i + fit)) {
-        return 0;
-      }
+      {
+        lk_u32 brk = i + fit;
 
-      i += fit;
-      row_start = i;
-      x = 0;
+        if (e->wrap_mode == LK_EDITOR_WRAP_WORD) {
+          lk_u32 b = brk;
+
+          while (b > row_start && p[b - 1] != ' ' && p[b - 1] != '\t') {
+            b--;
+          }
+
+          if (b > row_start) {
+            brk = b;
+          }
+        }
+
+        if (!ed_break_push(e, w, brk)) {
+          return 0;
+        }
+
+        i = brk;
+        row_start = i;
+        x = 0;
+      }
     }
   }
 
@@ -1695,15 +1721,16 @@ int lk_editor_set_wrap_mode(lk_editor *e, lk_editor_wrap_mode m) {
     return 0;
   }
 
-  if (m != LK_EDITOR_WRAP_NONE && m != LK_EDITOR_WRAP_CHARACTER) {
-    return 0; /* WORD is rejected until implemented */
+  if (m != LK_EDITOR_WRAP_NONE && m != LK_EDITOR_WRAP_CHARACTER &&
+      m != LK_EDITOR_WRAP_WORD) {
+    return 0;
   }
 
   if ((lk_u32)m == e->wrap_mode) {
     return 1;
   }
 
-  if (m == LK_EDITOR_WRAP_CHARACTER) {
+  if (m != LK_EDITOR_WRAP_NONE) {
     if (!ed_wrap_materialize(e)) {
       return 0;
     }
