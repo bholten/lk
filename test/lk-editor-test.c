@@ -831,6 +831,12 @@ static void test_event_return_tab_esc(void) {
   CHECK(send_key(&f, LKK_RETURN, 0) == 1);
   CHECK(doc_is(f.doc, "\n"));
 
+  /* Modified RETURN has no editor meaning: it bubbles (app chords
+   * like ctrl+enter belong to translators) and inserts nothing. */
+  CHECK(send_key(&f, LKK_RETURN, LK_MOD_CTRL) == 0);
+  CHECK(send_key(&f, LKK_RETURN, LK_MOD_ALT) == 0);
+  CHECK(doc_is(f.doc, "\n"));
+
   CHECK(send_key(&f, LKK_TAB, 0) == 1);
   CHECK(doc_is(f.doc, "\n    ")); /* tab_size = 4 spaces */
 

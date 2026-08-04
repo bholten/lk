@@ -183,8 +183,14 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
     return 1;
 
   case LKK_RETURN:
-    /* Consumed -- unlike the single-line text input it does not
-     * bubble. */
+    /* Plain RETURN inserts and is consumed -- unlike the single-line
+     * text input it does not bubble.  A ctrl/alt-modified RETURN has
+     * no editor meaning: it bubbles so app keybindings (translators)
+     * can own chords like ctrl+enter. */
+    if (ev->mods & (LK_MOD_CTRL | LK_MOD_ALT)) {
+      return 0;
+    }
+
     ed_insert_bytes(e, ui, "\n", 1);
 
     return 1;
