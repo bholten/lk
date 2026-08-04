@@ -1093,6 +1093,85 @@ static void test_hist_deep_chain(void) {
   END_TEST();
 }
 
+static void test_hist_savepoint_round_trip(void) {
+  lk_document *d = lk_doc_new(NULL, NULL, NULL);
+  lk_edit_history *h = lk_history_new(NULL, NULL, NULL);
+
+  BEGIN_TEST("hist: savepoint mark/undo/redo round trip");
+
+  lk_history_attach(h, d);
+
+  /* fresh history has no savepoint */
+  CHECK(!lk_history_at_saved(h));
+
+  CHECK(lk_doc_insert(d, 0, "a", 1));
+  lk_history_mark_saved(h);
+  CHECK(lk_history_at_saved(h));
+
+  /* an edit moves off the savepoint... */
+  CHECK(lk_doc_insert(d, 1, "b", 1));
+  CHECK(!lk_history_at_saved(h));
+
+  /* ...undo returns to it... */
+  CHECK_EQ(lk_history_undo(h, d), 1);
+  CHECK(lk_history_at_saved(h));
+
+  /* ...redo past it leaves again, undo comes back */
+  CHECK_EQ(lk_history_redo(h, d), 1);
+  CHECK(!lk_history_at_saved(h));
+  CHECK_EQ(lk_history_undo(h, d), 1);
+  CHECK(lk_history_at_saved(h));
+
+  /* NULL-safe */
+  lk_history_mark_saved(NULL);
+  CHECK(!lk_history_at_saved(NULL));
+
+  lk_history_destroy(h);
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
+static void test_hist_savepoint_invalidated_below(void) {
+  lk_document *d = lk_doc_new(NULL, NULL, NULL);
+  lk_edit_history *h = lk_history_new(NULL, NULL, NULL);
+
+  BEGIN_TEST("hist: savepoint dies when recorded below");
+
+  lk_history_attach(h, d);
+
+  CHECK(lk_doc_insert(d, 0, "a", 1));
+  CHECK(lk_doc_insert(d, 1, "b", 1));
+  lk_history_mark_saved(h); /* savepoint at undo_count == 2 */
+
+  /* undo below the savepoint: still reachable via redo */
+  CHECK_EQ(lk_history_undo(h, d), 1);
+  CHECK(!lk_history_at_saved(h));
+
+  /* a new edit clears the redo stack — the path back to the saved
+   * state is gone, so the savepoint is invalid FOREVER, even though
+   * undo_count returns to the saved value (2) with different
+   * content. */
+  CHECK(lk_doc_insert(d, 1, "X", 1));
+  CHECK(!lk_history_at_saved(h));
+
+  /* ...and stays invalid through any further undo/redo motion */
+  CHECK_EQ(lk_history_undo(h, d), 1);
+  CHECK(!lk_history_at_saved(h));
+  CHECK_EQ(lk_history_undo(h, d), 1);
+  CHECK(!lk_history_at_saved(h));
+  CHECK_EQ(lk_history_redo(h, d), 1);
+  CHECK_EQ(lk_history_redo(h, d), 1);
+  CHECK(!lk_history_at_saved(h));
+
+  /* a fresh mark works again */
+  lk_history_mark_saved(h);
+  CHECK(lk_history_at_saved(h));
+
+  lk_history_destroy(h);
+  lk_doc_destroy(d);
+  END_TEST();
+}
+
 /* ================================================================
  * Delta coordinate contract (SEQUENTIAL, docs/editor-wrap.md
  * section 7): each delta's positions are expressed in the document
@@ -1585,4 +1664,6 @@ void lk_document_run_tests(void) {
   test_hist_foreign_edit_clears_redo();
   test_hist_replay_origins_observed();
   test_hist_deep_chain();
+  test_hist_savepoint_round_trip();
+  test_hist_savepoint_invalidated_below();
 }

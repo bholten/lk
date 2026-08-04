@@ -2955,6 +2955,75 @@ static void test_doc_unsubscribe(void) {
   END_TEST();
 }
 
+static void test_focus_get_round_trip(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("focus_get returns focused id string");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [lk::ui_create]\n"
+    "let t [lk::begin_frame $ui]\n"
+    "let w [lk::node $t \"main\" \"window\"]\n"
+    "let btn [lk::node $t \"btn\" \"button\"]\n"
+    "lk::prop $t $btn \"focusable\" 1\n"
+    "lk::set_root $t $w\n"
+    "lk::append_child $t $w $btn\n"
+    "lk::end_frame $ui",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  /* no focus yet -> "" */
+  check_str(interp, "lk::focus_get $ui", "");
+
+  /* set -> get round trip */
+  check_str(interp,
+            "lk::focus_set $ui \"btn\"\n"
+            "lk::focus_get $ui",
+            "btn");
+
+  /* clear -> "" again */
+  check_str(interp,
+            "lk::focus_clear $ui\n"
+            "lk::focus_get $ui",
+            "");
+
+  eval_expect_err(interp, "lk::focus_get", "lk::focus_get", "1 argument",
+                  NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_time_ms_binding(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("time_ms reads backend-stamped frame time");
+  interp = make_interp();
+
+  eval_ok(interp, "let ui [lk::ui_create]", &r);
+  if (r) lcl_ref_dec(r);
+
+  /* no backend stamped anything yet -> 0 */
+  check_int(interp, "lk::time_ms $ui", 0);
+
+  /* stamp from C (standing in for the SDL loop) and re-read */
+  ui = fetch_ui(interp);
+  CHECK(ui != NULL);
+  if (ui) {
+    lk_ui_set_time_ms(ui, 4321u);
+  }
+  check_int(interp, "lk::time_ms $ui", 4321);
+
+  eval_expect_err(interp, "lk::time_ms", "lk::time_ms", "1 argument", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_history_undo_redo(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -3007,6 +3076,44 @@ static void test_history_errors(void) {
                   "expected lk_edit_history opaque", NULL, NULL);
   eval_expect_err(interp, "lk::history_new $h", "expected lk_document opaque",
                   NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+static void test_history_savepoint(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("history: savepoint mark/edit/undo round trip");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"one\"]\n"
+          "let h [lk::history_new $d]",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  /* fresh history: no savepoint */
+  check_int(interp, "lk::history_at_saved $h", 0);
+
+  check_str(interp, "lk::history_mark_saved $h", "");
+  check_int(interp, "lk::history_at_saved $h", 1);
+
+  check_int(interp,
+            "lk::doc_insert $d 3 \" two\"\n"
+            "lk::history_at_saved $h",
+            0);
+
+  check_int(interp,
+            "lk::history_undo $h $d\n"
+            "lk::history_at_saved $h",
+            1);
+
+  eval_expect_err(interp, "lk::history_mark_saved",
+                  "lk::history_mark_saved", "1 argument", NULL);
+  eval_expect_err(interp, "lk::history_at_saved $d",
+                  "expected lk_edit_history opaque", NULL, NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -4163,6 +4270,92 @@ static void test_dsl_translator_matcher_dict(void) {
   END_TEST();
 }
 
+static void test_dsl_split_controlled_command(void) {
+  /* Controlled split through the full DSL surface: `split_controlled 1`
+   * + a `pane` presentation + a value_changed translator + an
+   * on-handler.  A C-routed divider drag delivers the per-mille ratio
+   * to the handler as the command's source_value; no LKS_SPLIT_RATIO
+   * state appears.  Geometry mirrors the C split tests: viewport
+   * 400x300, band at x=197..202, MOVE to x=100 -> (100-2)*1000/395 =
+   * 248. */
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  lk_ui *ui;
+
+  BEGIN_TEST("dsl: controlled split ratio command");
+  interp = make_dsl_interp();
+
+  eval_ok(interp,
+    "let u [lk::ui_create]\n"
+    "set! lk_dsl::_ui $u\n"
+    "view {\n"
+    "    split_h sp #{split_controlled 1 present (pane 0)} {\n"
+    "        column c1\n"
+    "        column c2\n"
+    "    }\n"
+    "}\n"
+    "translator value_changed pane SplitMoved\n"
+    "on SplitMoved [lambda {cmd} {\n"
+    "    lk::state_set $u sink 300 [get $cmd source_value]\n"
+    "}]\n"
+    "lk::set_command_handler $u [lambda {cmd} {\n"
+    "    lk_dsl::_dispatch_command $cmd\n"
+    "}]\n"
+    "let t [lk::begin_frame $u]\n"
+    "lk_dsl::_frame $t\n"
+    "lk::end_frame $u",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  ui = dsl_ui(interp);
+  CHECK(ui != NULL);
+
+  if (ui) {
+    lk_rect rects[16];
+    lk_layout_cfg cfg;
+    lk_ix sp;
+    lk_event ev;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.viewport_w = 400;
+    cfg.viewport_h = 300;
+    cfg.state = lk_ui_state(ui);
+    cfg.geom = lk_ui_geom(ui); /* split dragging needs the stash */
+    CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects) == 1);
+
+    sp = lk_tree_find_by_id(lk_ui_tree(ui), lk_intern_cid(ui->intern, "sp"));
+    CHECK(sp != 0);
+
+    /* DOWN in the divider band, then MOVE to x=100 */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = sp;
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK(ev.handled == 1);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK(ev.handled == 1);
+
+    /* controlled: no ratio state was written */
+    CHECK(lk_state_get(lk_ui_state(ui), lk_ui_tree(ui)->nodes[sp].id,
+                       LKS_SPLIT_RATIO)
+              .tag == UIV_NONE);
+  }
+
+  /* the on-handler saw the command and stored its source_value */
+  check_str(interp, "lk::state_get $u sink 300", "248");
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -4181,6 +4374,8 @@ int main(void) {
   test_state_set_get();
   test_intern_round_trip();
   test_focus_set_clear();
+  test_focus_get_round_trip();
+  test_time_ms_binding();
   test_add_translator();
   test_commands_empty();
   test_command_log_empty();
@@ -4267,6 +4462,7 @@ int main(void) {
   test_doc_unsubscribe();
   test_history_undo_redo();
   test_history_errors();
+  test_history_savepoint();
   test_editor_new_basic();
   test_editor_cursor_selection();
   test_editor_command_drives_doc();
@@ -4290,6 +4486,7 @@ int main(void) {
   test_focus_changed_translator_name();
   test_annot_present_errors();
   test_dsl_translator_matcher_dict();
+  test_dsl_split_controlled_command();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

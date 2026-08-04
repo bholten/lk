@@ -718,8 +718,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
     lk_u32 i;
     int have_rects;
 
-    /* 0. Clear per-frame command queue */
+    /* 0. Clear per-frame command queue; stamp the frame time */
     lk_ui_clear_commands(win->ui);
+    lk_ui_set_time_ms(win->ui, (lk_u32)SDL_GetTicks());
 
     /* 1. Build frame */
     tree = lk_ui_begin_frame(win->ui);

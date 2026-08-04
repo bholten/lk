@@ -10690,9 +10690,13 @@ static lk_tree *make_split_tree(lk_kind kind, lk_ix *out_sp, lk_ix *out_c1,
   return t;
 }
 
-/* Same shape via lk_ui (retained state + stashed geometry). */
-static lk_ui *make_split_ui(lk_kind kind, lk_i32 ratio_prop, lk_ix *out_sp,
-                            lk_ix *out_c1, lk_ix *out_c2) {
+/* Same shape via lk_ui (retained state + stashed geometry).
+ * controlled != 0 adds UIP_SPLIT_CONTROLLED=1; with_pres != 0 attaches
+ * a "pane" presentation to the split so a value_changed translator
+ * can match the drag notification. */
+static lk_ui *make_split_ui_ex(lk_kind kind, lk_i32 ratio_prop, int controlled,
+                               int with_pres, lk_ix *out_sp, lk_ix *out_c1,
+                               lk_ix *out_c2) {
   lk_ui *ui = lk_ui_create(NULL);
   lk_tree *t;
   lk_ix w, sp, c1, c2;
@@ -10704,6 +10708,14 @@ static lk_ui *make_split_ui(lk_kind kind, lk_i32 ratio_prop, lk_ix *out_sp,
 
   if (ratio_prop >= 0) {
     lk_tree_add_prop(t, sp, UIP_SPLIT_RATIO, lk_v_i32(ratio_prop));
+  }
+
+  if (controlled) {
+    lk_tree_add_prop(t, sp, UIP_SPLIT_CONTROLLED, lk_v_i32(1));
+  }
+
+  if (with_pres) {
+    lk_tree_add_presentation_s(t, sp, "pane", lk_v_i32(0));
   }
 
   c1 = lk_tree_add_node_s(t, lk_str_c("c1"), UIK_COLUMN);
@@ -10719,6 +10731,11 @@ static lk_ui *make_split_ui(lk_kind kind, lk_i32 ratio_prop, lk_ix *out_sp,
   *out_c1 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("c1")));
   *out_c2 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("c2")));
   return ui;
+}
+
+static lk_ui *make_split_ui(lk_kind kind, lk_i32 ratio_prop, lk_ix *out_sp,
+                            lk_ix *out_c1, lk_ix *out_c2) {
+  return make_split_ui_ex(kind, ratio_prop, 0, 0, out_sp, out_c1, out_c2);
 }
 
 static void test_split_h_layout_default_ratio(void) {
@@ -11100,6 +11117,182 @@ static void test_split_drag_sequence(void) {
     CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 0u);
     CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
   }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_split_controlled_drag(void) {
+  /* UIP_SPLIT_CONTROLLED=1: a drag MOVE writes NO LKS_SPLIT_RATIO
+   * state, but still emits the synthetic VALUE_CHANGED whose payload
+   * is the clamped per-mille ratio as a decimal string — delivered as
+   * a command through a presentation + value_changed translator.
+   * Same geometry as test_split_drag_sequence: MOVE to x=100 maps to
+   * ratio (100-2)*1000/395 = 248. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui_ex(UIK_SPLIT_H, -1, 1, 1, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sp_id = cur->nodes[sp].id;
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("split: controlled drag emits, writes no state");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "pane", 0, 0, 0, 0,
+                         "SplitRatio");
+
+  r = run_layout_ui(ui, 400, 300);
+  CHECK(r != NULL);
+
+  if (r) {
+    /* DOWN in the band still starts the drag in controlled mode */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 199, 150);
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    CHECK_EQ(ev.target, sp);
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 1u);
+    CHECK_EQ(lk_capture_current(ui), sp_id);
+
+    /* MOVE: no ratio state appears... */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).tag,
+             (unsigned)UIV_NONE);
+
+    /* ...but the translated command reaches the queue with the
+     * per-mille ratio string as source_value. */
+    {
+      const lk_command_queue *q = lk_ui_commands(ui);
+
+      CHECK_EQ(q->count, 1);
+
+      if (q->count >= 1) {
+        const lk_command *cmd = &q->cmds[0];
+
+        CHECK_EQ(cmd->name, lk_intern_id(ui->intern, lk_str_c("SplitRatio")));
+        CHECK_EQ(cmd->source_node, sp);
+        CHECK_EQ((unsigned)cmd->source_value.tag, (unsigned)UIV_STR);
+
+        {
+          lk_str sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+
+          CHECK(sv.len == 3 && memcmp(sv.ptr, "248", 3) == 0);
+        }
+      }
+    }
+
+    /* Layout still uses the prop/default ratio (no state override) */
+    free(r);
+    r = run_layout_ui(ui, 400, 300);
+    CHECK(r != NULL);
+
+    if (r) {
+      CHECK_EQ((unsigned)r[c1].w, 197u);
+      free(r);
+    }
+
+    /* UP still ends the drag and releases the capture */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_UP;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+    CHECK_EQ((unsigned)ev.handled, 1u);
+    CHECK_EQ((unsigned)lk_state_get(st, sp_id, LKS_SPLIT_DRAGGING).as.i, 0u);
+    CHECK_EQ((unsigned)lk_capture_current(ui), 0u);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_split_uncontrolled_drag_emits(void) {
+  /* Default (uncontrolled) splits keep the state write AND emit the
+   * same VALUE_CHANGED notification. */
+  lk_ix sp, c1, c2;
+  lk_ui *ui = make_split_ui_ex(UIK_SPLIT_H, -1, 0, 1, &sp, &c1, &c2);
+  const lk_tree *cur = lk_ui_tree(ui);
+  lk_state *st = lk_ui_state(ui);
+  lk_node_id sp_id = cur->nodes[sp].id;
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("split: uncontrolled drag writes state + emits");
+
+  lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "pane", 0, 0, 0, 0,
+                         "SplitRatio");
+
+  r = run_layout_ui(ui, 400, 300);
+  CHECK(r != NULL);
+
+  if (r) {
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_DOWN;
+    ev.target = lk_hit_test(cur, r, 199, 150);
+    ev.data.pointer.x = 199;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sp;
+    ev.data.pointer.x = 100;
+    ev.data.pointer.y = 150;
+    lk_event_route(ui, &ev);
+
+    CHECK_EQ((int)lk_state_get(st, sp_id, LKS_SPLIT_RATIO).as.i, 248);
+
+    {
+      const lk_command_queue *q = lk_ui_commands(ui);
+
+      CHECK_EQ(q->count, 1);
+
+      if (q->count >= 1) {
+        const lk_command *cmd = &q->cmds[0];
+        lk_str sv;
+
+        CHECK_EQ(cmd->name, lk_intern_id(ui->intern, lk_str_c("SplitRatio")));
+        CHECK_EQ((unsigned)cmd->source_value.tag, (unsigned)UIV_STR);
+        sv = lk_intern_str(ui->intern, cmd->source_value.as.str_id);
+        CHECK(sv.len == 3 && memcmp(sv.ptr, "248", 3) == 0);
+      }
+    }
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_ui_time_ms(void) {
+  /* Backend-stamped monotonic frame time: default 0, set/get
+   * round-trip, NULL-safe.  Core never reads clocks itself. */
+  lk_ui *ui = lk_ui_create(NULL);
+
+  BEGIN_TEST("ui: time_ms default 0, set/get, NULL-safe");
+
+  CHECK_EQ(lk_ui_time_ms(ui), 0u);
+  lk_ui_set_time_ms(ui, 1234u);
+  CHECK_EQ(lk_ui_time_ms(ui), 1234u);
+
+  /* wrap-friendly: the value is stored verbatim */
+  lk_ui_set_time_ms(ui, 0xFFFFFFFFu);
+  CHECK_EQ(lk_ui_time_ms(ui), 0xFFFFFFFFu);
+
+  lk_ui_set_time_ms(NULL, 1u);
+  CHECK_EQ(lk_ui_time_ms(NULL), 0u);
 
   END_TEST();
   lk_ui_destroy(ui);
@@ -12149,6 +12342,9 @@ int main(void) {
   test_split_nested_exact_rects();
   test_split_hit_test_divider_band();
   test_split_drag_sequence();
+  test_split_controlled_drag();
+  test_split_uncontrolled_drag_emits();
+  test_ui_time_ms();
   test_capture_api();
   test_capture_end_frame_gc();
   test_dump_kind_names();

@@ -376,10 +376,16 @@ here:
    is app/producer code (buffer manager, plumb rules as data,
    shell execute, syntax highlighting producer) plus the toolkit
    asks below.
-2. **Multi-view cursor sync** — deliberately HELD until full-weft
-   exists as a real consumer (two panes over one buffer). The
-   substrate (document change protocol, sequential deltas) has
-   been ready since editor stage A; design it against real use.
+2. ~~**Multi-view cursor sync**~~ ✓ (2026-08-04, with weft as the
+   consumer): `ed_on_doc`'s foreign branch transforms cursor +
+   anchor per delta (delete-then-insert, RIGHT bias on insert —
+   the annot-store rules) instead of clamping; only the INVOKING
+   editor's `LK_ED_UNDO`/`LK_ED_REDO` jumps to the replay site
+   (`in_replay`), so undo from another view — or a direct
+   `lk_history_undo` from script — is just a foreign edit to
+   every other view. Rider: history savepoints
+   (`lk_history_mark_saved`/`at_saved` + Lcl bindings) for
+   modified-since-save tracking.
 3. **Lcl ergonomics** (Brennan, in parallel): short-circuit
    `and`/`or`; a pattern package (`packages/lcl-pattern`, for
    plumb-rules-as-data); `catch` lazy-compile (or loud docs);
@@ -392,9 +398,11 @@ here:
    (per-type presentation serialization decision,
    `docs/weft-surface.md` §1.4); tree-sitter as a producer (weft
    repo); output-record/inline-block layout design
-   (`docs/weft-surface.md` §4); cursor blink / time source;
-   column selection; the out-of-core widget registration protocol
-   (`docs/editor.md` §2).
+   (`docs/weft-surface.md` §4); cursor blink (still deferred, but
+   unblocked: the time source landed 2026-08-04 —
+   `lk_ui_set_time_ms`/`lk_ui_time_ms`, SDL-stamped per frame,
+   `lk::time_ms`); column selection; the out-of-core widget
+   registration protocol (`docs/editor.md` §2).
 
 ## Up Next
 

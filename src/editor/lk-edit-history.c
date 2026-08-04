@@ -49,6 +49,12 @@ struct lk_edit_history {
 
   lk_document *doc;
   lk_u32 sub_id;
+
+  /* Savepoint (lk_history_mark_saved): the undo_count at save time.
+   * saved_valid starts 0 and is cleared forever when a recorded
+   * transaction destroys the redo path back to the savepoint. */
+  lk_u32 saved_undo_count;
+  int saved_valid;
 };
 
 /* ---- Entry helpers ---- */
@@ -171,6 +177,7 @@ static void hist_on_change(void *ud, const lk_document *d,
                            const lk_doc_delta *deltas, lk_u32 n) {
   lk_edit_history *h = (lk_edit_history *)ud;
   hist_entry entry;
+  int below_savepoint;
 
   (void)d;
 
@@ -184,6 +191,12 @@ static void hist_on_change(void *ud, const lk_document *d,
     return;
   }
 
+  /* Recording below the savepoint is about to destroy the redo path
+   * back to the saved state (the redo-stack clear below).  Decided
+   * BEFORE the push, applied only if the transaction is actually
+   * recorded — an OOM drop must not touch savepoint state. */
+  below_savepoint = h->saved_valid && h->undo_count < h->saved_undo_count;
+
   if (!hist_entry_copy(h, &entry, deltas, n)) {
     return;
   }
@@ -191,6 +204,10 @@ static void hist_on_change(void *ud, const lk_document *d,
   if (!hist_push(h, &h->undo_stack, &h->undo_count, &h->undo_cap, &entry)) {
     hist_entry_free(h, &entry);
     return;
+  }
+
+  if (below_savepoint) {
+    h->saved_valid = 0;
   }
 
   hist_clear_stack(h, h->redo_stack, &h->redo_count);
@@ -335,4 +352,17 @@ int lk_history_can_undo(const lk_edit_history *h) {
 
 int lk_history_can_redo(const lk_edit_history *h) {
   return h && h->redo_count > 0;
+}
+
+void lk_history_mark_saved(lk_edit_history *h) {
+  if (!h) {
+    return;
+  }
+
+  h->saved_undo_count = h->undo_count;
+  h->saved_valid = 1;
+}
+
+int lk_history_at_saved(const lk_edit_history *h) {
+  return h && h->saved_valid && h->undo_count == h->saved_undo_count;
 }

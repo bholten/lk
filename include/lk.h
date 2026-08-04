@@ -148,6 +148,17 @@ typedef enum lk_prop_key {
                 UIP_SPLIT_RATIO.  An unmatched value falls back to
                 index 0. */
 
+  UIP_SPLIT_CONTROLLED, /* i32 0/1 (default 0): app-controlled split
+                           ratio.  When nonzero, dragging never
+                           writes LKS_SPLIT_RATIO state -- the
+                           divider emits LK_EVENT_VALUE_CHANGED (the
+                           clamped per-mille ratio as a decimal
+                           string) and the app re-supplies
+                           UIP_SPLIT_RATIO each frame from its own
+                           model (one-frame divider lag accepted).
+                           Uncontrolled splits keep the state write
+                           AND emit the same event. */
+
   UIP__COUNT
 } lk_prop_key;
 
@@ -833,6 +844,13 @@ typedef struct lk_ui {
    * queries like click-to-position.  NULL disables those behaviors. */
   const struct lk_text_backend *text;
 
+  /* Monotonic frame time in milliseconds, stamped by the backend once
+   * per frame via lk_ui_set_time_ms (the SDL run loop does).  Core
+   * never reads clocks itself; 0 until a backend stamps it.  Wraps at
+   * 2^32 — compare durations with subtraction (now - then), never
+   * with an ordering test. */
+  lk_u32 time_ms;
+
   /* Overlay stack — topmost is last.  Persists across frames;
    * lk_ui_end_frame pops overlays whose owner node was removed. */
   lk_overlay *overlays;
@@ -1088,6 +1106,16 @@ const lk_text_backend *lk_text_backend_stub(void);
  * pass the same backend they put in lk_layout_cfg.text; the SDL run
  * loop does this automatically.  NULL disables click-to-position. */
 void lk_ui_set_text_backend(lk_ui *ui, const lk_text_backend *text);
+
+/* Stamp the monotonic frame time in milliseconds.  Called by the
+ * backend once per frame (the SDL run loop stamps SDL_GetTicks at the
+ * top of the loop, next to lk_ui_clear_commands); core never reads
+ * clocks itself.  The value wraps at 2^32 — callers compare durations
+ * with subtraction (now - then), never with an ordering test. */
+void lk_ui_set_time_ms(lk_ui *ui, lk_u32 ms);
+
+/* The last stamped frame time (0 before the first stamp). */
+lk_u32 lk_ui_time_ms(const lk_ui *ui);
 
 /* Convenience: layout with stub text measurer (for bindings). */
 int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,

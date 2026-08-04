@@ -73,11 +73,11 @@ transactions and change sets, multi-subscriber change notification,
 a command layer beneath event handling, an anchored viewport, and
 self-contained render-list text storage.
 
-**v1 defers** (§13): wrapping, column/block selection, cursor blink,
-IME composition display, tree-sitter, annotation persistence,
-search/goto UI (app-level composition of existing widgets — weft's
-`pane.c` dialogs do not port), full multi-view cursor sync (its
-substrate — the change protocol — does ship).
+**v1 defers** (§13): wrapping (since landed — docs/editor-wrap.md),
+column/block selection, cursor blink, IME composition display,
+tree-sitter, annotation persistence, search/goto UI (app-level
+composition of existing widgets — weft's `pane.c` dialogs do not
+port), full multi-view cursor sync (since landed 2026-08-04 — §13).
 
 
 ## 2. Module and header layout
@@ -144,7 +144,7 @@ The revision counter answers "is this different?"; it cannot answer
 "what changed and how should anchored state move?" — which the annot
 store, other views, cursors, persistence, tree-sitter, and search
 results all need. So mutation is transactional and observable from
-day one, even though multi-view sync itself is deferred:
+day one (multi-view sync, deferred at the time, now rides it — §13):
 
 ```c
 typedef struct lk_doc_delta {
@@ -257,10 +257,16 @@ int lk_history_can_redo(const lk_edit_history *h);
   `LK_ORIGIN_UNDO`/`LK_ORIGIN_REDO` — so it flows to every observer
   through the same protocol as any edit. There is no separate
   "undo happened" channel and no returned cursor position: the
-  invoking view derives its new cursor from the deltas it receives
-  as a subscriber (v1 rule: cursor to the end of the last inserted
-  range, start of the last deleted one). This replaces v1-draft's
-  too-narrow `lk_doc_undo(d, &pos)`.
+  INVOKING view (the editor whose `LK_ED_UNDO`/`LK_ED_REDO` ran,
+  tracked by its `in_replay` flag) derives its new cursor from the
+  deltas it receives as a subscriber (cursor to the end of the last
+  inserted range, start of the last deleted one); every OTHER view
+  over the same document treats the replay as a foreign edit and
+  transforms its cursor/selection per delta (multi-view rule,
+  2026-08-04 — the original v1 pin moved every view to the replay
+  site, written when one view existed). A replay with no invoking
+  editor (direct `lk_history_undo` from script) transforms ALL
+  views. This replaces v1-draft's too-narrow `lk_doc_undo(d, &pos)`.
 - History does not record its own replays (origin-filtered), and
   clears the redo stack on a foreign committed transaction, the
   standard bargain.
@@ -471,8 +477,9 @@ presentation context — is a future step the enum does not block.)
   which the no-interning rule forbids — and the change protocol
   (§3.2) is the strictly better signal. Hosts subscribe to the
   document.
-- Blink: deferred; steady cursor (lk has no time source — candidate
-  `lk_ui_set_time_ms` when animations also want one).
+- Blink: still deferred (steady cursor), but unblocked — the time
+  source landed 2026-08-04: `lk_ui_set_time_ms`/`lk_ui_time_ms`
+  (monotonic ms, backend-stamped once per frame, wraps at 2^32).
 
 
 ## 8. Self-contained rendering (`LK_ROP_DRAW_RUN`, stage B)
@@ -659,12 +666,12 @@ ordinary panes — not one gigantic magical widget.
 |---|---|
 | text wrapping | **landed 2026-07-28** (docs/editor-wrap.md; W1 e02bf4e wrap engine + horizontal scroll, W2 bindings/example/docs) — pixel wrap through the text contract, wrap-mode enum defaulting to NONE, visual-row `LK_ED_MOVE_ROW_START/END`, byte-anchored viewport |
 | column/block selection | editor state + multi-rect selection render; no core change |
-| cursor blink | needs a time source; candidate `lk_ui_set_time_ms` when animation wants one too |
+| cursor blink | still deferred, but the time source landed 2026-08-04 (`lk_ui_set_time_ms`/`lk_ui_time_ms`, SDL-stamped per frame) — blink is now a widget-render decision |
 | IME composition display | preedit events + underline; SDL backend stage (`SDL_SetTextInputArea` is already focus-driven) |
 | tree-sitter | span producer over the annot store; zero widget changes |
 | annotation persistence | `annot_persist.c` lift (1240 lines) after the store proves out |
 | search/goto/prompt UI | app-level: `text_input` + overlay + translators; weft `pane.c` superseded, not ported (Ctrl+G goto-line is now running proof in `examples/editor-dsl.lcl`) |
-| multi-view cursor sync | views' document subscriptions adjust cursors on foreign deltas — protocol ships in stage A, policy later |
+| multi-view cursor sync | **landed 2026-08-04** — `ed_on_doc` transforms cursor + anchor per foreign delta (delete-then-insert, RIGHT bias, annot-store rules); only the invoking editor's UNDO/REDO jumps to the replay site (`in_replay`), other views transform |
 | position markers (bias'd cursors) | generalize the annot store's anchors into a shared marker facility when a second client (search results) exists |
 | editor keybindings as data | command layer is the substrate; a binding table replaces the switch when Lcl-configurable keymaps arrive |
 | widget-registration protocol upgrade | editor dogfoods it when out-of-core widgets need theme/DSL/resource registration |

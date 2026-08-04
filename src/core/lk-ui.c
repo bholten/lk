@@ -729,6 +729,22 @@ void lk_ui_set_text_backend(lk_ui *ui, const lk_text_backend *text) {
   ui->text = text;
 }
 
+void lk_ui_set_time_ms(lk_ui *ui, lk_u32 ms) {
+  if (!ui) {
+    return;
+  }
+
+  ui->time_ms = ms;
+}
+
+lk_u32 lk_ui_time_ms(const lk_ui *ui) {
+  if (!ui) {
+    return 0;
+  }
+
+  return ui->time_ms;
+}
+
 void lk_ui_resolve_styles(lk_ui *ui) {
   const lk_tree *t;
   lk_u32 nc;

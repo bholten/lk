@@ -1,7 +1,7 @@
 /*
  * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
  *
- * Exposes 76 procs in the "lk" namespace (70 core + 6 SDL) for
+ * Exposes 80 procs in the "lk" namespace (74 core + 6 SDL) for
  * building UI trees, managing frames, commands, translators, state,
  * focus, overlays, interning, windows/fonts, the editor track
  * (documents, edit histories, editors, annotation stores), and range
@@ -79,6 +79,7 @@ static const str_enum prop_table[] = {
     {"hidden",      UIP_HIDDEN     },
     {"tooltip",     UIP_TOOLTIP    },
     {"split_ratio", UIP_SPLIT_RATIO},
+    {"split_controlled", UIP_SPLIT_CONTROLLED},
     {"editor",      UIP_EDITOR     },
     {"grow",        UIP_GROW       },
     {"value",       UIP_VALUE      },
@@ -856,7 +857,8 @@ static int c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   case UIP_H:
   case UIP_PADDING:
   case UIP_GAP:
-  case UIP_SPLIT_RATIO: {
+  case UIP_SPLIT_RATIO:
+  case UIP_SPLIT_CONTROLLED: {
     long i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
       lcl_set_error(interp, "lk::prop: numeric prop expects integer");
@@ -1688,6 +1690,57 @@ static int c_lk_focus_clear(lcl_interp *interp, int argc, lcl_value **argv,
   lk_focus_clear(ui);
 
   *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::focus_get [ui] -> focused node's id string, "" when none */
+static int c_lk_focus_get(lcl_interp *interp, int argc, lcl_value **argv,
+                          lcl_value **out) {
+  lk_ui *ui;
+  const char *id_str = NULL;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::focus_get: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
+    lcl_set_error(interp, "lk::focus_get: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  if (ui->focused_id != 0) {
+    id_str = lk_intern_cstr(ui->intern, ui->focused_id);
+  }
+
+  *out = lcl_string_new(id_str ? id_str : "");
+
+  return LCL_RC_OK;
+}
+
+/* lk::time_ms [ui] -> int: monotonic frame time in ms, stamped by the
+ * backend once per frame (0 until a backend stamps it; wraps at
+ * 2^32). */
+static int c_lk_time_ms(lcl_interp *interp, int argc, lcl_value **argv,
+                        lcl_value **out) {
+  lk_ui *ui;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::time_ms: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK) {
+    lcl_set_error(interp, "lk::time_ms: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_ui_time_ms(ui));
 
   return LCL_RC_OK;
 }
@@ -3719,6 +3772,51 @@ static int c_lk_history_can_redo(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
+/* lk::history_mark_saved [hist] -> "" */
+static int c_lk_history_mark_saved(lcl_interp *interp, int argc,
+                                   lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_history *hw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::history_mark_saved: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = get_history(interp, argv[0]);
+
+  if (!hw) {
+    return LCL_RC_ERR;
+  }
+
+  lk_history_mark_saved(hw->hist);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::history_at_saved [hist] -> 0/1 */
+static int c_lk_history_at_saved(lcl_interp *interp, int argc,
+                                 lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_history *hw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::history_at_saved: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  hw = get_history(interp, argv[0]);
+
+  if (!hw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_history_at_saved(hw->hist));
+
+  return LCL_RC_OK;
+}
+
 /* ============================================================================
  * Editor track: editors (8)
  * ============================================================================
@@ -5210,6 +5308,10 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def(ns, "focus_set", lcl_c_proc_new("lk::focus_set", c_lk_focus_set));
   lcl_ns_def(ns, "focus_clear",
              lcl_c_proc_new("lk::focus_clear", c_lk_focus_clear));
+  lcl_ns_def(ns, "focus_get", lcl_c_proc_new("lk::focus_get", c_lk_focus_get));
+
+  /* Time */
+  lcl_ns_def(ns, "time_ms", lcl_c_proc_new("lk::time_ms", c_lk_time_ms));
 
   /* Overlays */
   lcl_ns_def(ns, "overlay_count",
@@ -5274,6 +5376,10 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::history_can_undo", c_lk_history_can_undo));
   lcl_ns_def(ns, "history_can_redo",
              lcl_c_proc_new("lk::history_can_redo", c_lk_history_can_redo));
+  lcl_ns_def(ns, "history_mark_saved",
+             lcl_c_proc_new("lk::history_mark_saved", c_lk_history_mark_saved));
+  lcl_ns_def(ns, "history_at_saved",
+             lcl_c_proc_new("lk::history_at_saved", c_lk_history_at_saved));
 
   /* Editors */
   lcl_ns_def(ns, "editor_new",

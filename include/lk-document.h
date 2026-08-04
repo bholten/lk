@@ -157,6 +157,18 @@ int lk_history_redo(lk_edit_history *h, lk_document *d);
 int lk_history_can_undo(const lk_edit_history *h);
 int lk_history_can_redo(const lk_edit_history *h);
 
+/* Savepoint: remember the current history position as "saved" (e.g.
+ * when the buffer is written to disk) and ask whether the document is
+ * back at exactly that position.  at_saved returns 1 only while a
+ * savepoint is set and the undo position equals it (undoing back to
+ * the savepoint or redoing forward onto it both count).  Recording a
+ * new transaction while the position is BELOW the savepoint destroys
+ * the redo path back to the saved state, so the savepoint is then
+ * invalidated forever; recording at or above it keeps it reachable
+ * via undo.  A fresh history has no savepoint (at_saved is 0). */
+void lk_history_mark_saved(lk_edit_history *h);
+int lk_history_at_saved(const lk_edit_history *h);
+
 #ifdef __cplusplus
 }
 #endif

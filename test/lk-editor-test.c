@@ -2451,6 +2451,215 @@ static void test_hscroll_wheel(void) {
   END_TEST();
 }
 
+/* ================================================================
+ * (h) multi-view: two editors over one document.  Foreign
+ * transactions (anything a view did not initiate, including undo /
+ * redo invoked elsewhere) transform the other view's cursor and
+ * selection per delta — delete first, then insert, RIGHT bias on
+ * insert — instead of clamping.  Only the INVOKING editor's
+ * LK_ED_UNDO/REDO jumps to the replay site.
+ * ================================================================ */
+
+typedef struct ed2_fix {
+  lk_document *doc;
+  lk_edit_history *hist;
+  lk_editor *ea, *eb;
+} ed2_fix;
+
+static void ed2_init(ed2_fix *f, const char *text) {
+  f->doc = lk_doc_from_str(NULL, NULL, NULL, text, (lk_u32)strlen(text));
+  f->hist = lk_history_new(NULL, NULL, NULL);
+  lk_history_attach(f->hist, f->doc);
+  f->ea = lk_editor_new(NULL, NULL, NULL, f->doc, f->hist);
+  f->eb = lk_editor_new(NULL, NULL, NULL, f->doc, f->hist);
+}
+
+static void ed2_destroy(ed2_fix *f) {
+  lk_editor_destroy(f->eb);
+  lk_editor_destroy(f->ea);
+  lk_history_destroy(f->hist);
+  lk_doc_destroy(f->doc);
+}
+
+static void ed2_setcur(lk_editor *e, lk_u32 pos, int extend) {
+  lk_editor_cmd_arg a;
+
+  memset(&a, 0, sizeof(a));
+  a.set_cursor.pos = pos;
+  a.set_cursor.extend = extend;
+  lk_editor_command(e, NULL, LK_ED_SET_CURSOR, &a);
+}
+
+static void ed2_insert(lk_editor *e, const char *text) {
+  lk_editor_cmd_arg a;
+
+  memset(&a, 0, sizeof(a));
+  a.text.ptr = text;
+  a.text.len = (lk_u32)strlen(text);
+  lk_editor_command(e, NULL, LK_ED_INSERT_TEXT, &a);
+}
+
+static void test_multiview_foreign_insert(void) {
+  ed2_fix f;
+
+  BEGIN_TEST("multiview: foreign insert before/at/after cursor");
+
+  ed2_init(&f, "hello world");
+  ed2_setcur(f.ea, 3, 0);
+  ed2_setcur(f.eb, 8, 0);
+
+  /* insert between the cursors: only the one after shifts */
+  CHECK(lk_doc_insert(f.doc, 5, "XX", 2));
+  CHECK_EQ(lk_editor_cursor(f.ea), 3);
+  CHECK_EQ(lk_editor_cursor(f.eb), 10);
+
+  /* insert exactly AT a cursor: RIGHT bias shifts it past the
+   * inserted bytes */
+  CHECK(lk_doc_insert(f.doc, 10, "Z", 1));
+  CHECK_EQ(lk_editor_cursor(f.ea), 3);
+  CHECK_EQ(lk_editor_cursor(f.eb), 11);
+
+  /* insert after both: neither moves */
+  CHECK(lk_doc_insert(f.doc, 14, "!", 1));
+  CHECK_EQ(lk_editor_cursor(f.ea), 3);
+  CHECK_EQ(lk_editor_cursor(f.eb), 11);
+
+  ed2_destroy(&f);
+  END_TEST();
+}
+
+static void test_multiview_foreign_delete(void) {
+  ed2_fix f;
+
+  BEGIN_TEST("multiview: foreign delete shifts/collapses cursor");
+
+  ed2_init(&f, "abcdefghij");
+  ed2_setcur(f.ea, 2, 0);
+  ed2_setcur(f.eb, 8, 0);
+
+  /* delete [4,7): before-range cursor unchanged, after-range shifts */
+  CHECK(lk_doc_delete(f.doc, 4, 3));
+  CHECK_EQ(lk_editor_cursor(f.ea), 2);
+  CHECK_EQ(lk_editor_cursor(f.eb), 5);
+
+  /* delete [4,6) spanning eb's cursor (5): collapses to the delete
+   * start */
+  CHECK(lk_doc_delete(f.doc, 4, 2));
+  CHECK_EQ(lk_editor_cursor(f.ea), 2);
+  CHECK_EQ(lk_editor_cursor(f.eb), 4);
+
+  ed2_destroy(&f);
+  END_TEST();
+}
+
+static void test_multiview_selection_transform(void) {
+  ed2_fix f;
+  lk_u32 s, e;
+
+  BEGIN_TEST("multiview: selection transforms and collapses");
+
+  ed2_init(&f, "hello world");
+
+  /* eb selects "world" [6,11) */
+  ed2_setcur(f.eb, 6, 0);
+  ed2_setcur(f.eb, 11, 1);
+  CHECK(lk_editor_selection(f.eb, &s, &e) == 1);
+  CHECK_EQ(s, 6);
+  CHECK_EQ(e, 11);
+
+  /* foreign insert before the selection shifts both ends */
+  CHECK(lk_doc_insert(f.doc, 0, "AB", 2));
+  CHECK(lk_editor_selection(f.eb, &s, &e) == 1);
+  CHECK_EQ(s, 8);
+  CHECK_EQ(e, 13);
+
+  /* foreign delete of exactly the selected range collapses the
+   * selection (anchor == cursor -> no selection) */
+  CHECK(lk_doc_delete(f.doc, 8, 5));
+  CHECK(lk_editor_selection(f.eb, &s, &e) == 0);
+  CHECK_EQ(lk_editor_cursor(f.eb), 8);
+
+  ed2_destroy(&f);
+  END_TEST();
+}
+
+static void test_multiview_undo_invoker_jumps(void) {
+  ed2_fix f;
+
+  BEGIN_TEST("multiview: LK_ED_UNDO jumps invoker, B transforms");
+
+  ed2_init(&f, "abcdef");
+
+  /* ea appends "XYZ" at 6 */
+  ed2_setcur(f.ea, 6, 0);
+  ed2_insert(f.ea, "XYZ");
+  CHECK_EQ(lk_editor_cursor(f.ea), 9);
+
+  ed2_setcur(f.eb, 2, 0);
+
+  /* undo through ea's command verb: ea jumps to the replay site (the
+   * delete's start, 6); eb sees a foreign delete after its cursor and
+   * stays put (the old v1 rule would have yanked it to 6 too). */
+  CHECK(lk_editor_command(f.ea, NULL, LK_ED_UNDO, NULL) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ea), 6);
+  CHECK_EQ(lk_editor_cursor(f.eb), 2);
+
+  /* redo through ea: ea jumps to end of re-inserted range; eb still
+   * untouched */
+  CHECK(lk_editor_command(f.ea, NULL, LK_ED_REDO, NULL) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ea), 9);
+  CHECK_EQ(lk_editor_cursor(f.eb), 2);
+
+  ed2_destroy(&f);
+  END_TEST();
+}
+
+static void test_multiview_direct_undo_transforms_both(void) {
+  ed2_fix f;
+
+  BEGIN_TEST("multiview: direct history undo transforms both");
+
+  ed2_init(&f, "abcdef");
+
+  ed2_setcur(f.ea, 6, 0);
+  ed2_insert(f.ea, "XYZ"); /* doc "abcdefXYZ", ea cursor 9 */
+  ed2_setcur(f.ea, 0, 0);  /* move ea away from the edit site */
+  ed2_setcur(f.eb, 2, 0);
+
+  /* lk_history_undo with no invoking editor (script path): NO view
+   * jumps — the replay is a foreign delete [6,9) to both, and both
+   * cursors are before it. */
+  CHECK_EQ(lk_history_undo(f.hist, f.doc), 1);
+  CHECK_EQ(lk_editor_cursor(f.ea), 0);
+  CHECK_EQ(lk_editor_cursor(f.eb), 2);
+
+  ed2_destroy(&f);
+  END_TEST();
+}
+
+static void test_multiview_viewport_transform_intact(void) {
+  ed2_fix f;
+
+  BEGIN_TEST("multiview: viewport anchor transform intact");
+
+  ed2_init(&f, "aaa\nbbb\nccc\n");
+
+  /* Fresh viewports anchor at 0; a foreign insert at 0 shifts the
+   * anchor past the inserted bytes (pinned RIGHT affinity) in BOTH
+   * views — the viewport transform runs before (and independent of)
+   * the cursor branch. */
+  CHECK(lk_doc_insert(f.doc, 0, "zz\n", 3));
+  CHECK_EQ(lk_editor_get_viewport(f.ea).top_byte, 3);
+  CHECK_EQ(lk_editor_get_viewport(f.eb).top_byte, 3);
+
+  /* cursors (both at 0) also shifted right */
+  CHECK_EQ(lk_editor_cursor(f.ea), 3);
+  CHECK_EQ(lk_editor_cursor(f.eb), 3);
+
+  ed2_destroy(&f);
+  END_TEST();
+}
+
 /* ---- runner ---- */
 
 void lk_editor_run_tests(void) {
@@ -2527,4 +2736,12 @@ void lk_editor_run_tests(void) {
   test_wrap_scroll_extent_estimator();
   test_hscroll_follow_cursor();
   test_hscroll_wheel();
+
+  printf("\nlk editor multi-view tests:\n");
+  test_multiview_foreign_insert();
+  test_multiview_foreign_delete();
+  test_multiview_selection_transform();
+  test_multiview_undo_invoker_jumps();
+  test_multiview_direct_undo_transforms_both();
+  test_multiview_viewport_transform_intact();
 }

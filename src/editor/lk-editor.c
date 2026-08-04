@@ -131,6 +131,11 @@ struct lk_editor {
   int drag;
   lk_u32 tab_size;
   int in_command; /* inside one of our own doc transactions */
+  int in_replay;  /* inside a history replay THIS editor invoked
+                     (LK_ED_UNDO/REDO) -- ed_on_doc jumps the cursor
+                     to the replay site only for the invoking view;
+                     every other view treats the replay as a foreign
+                     edit and transforms */
   int pending_scroll;
   lk_i32 scroll_x; /* horizontal scroll px; forced 0 while wrapping */
 
@@ -1472,11 +1477,13 @@ static void ed_on_doc(void *ud, const lk_document *d,
     e->span_rev = deltas[n - 1].after;
   }
 
-  if (deltas[0].origin == LK_ORIGIN_UNDO ||
-      deltas[0].origin == LK_ORIGIN_REDO) {
-    /* Derive the cursor from the replay (docs/editor.md section 4):
-     * end of the last inserted range, start of the last deleted
-     * one. */
+  if ((deltas[0].origin == LK_ORIGIN_UNDO ||
+       deltas[0].origin == LK_ORIGIN_REDO) &&
+      e->in_replay) {
+    /* The replay THIS editor invoked: derive the cursor from it
+     * (docs/editor.md section 4): end of the last inserted range,
+     * start of the last deleted one.  Other views over the same
+     * document take the foreign-transform branch below. */
     const lk_doc_delta *last = &deltas[n - 1];
 
     e->cursor = last->inserted_len ? last->start + last->inserted_len
@@ -1485,18 +1492,56 @@ static void ed_on_doc(void *ud, const lk_document *d,
     e->sticky_x = ED_STICKY_NONE;
     e->pending_scroll = 1;
   } else if (!e->in_command) {
-    /* Foreign transaction we did not initiate: clamp cursor,
-     * selection, and viewport to the new document (full foreign-edit
-     * position adjustment is deferred). */
-    lk_u32 len = lk_doc_len(d);
+    /* Foreign transaction we did not initiate (including undo/redo
+     * invoked from another view or from script): transform cursor
+     * and anchor per delta in sequential order — delete first, then
+     * insert, the annot-store position rules with RIGHT bias on
+     * insert (matching the viewport affinity pinned in
+     * include/lk-editor.h). */
+    lk_u32 di;
 
-    e->cursor = ed_snap(d, e->cursor);
+    for (di = 0; di < n; di++) {
+      lk_u32 p = deltas[di].start;
+      lk_u32 dl = deltas[di].deleted_len;
+      lk_u32 il = deltas[di].inserted_len;
 
-    if (e->anchor != ED_NO_ANCHOR && e->anchor > len) {
-      e->anchor = len;
+      if (dl > 0) {
+        if (e->cursor >= p + dl) {
+          e->cursor -= dl;
+        } else if (e->cursor > p) {
+          e->cursor = p;
+        }
+
+        if (e->anchor != ED_NO_ANCHOR) {
+          if (e->anchor >= p + dl) {
+            e->anchor -= dl;
+          } else if (e->anchor > p) {
+            e->anchor = p;
+          }
+        }
+      }
+
+      if (il > 0) {
+        if (e->cursor >= p) {
+          e->cursor += il; /* RIGHT bias */
+        }
+
+        if (e->anchor != ED_NO_ANCHOR && e->anchor >= p) {
+          e->anchor += il;
+        }
+      }
+    }
+
+    /* A selection collapsed by the transform is no selection. */
+    if (e->anchor == e->cursor) {
+      e->anchor = ED_NO_ANCHOR;
     }
 
     e->sticky_x = ED_STICKY_NONE;
+
+    /* Positions from the transform are byte-exact, but the codepoint
+     * boundary snap is a cheap invariant worth keeping. */
+    e->cursor = ed_snap(d, e->cursor);
   }
 
   if (e->vp.top_byte > lk_doc_len(d)) {
@@ -2246,19 +2291,35 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
     return ed_insert(e, cmd, clip, (lk_u32)strlen(clip));
   }
 
-  case LK_ED_UNDO:
+  case LK_ED_UNDO: {
+    int ok;
+
     if (!e->hist) {
       return 0;
     }
 
-    return lk_history_undo(e->hist, e->doc);
+    /* in_replay marks this editor as the invoking view: its ed_on_doc
+     * jumps to the replay site; other views transform (foreign). */
+    e->in_replay = 1;
+    ok = lk_history_undo(e->hist, e->doc);
+    e->in_replay = 0;
 
-  case LK_ED_REDO:
+    return ok;
+  }
+
+  case LK_ED_REDO: {
+    int ok;
+
     if (!e->hist) {
       return 0;
     }
 
-    return lk_history_redo(e->hist, e->doc);
+    e->in_replay = 1;
+    ok = lk_history_redo(e->hist, e->doc);
+    e->in_replay = 0;
+
+    return ok;
+  }
 
   case LK_ED_SET_CURSOR: {
     lk_u32 pos;

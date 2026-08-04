@@ -15,6 +15,13 @@
  * The first pane is clamped to >= MIN_PANE px on the split axis
  * whenever the axis is big enough for both panes to keep it.
  *
+ * Every drag MOVE emits a synthetic LK_EVENT_VALUE_CHANGED targeting
+ * the split node whose payload is the clamped per-mille ratio as a
+ * decimal string (the text-input/dropdown channel).  With
+ * UIP_SPLIT_CONTROLLED nonzero the state write is suppressed
+ * entirely: the app owns the ratio and re-supplies UIP_SPLIT_RATIO
+ * each frame from its own model.
+ *
  * Degradation: one visible child fills the whole content rect; zero
  * children renders background only; children beyond the first two are
  * ignored (their rects are zeroed).
@@ -28,6 +35,7 @@
  * from ancestors.  Without a geom scratch dragging is disabled.
  */
 
+#include <stdio.h>
 #include <string.h>
 
 #include "lk-memory.h"
@@ -483,7 +491,27 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
       ratio = 1000;
     }
 
-    lk_state_set(st, nid, LKS_SPLIT_RATIO, lk_v_i32(ratio));
+    /* Notify the app: the clamped per-mille ratio as a decimal
+     * string, on the same synthetic VALUE_CHANGED channel text
+     * inputs and dropdowns use (enqueued, drained after the
+     * originating event finishes its tiers). */
+    {
+      char buf[16];
+      lk_event vev;
+
+      sprintf(buf, "%d", (int)ratio);
+      memset(&vev, 0, sizeof(vev));
+      vev.type = LK_EVENT_VALUE_CHANGED;
+      vev.target = n;
+      vev.data.value_changed.str_id = lk_intern_cid(ui->intern, buf);
+      lk_event_enqueue(ui, &vev);
+    }
+
+    /* Controlled split: the app owns the ratio — no state write; it
+     * re-supplies UIP_SPLIT_RATIO each frame from its own model. */
+    if (!lk_node_prop_i32(t, n, UIP_SPLIT_CONTROLLED, 0)) {
+      lk_state_set(st, nid, LKS_SPLIT_RATIO, lk_v_i32(ratio));
+    }
 
     return 1;
   }
