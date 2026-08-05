@@ -4851,6 +4851,98 @@ static int c_lk_annot_meta(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
+/* lk::annot_layer [store, id] -> the record's layer name; error if
+ * the record is gone. */
+static int c_lk_annot_layer(lcl_interp *interp, int argc, lcl_value **argv,
+                            lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long id;
+  const lk_annot_record *rec;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::annot_layer: expected 2 arguments (store, id)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
+    lcl_set_error(interp, "lk::annot_layer: id must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  rec = lk_annot_get(aw->store, (lk_u32)id);
+
+  if (!rec) {
+    lcl_set_error(interp, "lk::annot_layer: no such annotation");
+
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_string_new(rec->layer);
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_meta_all [store, id] -> dict of every metadata key/value
+ * on the record (empty dict when it has none); error if the record is
+ * gone.  The single-key lk::annot_meta stays for point reads. */
+static int c_lk_annot_meta_all(lcl_interp *interp, int argc, lcl_value **argv,
+                               lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  long id;
+  const lk_annot_record *rec;
+  lcl_value *d;
+  lk_u32 i;
+
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "lk::annot_meta_all: expected 2 arguments (store, id)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
+    lcl_set_error(interp, "lk::annot_meta_all: id must be an integer");
+
+    return LCL_RC_ERR;
+  }
+
+  rec = lk_annot_get(aw->store, (lk_u32)id);
+
+  if (!rec) {
+    lcl_set_error(interp, "lk::annot_meta_all: no such annotation");
+
+    return LCL_RC_ERR;
+  }
+
+  d = lcl_dict_new();
+
+  for (i = 0; i < rec->meta_count; i++) {
+    lcl_value *v = lcl_string_new(rec->values[i]);
+
+    lcl_dict_put(&d, rec->keys[i], v);
+    lcl_ref_dec(v);
+  }
+
+  *out = d;
+
+  return LCL_RC_OK;
+}
+
 /* Marshal a query's ids into an Lcl list (frees nothing). */
 static lcl_value *annot_query_to_list(const lk_annot_query *q) {
   lcl_value *list = lcl_list_new();
@@ -5410,6 +5502,10 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::annot_span", c_lk_annot_span));
   lcl_ns_def(ns, "annot_meta",
              lcl_c_proc_new("lk::annot_meta", c_lk_annot_meta));
+  lcl_ns_def(ns, "annot_meta_all",
+             lcl_c_proc_new("lk::annot_meta_all", c_lk_annot_meta_all));
+  lcl_ns_def(ns, "annot_layer",
+             lcl_c_proc_new("lk::annot_layer", c_lk_annot_layer));
   lcl_ns_def(ns, "annot_in_range",
              lcl_c_proc_new("lk::annot_in_range", c_lk_annot_in_range));
   lcl_ns_def(ns, "annot_at", lcl_c_proc_new("lk::annot_at", c_lk_annot_at));

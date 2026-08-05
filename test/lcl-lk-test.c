@@ -3624,6 +3624,18 @@ static void test_annot_store_basics(void) {
   /* Absent meta key reads as "" (the record still exists). */
   check_str(interp, "lk::annot_meta $s $a missing", "");
 
+  /* annot_meta_all: every pair as a dict. */
+  check_int(interp, "len [lk::annot_meta_all $s $a]", 2);
+  check_str(interp, "get [lk::annot_meta_all $s $a] kind", "word");
+  check_str(interp, "get [lk::annot_meta_all $s $a] note", "greeting");
+  eval_expect_err(interp, "lk::annot_meta_all $s 999", "no such annotation",
+                  NULL, NULL);
+
+  /* annot_layer: the record's layer name. */
+  check_str(interp, "lk::annot_layer $s $a", "marks");
+  eval_expect_err(interp, "lk::annot_layer $s 999", "no such annotation",
+                  NULL, NULL);
+
   lcl_interp_free(interp);
   END_TEST();
 }
