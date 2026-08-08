@@ -800,6 +800,53 @@ static void test_cmd_clipboard(void) {
   END_TEST();
 }
 
+static void test_cmd_readonly_policy(void) {
+  ed_fix f;
+
+  BEGIN_TEST("ed cmd: read-only rejects user mutations");
+
+  fix_init(&f, "hello", 400, 80);
+  lk_ui_set_clipboard(f.ui, clip_get, clip_set, NULL);
+  g_clip[0] = '\0';
+
+  CHECK(lk_editor_editable(f.ed) == 1);
+
+  lk_editor_set_editable(f.ed, 0);
+  CHECK(lk_editor_editable(f.ed) == 0);
+
+  /* every user mutation is rejected and the document is untouched */
+  CHECK(cmd_ins(&f, "x") == 0);
+  CHECK(cmd0(&f, LK_ED_DELETE_BACKWARD) == 0);
+  CHECK(cmd0(&f, LK_ED_DELETE_FORWARD) == 0);
+  CHECK(cmd0(&f, LK_ED_DELETE_WORD_BACKWARD) == 0);
+  CHECK(cmd0(&f, LK_ED_DELETE_WORD_FORWARD) == 0);
+  CHECK(cmd0(&f, LK_ED_CUT) == 0);
+  CHECK(cmd0(&f, LK_ED_PASTE) == 0);
+  CHECK(cmd0(&f, LK_ED_UNDO) == 0);
+  CHECK(cmd0(&f, LK_ED_REDO) == 0);
+  CHECK(doc_is(f.doc, "hello"));
+
+  /* motion, selection, and copy still work */
+  CHECK(cmd_move(&f, LK_ED_MOVE_RIGHT, 0) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 1);
+  CHECK(cmd0(&f, LK_ED_SELECT_ALL) == 1);
+  CHECK(cmd0(&f, LK_ED_COPY) == 1);
+
+  /* document-level edits are NOT gated: read-only is an editor
+   * policy, so programmatic refresh keeps working */
+  lk_doc_insert(f.doc, 0, "z", 1);
+  CHECK(doc_is(f.doc, "zhello"));
+
+  /* re-enable and mutate again */
+  lk_editor_set_editable(f.ed, 1);
+  lk_editor_set_cursor(f.ed, 0);
+  CHECK(cmd_ins(&f, "a") == 1);
+  CHECK(doc_is(f.doc, "azhello"));
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
 /* ================================================================
  * (b) event tier
  * ================================================================ */
@@ -2899,6 +2946,7 @@ void lk_editor_run_tests(void) {
   test_cmd_page_fallback_null_ui();
   test_cmd_set_cursor_snaps();
   test_cmd_clipboard();
+  test_cmd_readonly_policy();
 
   printf("\nlk editor event-tier tests:\n");
   test_event_typing();

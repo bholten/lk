@@ -129,6 +129,7 @@ struct lk_editor {
   lk_i32 sticky_x; /* ED_STICKY_NONE = unset; x within the VISUAL ROW */
   lk_editor_viewport vp;
   int drag;
+  int editable; /* read-only policy gates USER mutations only */
   lk_u32 tab_size;
   int in_command; /* inside one of our own doc transactions */
   int in_replay;  /* inside a history replay THIS editor invoked
@@ -1607,6 +1608,7 @@ lk_editor *lk_editor_new(void *(*alloc)(void *, lk_u32),
   e->hist = hist;
   e->anchor = ED_NO_ANCHOR;
   e->sticky_x = ED_STICKY_NONE;
+  e->editable = 1;
   e->tab_size = ED_TAB_SIZE;
   e->line_h = ED_FALLBACK_LINE_H;
   e->space_adv = ED_FALLBACK_ADVANCE;
@@ -1712,6 +1714,16 @@ void lk_editor_scroll_to_cursor(lk_editor *e) {
 
 lk_u32 lk_editor_tab_size(const lk_editor *e) {
   return e ? e->tab_size : ED_TAB_SIZE;
+}
+
+void lk_editor_set_editable(lk_editor *e, int on) {
+  if (e) {
+    e->editable = on ? 1 : 0;
+  }
+}
+
+int lk_editor_editable(const lk_editor *e) {
+  return e ? e->editable : 1;
 }
 
 /* ---- Wrap modes (docs/editor-wrap.md section 5) ---- */
@@ -2097,6 +2109,26 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
   if (!e) {
     return 0;
+  }
+
+  /* Read-only policy: user mutations are rejected here, the one
+   * choke point every input path funnels through.  Motion,
+   * selection, copy, and scrolling fall through untouched. */
+  if (!e->editable) {
+    switch (cmd) {
+    case LK_ED_INSERT_TEXT:
+    case LK_ED_DELETE_BACKWARD:
+    case LK_ED_DELETE_FORWARD:
+    case LK_ED_DELETE_WORD_BACKWARD:
+    case LK_ED_DELETE_WORD_FORWARD:
+    case LK_ED_CUT:
+    case LK_ED_PASTE:
+    case LK_ED_UNDO:
+    case LK_ED_REDO:
+      return 0;
+    default:
+      break;
+    }
   }
 
   select = arg ? arg->select : 0;

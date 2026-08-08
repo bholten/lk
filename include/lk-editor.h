@@ -98,6 +98,16 @@ void lk_editor_scroll_to_cursor(lk_editor *e);
  * \t bytes render via segment-wise tab-stop expansion). */
 lk_u32 lk_editor_tab_size(const lk_editor *e);
 
+/* Read-only policy.  When off, USER mutations through
+ * lk_editor_command -- insert, delete, cut, paste, undo, redo --
+ * return 0 and do nothing; motion, selection, and copy still work.
+ * Document-level edits (lk_doc_*) are unaffected: read-only is an
+ * EDITOR policy, not a document property, so a projection buffer
+ * stays refreshable programmatically while rejecting keystrokes.
+ * Default: editable. */
+void lk_editor_set_editable(lk_editor *e, int on);
+int lk_editor_editable(const lk_editor *e);
+
 /**
  ** Wrap modes (docs/editor-wrap.md section 5)
  **/

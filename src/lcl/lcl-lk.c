@@ -4019,6 +4019,61 @@ static int c_lk_editor_selection(lcl_interp *interp, int argc,
  * 5).  An unknown name is a hard error listing the supported modes,
  * DSL-v2 style; an engine rejection (allocation failure) is a hard
  * error too. */
+/* lk::editor_set_editable [editor] [0/1] -- read-only policy: 0
+ * rejects USER mutations (insert/delete/cut/paste/undo/redo) at the
+ * editor; document-level edits stay unaffected. */
+static int c_lk_editor_set_editable(lcl_interp *interp, int argc,
+                                    lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+  long on;
+
+  if (argc != 2) {
+    lcl_set_error(
+        interp, "lk::editor_set_editable: expected 2 arguments (editor, 0/1)");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_value_to_int(argv[1], &on) != LCL_OK) {
+    lcl_set_error(interp, "lk::editor_set_editable: flag must be 0 or 1");
+
+    return LCL_RC_ERR;
+  }
+
+  lk_editor_set_editable(ew->ed, on ? 1 : 0);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
+/* lk::editor_editable [editor] -> 0/1 */
+static int c_lk_editor_editable(lcl_interp *interp, int argc,
+                                lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::editor_editable: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new(lk_editor_editable(ew->ed));
+
+  return LCL_RC_OK;
+}
+
 static int c_lk_editor_wrap(lcl_interp *interp, int argc, lcl_value **argv,
                             lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -5481,6 +5536,11 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::editor_set_cursor", c_lk_editor_set_cursor));
   lcl_ns_def(ns, "editor_selection",
              lcl_c_proc_new("lk::editor_selection", c_lk_editor_selection));
+  lcl_ns_def(ns, "editor_set_editable",
+             lcl_c_proc_new("lk::editor_set_editable",
+                            c_lk_editor_set_editable));
+  lcl_ns_def(ns, "editor_editable",
+             lcl_c_proc_new("lk::editor_editable", c_lk_editor_editable));
   lcl_ns_def(ns, "editor_wrap",
              lcl_c_proc_new("lk::editor_wrap", c_lk_editor_wrap));
   lcl_ns_def(ns, "editor_wrap_get",
