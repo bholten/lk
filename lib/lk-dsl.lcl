@@ -1,22 +1,22 @@
-;; lk-dsl.lcl — Layer 2 declarative DSL for lk (DSL v2, props dicts)
-;;
-;; Wraps Layer 1 lk:: procs with declarative syntax:
-;;   - Kind names (column, button, ...) are commands
-;;   - Nesting implies parent-child
-;;   - Props are passed as a single dict: kind id ?props-dict? ?body-block?
-;;
-;; Usage:
-;;   app "My App" #{font "/path/to/font.ttf" font_size 16} {
-;;       view {
-;;           column "main" #{padding 24} {
-;;               label "title" #{text "Hello!"}
-;;           }
-;;       }
-;;   }
-;;
-;; Props dicts are ordinary values: build them in variables, share them
-;; across widgets, compose with [Dict::merge $base $override].
-;; Unknown prop keys are hard errors (see _apply_props).
+;;; lk-dsl.lcl — Layer 2 declarative DSL for lk (DSL v2, props dicts)
+;;;
+;;; Wraps Layer 1 lk:: procs with declarative syntax:
+;;;   - Kind names (column, button, ...) are commands
+;;;   - Nesting implies parent-child
+;;;   - Props are passed as a single dict: kind id ?props-dict? ?body-block?
+;;;
+;;; Usage:
+;;;   app "My App" #{font "/path/to/font.ttf" font_size 16} {
+;;;       view {
+;;;           column "main" #{padding 24} {
+;;;               label "title" #{text "Hello!"}
+;;;           }
+;;;       }
+;;;   }
+;;;
+;;; Props dicts are ordinary values: build them in variables, share them
+;;; across widgets, compose with [Dict::merge $base $override].
+;;; Unknown prop keys are hard errors (see _apply_props).
 
 namespace lk_dsl {
 
@@ -143,8 +143,6 @@ namespace lk_dsl {
         return $node
     }
 
-    ;; ---- Widget kind procs ----
-
     proc column {id *rest} {
         _make_node column $id $rest
     }
@@ -193,8 +191,6 @@ namespace lk_dsl {
         _make_node editor $id $rest
     }
 
-    ;; ---- Theme ----
-
     proc theme {body} {
         ;; rule <kind> ?selector-dict? style-dict
         ;; kind "*" matches any.  One dict arg = style; two = selector
@@ -242,17 +238,15 @@ namespace lk_dsl {
         eval $body
     }
 
-    ;; ---- Translator ----
-    ;; translator <event_type> ?matcher-dict? <ptype> ?<kind_filter>? <cmd_name>
-    ;; A dict anywhere in the trailing args is the matcher (DSL v2
-    ;; style): keys `button` (primary|middle|secondary) and `mods`
-    ;; ("ctrl", "ctrl+shift", ...); unknown keys hard-error.  The
-    ;; positional forms are unchanged:
-    ;;   translator pointer_down item Select
-    ;;   translator pointer_down action button DoIt
-    ;;   translator pointer_down #{button middle} action Execute
-    ;; keybinding <keycode> <mods> <cmd_name>
-    ;; keybinding <keycode> <mods> <ptype> <cmd_name>
+    ;;; A dict anywhere in the trailing args is the matcher (DSL v2
+    ;;; style): keys `button` (primary|middle|secondary) and `mods`
+    ;;; ("ctrl", "ctrl+shift", ...); unknown keys hard-error.  The
+    ;;; positional forms are unchanged:
+    ;;;   translator pointer_down item Select
+    ;;;   translator pointer_down action button DoIt
+    ;;;   translator pointer_down #{button middle} action Execute
+    ;;; keybinding <keycode> <mods> <cmd_name>
+    ;;; keybinding <keycode> <mods> <ptype> <cmd_name>
     proc translator {event_type *rest} {
         var button ""
         var mods ""
@@ -307,8 +301,6 @@ namespace lk_dsl {
         }
     }
 
-    ;; ---- Command handler ----
-    ;; on <cmd_name> <handler_proc>
     proc on {cmd_name handler} {
         set! _cmd_handlers [put $_cmd_handlers $cmd_name $handler]
     }
@@ -349,8 +341,6 @@ namespace lk_dsl {
         set! _parent_stack ()
     }
 
-    ;; ---- Top-level: app ----
-    ;; app <title> ?#{width N height N font <path> font_size N}? { body }
     proc app {title *rest} {
         var props #{}
         var body {}
