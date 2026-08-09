@@ -635,19 +635,28 @@ static int sdl_to_lk_event(lk_window *win, const SDL_Event *sdl,
                            lk_event *out) {
   memset(out, 0, sizeof(*out));
   switch (sdl->type) {
+  /* Pointer events carry the live modifier state.  SDL puts mods on
+   * key events only, but lk_translator matches button gestures on
+   * exact mods (lk-command.c), so a shift+click translator could
+   * never fire without this -- the whole shift-click vocabulary was
+   * unreachable.  SDL_GetModState is the state at dispatch, which is
+   * what a chord means for a pointer gesture. */
   case SDL_EVENT_MOUSE_MOTION:
     out->type = LK_EVENT_POINTER_MOVE;
+    out->mods = sdl_to_lk_mods(SDL_GetModState());
     out->data.pointer.x = (lk_i32)sdl->motion.x;
     out->data.pointer.y = (lk_i32)sdl->motion.y;
     return 1;
   case SDL_EVENT_MOUSE_BUTTON_DOWN:
     out->type = LK_EVENT_POINTER_DOWN;
+    out->mods = sdl_to_lk_mods(SDL_GetModState());
     out->data.pointer.x = (lk_i32)sdl->button.x;
     out->data.pointer.y = (lk_i32)sdl->button.y;
     out->data.pointer.button = sdl_to_lk_button(sdl->button.button);
     return 1;
   case SDL_EVENT_MOUSE_BUTTON_UP:
     out->type = LK_EVENT_POINTER_UP;
+    out->mods = sdl_to_lk_mods(SDL_GetModState());
     out->data.pointer.x = (lk_i32)sdl->button.x;
     out->data.pointer.y = (lk_i32)sdl->button.y;
     out->data.pointer.button = sdl_to_lk_button(sdl->button.button);
@@ -690,6 +699,7 @@ static int sdl_to_lk_event(lk_window *win, const SDL_Event *sdl,
     win->wheel_acc_x -= (float)dx;
     win->wheel_acc_y -= (float)dy;
     out->type = LK_EVENT_WHEEL;
+    out->mods = sdl_to_lk_mods(SDL_GetModState());
     out->data.wheel.dx = dx;
     out->data.wheel.dy = dy;
     return 1;
