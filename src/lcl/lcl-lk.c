@@ -3974,6 +3974,34 @@ static int c_lk_editor_set_cursor(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* lk::editor_scroll_to_cursor [editor] -> "" -- request that the next
+ * render bring the cursor row into view, without moving the cursor.
+ * A foreign transaction (a script append, another view's edit) carries
+ * the cursor along but deliberately does NOT scroll: a document
+ * changing elsewhere must not yank the reader's viewport.  A caller
+ * that WANTS to follow -- a log tailing its own output -- asks here. */
+static int c_lk_editor_scroll_to_cursor(lcl_interp *interp, int argc,
+                                        lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_editor *ew;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::editor_scroll_to_cursor: expected 1 argument");
+
+    return LCL_RC_ERR;
+  }
+
+  ew = get_editor(interp, argv[0]);
+
+  if (!ew) {
+    return LCL_RC_ERR;
+  }
+
+  lk_editor_scroll_to_cursor(ew->ed);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
 /* lk::editor_selection [editor] -> (start end) or () when none */
 static int c_lk_editor_selection(lcl_interp *interp, int argc,
                                  lcl_value **argv, lcl_value **out) {
@@ -5534,6 +5562,9 @@ void lcl_register_lk(lcl_interp *interp) {
              lcl_c_proc_new("lk::editor_cursor", c_lk_editor_cursor));
   lcl_ns_def(ns, "editor_set_cursor",
              lcl_c_proc_new("lk::editor_set_cursor", c_lk_editor_set_cursor));
+  lcl_ns_def(ns, "editor_scroll_to_cursor",
+             lcl_c_proc_new("lk::editor_scroll_to_cursor",
+                            c_lk_editor_scroll_to_cursor));
   lcl_ns_def(ns, "editor_selection",
              lcl_c_proc_new("lk::editor_selection", c_lk_editor_selection));
   lcl_ns_def(ns, "editor_set_editable",

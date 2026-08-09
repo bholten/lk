@@ -3198,6 +3198,42 @@ static void test_editor_cursor_selection(void) {
   END_TEST();
 }
 
+/* scroll_to_cursor requests viewport work only: the cursor and any
+ * selection survive it.  That is the whole reason it exists as its
+ * own binding -- set_cursor would scroll too, but it collapses the
+ * selection and re-snaps the cursor, so a tailing log could not use
+ * it without stealing the reader's selection. */
+static void test_editor_scroll_to_cursor(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("editor: scroll_to_cursor keeps cursor and selection");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [lk::ui_create]\n"
+          "let d [lk::doc_new \"hello world\"]\n"
+          "let e [lk::editor_new $ui $d]\n"
+          "lk::editor_set_cursor $e 4\n"
+          "lk::editor_command $e select_all",
+          &r);
+  if (r) lcl_ref_dec(r);
+
+  check_str(interp, "lk::editor_scroll_to_cursor $e", "");
+  check_int(interp, "lk::editor_cursor $e", 11);
+  check_int(interp, "len [lk::editor_selection $e]", 2);
+
+  /* Contrast: set_cursor at the SAME position drops the selection. */
+  check_str(interp, "lk::editor_set_cursor $e 11", "");
+  check_int(interp, "len [lk::editor_selection $e]", 0);
+
+  eval_expect_err(interp, "lk::editor_scroll_to_cursor",
+                  "expected 1 argument", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_editor_command_drives_doc(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -4523,6 +4559,7 @@ int main(void) {
   test_history_savepoint();
   test_editor_new_basic();
   test_editor_cursor_selection();
+  test_editor_scroll_to_cursor();
   test_editor_command_drives_doc();
   test_editor_command_errors();
   test_editor_wrap_proc();
