@@ -530,6 +530,16 @@ void lk_window_set_event_handler(lk_window *win, lk_event_handler_fn fn,
 }
 
 static lk_u16 sdl_to_lk_keycode(SDL_Keycode k) {
+  /* SDL keycodes are shift-translated, so shift+i arrives as 'I' --
+   * which this table does not name, leaving every ctrl+shift+<letter>
+   * chord unreachable.  lk's model is key IDENTITY plus a modifier
+   * set (mods travel separately on the event), so fold the letter
+   * back to one identity.  Typed characters are unaffected: text
+   * arrives on SDL_EVENT_TEXT_INPUT, not here. */
+  if (k >= 'A' && k <= 'Z') {
+    k = k - 'A' + 'a';
+  }
+
   switch (k) {
   case SDLK_TAB: return LKK_TAB;
   case SDLK_RETURN: return LKK_RETURN;
