@@ -86,11 +86,14 @@ namespace lk_dsl {
             if [dict? $a] {
                 set! props $a
             } else {
-                if [not [empty? $a]] {
-                    if [number? $a] {
-                        error "$kind \"$id\": expected a props dict (#{...}) or body block, got '$a'"
-                    }
+                ;; number? first: a typed int/float literal (post-lcl
+                ;; c6b44be) is not a string, so empty?/String::index
+                ;; would error on it before our diagnostic fired.
+                if [number? $a] {
+                    error "$kind \"$id\": expected a props dict (#{...}) or body block, got '$a'"
+                }
 
+                if [not [empty? $a]] {
                     if [== [String::index $a 0] -] {
                         error "$kind \"$id\": '-flag' syntax was removed; use a props dict (#{...})"
                     }

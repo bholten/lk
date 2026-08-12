@@ -4310,6 +4310,55 @@ static void test_annot_present_errors(void) {
   END_TEST();
 }
 
+/* Name-shaped args (node ids, tags, ptypes, layers) accept strings
+ * and typed numbers (which render), but hard-error on structured
+ * values — a dict or opaque passed where a name was meant is a
+ * wrong-variable bug, not a name. */
+static void test_name_arg_strictness(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("name args: numbers render, structured values error");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let u [lk::ui_create]\n"
+    "let t [lk::begin_frame $u]",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  /* A typed int is a fine node id — it renders to its canonical text. */
+  eval_ok(interp,
+    "let n [lk::node $t 42 label]\n"
+    "lk::set_root $t $n",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  eval_expect_err(interp, "lk::node $t $u label",
+                  "lk::node: id", "got opaque", NULL);
+  eval_expect_err(interp, "lk::node $t (a b) label",
+                  "lk::node: id", "got list", NULL);
+  eval_expect_err(interp, "lk::tag $t 1 #{x 1}",
+                  "lk::tag: tag", "got dict", NULL);
+  eval_expect_err(interp, "lk::focus_set $u [lambda {x} {}]",
+                  "lk::focus_set: node id", "got proc", NULL);
+  eval_expect_err(interp, "lk::state_set $u #{a 1} 300 1",
+                  "lk::state_set: node id", "got dict", NULL);
+
+  eval_ok(interp,
+    "let d [lk::doc_new \"hello\"]\n"
+    "let s [lk::annot_store_new]\n"
+    "lk::annot_attach $s $d",
+    &r);
+  if (r) lcl_ref_dec(r);
+
+  eval_expect_err(interp, "lk::annot_add $s 0 2 (l1 l2)",
+                  "lk::annot_add: layer", "got list", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_dsl_translator_matcher_dict(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -4536,10 +4585,10 @@ static void test_lk_docs_doctests(void) {
     /* Coverage: every registered lk:: name has a doc entry. */
     eval_ok(interp,
       "let __lkents [get [get [get $__m entries] 0] entries]\n"
-      "let __names [List::map [lambda {e} { get $e name }] $__lkents]\n"
+      "let __names [List::map $__lkents [lambda {e} { get $e name }]]\n"
       "var __missing ()\n"
       "foreach __k [Ns::keys $lk] {\n"
-      "  if [not [List::any? [lambda {n} { == $n $__k }] $__names]] {\n"
+      "  if [not [List::any? $__names [lambda {n} { == $n $__k }]]] {\n"
       "    set! __missing [List::push $__missing $__k]\n"
       "  }\n"
       "}\n"
@@ -4587,11 +4636,11 @@ static void test_lk_docs_doctests(void) {
 
     eval_ok(interp,
       "let __dents [get [get [get $__dm entries] 0] entries]\n"
-      "let __dnames [List::map [lambda {e} { get $e name }] $__dents]\n"
+      "let __dnames [List::map $__dents [lambda {e} { get $e name }]]\n"
       "var __dmissing ()\n"
       "foreach __k [Ns::keys $lk_dsl] {\n"
       "  if [not [== [String::range $__k 0 1] \"_\"]] {\n"
-      "    if [not [List::any? [lambda {n} { == $n $__k }] $__dnames]] {\n"
+      "    if [not [List::any? $__dnames [lambda {n} { == $n $__k }]]] {\n"
       "      set! __dmissing [List::push $__dmissing $__k]\n"
       "    }\n"
       "  }\n"
@@ -4755,6 +4804,7 @@ int main(void) {
   test_focus_changed_marshal();
   test_focus_changed_translator_name();
   test_annot_present_errors();
+  test_name_arg_strictness();
   test_dsl_translator_matcher_dict();
   test_dsl_split_controlled_command();
 

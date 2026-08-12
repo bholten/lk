@@ -11,41 +11,36 @@ let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 var rows ( #{id 1 name "Coffee" amount "4.50" category "Food"} #{id 2 name "Bus" amount "2.75" category "Transport"} )
 var next_id 3
 
+;; Model transformations are List::map / filter / reduce over $rows —
+;; lists are values and foreach bindings are immutable (let-style), so
+;; rebuild the list and set! the owning var, never a loop variable.
+
 proc total {} {
-    var sum 0.0
-
-    foreach row $rows {
+    ;; Mid-edit cells hold arbitrary text ("", "3.", "abc"); skip
+    ;; anything float would reject rather than error the view.
+    return [List::reduce $rows 0.0 [lambda {acc row} {
         let amt [get $row amount]
-        set! sum [+ $sum [float $amt]]
-    }
 
-    return $sum
+        if [number? $amt] {
+            + $acc [float $amt]
+        } else {
+            return $acc
+        }
+    }]]
 }
 
 proc update_row {rid field value} {
-    var out ()
-
-    foreach row $rows {
+    set! rows [List::map $rows [lambda {row} {
         if [== [get $row id] $rid] {
-            set! row [put $row $field $value]
+            put $row $field $value
+        } else {
+            return $row
         }
-
-        set! out [List::push $out $row]
-    }
-
-    set! rows $out
+    }]]
 }
 
 proc remove_row_by_id {rid} {
-    var out ()
-
-    foreach row $rows {
-        if [!= [get $row id] $rid] {
-            set! out [List::push $out $row]
-        }
-    }
-
-    set! rows $out
+    set! rows [List::filter $rows [lambda {row} { != [get $row id] $rid }]]
 }
 
 app "Budget" #{font $font font_size 16 width 720 height 500} {

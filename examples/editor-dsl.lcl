@@ -159,8 +159,8 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
 
     on GotoOpen [lambda {cmd} {
         set! goto_val ""
-        lk::overlay_push $lk_dsl::_ui #{kind modal anchor center owner_id src content_root_id goto_box}
-        lk::focus_set $lk_dsl::_ui goto_line
+        lk::overlay_push ${lk_dsl::_ui} #{kind modal anchor center owner_id src content_root_id goto_box}
+        lk::focus_set ${lk_dsl::_ui} goto_line
     }]
 
     on GotoEdit [lambda {cmd} {
@@ -178,14 +178,14 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
             ;; re-anchor path brings the target line into view.
             lk::editor_command $ed set_cursor [lk::doc_line_start $doc [- $ln 1]]
         }
-        lk::overlay_pop $lk_dsl::_ui
-        lk::focus_set $lk_dsl::_ui src
+        lk::overlay_pop ${lk_dsl::_ui}
+        lk::focus_set ${lk_dsl::_ui} src
     }]
 
     ;; The editor registers in the window ui's resource table; the
     ;; `editor` prop below carries the typed ref every frame.  Wrap is
     ;; an explicit opt-in — the default mode is none.
-    set! ed [lk::editor_new $lk_dsl::_ui $doc $hist]
+    set! ed [lk::editor_new ${lk_dsl::_ui} $doc $hist]
     lk::editor_wrap $ed character
 
     view {

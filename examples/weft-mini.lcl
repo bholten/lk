@@ -229,7 +229,7 @@ proc _produce_spans {side} {
         set! spans [_push_span $spans $store $id #{fg (150 220 160) bg (26 42 30)}]
     }
 
-    set! spans [List::sort_by [lambda {sp} { get $sp start }] $spans]
+    set! spans [List::sort_by $spans [lambda {sp} { get $sp start }]]
 
     var flat ()
     var prev 0
@@ -614,7 +614,7 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
         return 0
     }]
 
-    set! ui $lk_dsl::_ui
+    set! ui ${lk_dsl::_ui}
 
     _make_pane left $left_name $left_path $left_text
     _make_pane right "scratch" "" $SCRATCH
