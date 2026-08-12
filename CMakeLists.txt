@@ -149,7 +149,7 @@ if(LK_BUILD_LCL)
   FetchContent_Declare(
     lcl
     GIT_REPOSITORY https://github.com/bholten/lcl.git
-    GIT_TAG        6eabbc4c03a7228d29ca69ca03fadd5eb3f4e8ab
+    GIT_TAG        7ad5d1a6734b43f92ca11495d2a882210b3cfb8f
   )
   FetchContent_MakeAvailable(lcl)
 
@@ -205,7 +205,9 @@ if(LK_BUILD_LCL)
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
   target_compile_definitions(lcl_lk_test PRIVATE
-    TEST_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
+    TEST_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl"
+    TEST_DOC_LIB_PATH="${lcl_SOURCE_DIR}/lib/doc/src/Doc.lcl"
+    TEST_LK_DOCS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/docs/lk.lcl")
   target_compile_options(lcl_lk_test PRIVATE -Wall -Wextra -pedantic)
 
   if(LK_ENABLE_CLANG_TIDY)

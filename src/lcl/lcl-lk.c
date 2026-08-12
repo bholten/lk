@@ -420,6 +420,13 @@ static void lcl_cmd_ctx_free(struct lcl_cmd_ctx *ctx);
 static void ui_finalizer(void *ptr) {
   lk_ui *ui = (lk_ui *)ptr;
 
+  /* Explicit lk::ui_destroy / window teardown already removed the ui
+   * from the live registry and freed it; touching it again here would
+   * be a use-after-free. */
+  if (!live_ui_check(ui)) {
+    return;
+  }
+
   if (ui->cmd_handler == lcl_cmd_bridge && ui->cmd_handler_ud) {
     lcl_cmd_ctx_free((struct lcl_cmd_ctx *)ui->cmd_handler_ud);
     ui->cmd_handler = NULL;
@@ -555,11 +562,8 @@ static int c_lk_ui_destroy(lcl_interp *interp, int argc, lcl_value **argv,
   live_ui_remove(ui);
   lk_ui_destroy(ui);
 
-  /* Prevent double-free via finalizer: clear the opaque pointer.
-   * lcl_opaque_get returns the raw ptr; we need to null it out.
-   * Since we can't modify the opaque directly, we accept the finalizer
-   * will be called on a now-invalid pointer.  The convention is:
-   * after explicit destroy, drop all references immediately. */
+  /* The opaque still points at the freed ui, but its finalizer checks
+   * the live registry and no-ops for uis already destroyed here. */
   *out = lcl_string_new("");
 
   return LCL_RC_OK;

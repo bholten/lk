@@ -4450,6 +4450,181 @@ static void test_dsl_split_controlled_command(void) {
   END_TEST();
 }
 
+/* ============================================================================
+ * Companion-doc doctests (docs/lk.lcl).
+ *
+ * The docs file is NEVER evaluated — its stub proc bodies would shadow
+ * the real C commands.  Instead its text is read here and handed to
+ * Doc::extract (the reader-based extractor from lcl's Doc package);
+ * the `>>` examples then run against the live lk:: bindings in this
+ * interp, so every doctest is a genuine test of the C code.
+ *
+ * Coverage is enforced in the forward direction only: every name
+ * registered in the lk namespace must have a documented entry.  The
+ * reverse (every documented name registered) is deliberately not
+ * checked — docs describe the SDL window procs even in non-SDL builds.
+ * ============================================================================
+ */
+
+#ifndef TEST_DOC_LIB_PATH
+#define TEST_DOC_LIB_PATH "build/_deps/lcl-src/lib/doc/src/Doc.lcl"
+#endif
+#ifndef TEST_LK_DOCS_PATH
+#define TEST_LK_DOCS_PATH "docs/lk.lcl"
+#endif
+
+static char *read_text_file(const char *path) {
+  FILE *f = fopen(path, "rb");
+  long n;
+  char *buf;
+
+  if (!f)
+    return NULL;
+  fseek(f, 0, SEEK_END);
+  n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  buf = (char *)malloc((size_t)n + 1);
+  if (!buf) {
+    fclose(f);
+    return NULL;
+  }
+  if (fread(buf, 1, (size_t)n, f) != (size_t)n) {
+    free(buf);
+    fclose(f);
+    return NULL;
+  }
+  buf[n] = '\0';
+  fclose(f);
+  return buf;
+}
+
+static void test_lk_docs_doctests(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+  char *src;
+  int rc;
+
+  BEGIN_TEST("docs/lk.lcl doctests + coverage");
+  interp = make_dsl_interp();
+
+  rc = lcl_eval_file(interp, TEST_DOC_LIB_PATH, &r);
+  if (r) {
+    lcl_ref_dec(r);
+    r = NULL;
+  }
+  if (rc != LCL_RC_OK) {
+    const char *msg = lcl_interp_error_msg(interp);
+    if (g_cur_ok)
+      printf("FAIL\n");
+    printf("    Doc lib load error (%s): %s\n", TEST_DOC_LIB_PATH,
+           msg ? msg : "(null)");
+    g_cur_ok = 0;
+  }
+
+  src = read_text_file(TEST_LK_DOCS_PATH);
+  CHECK(src != NULL);
+
+  if (g_cur_ok && src) {
+    lcl_define_take(interp, "__lk_docs_src", lcl_string_new(src));
+
+    eval_ok(interp, "let __m [Doc::extract $__lk_docs_src]", &r);
+    if (r) {
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    /* Coverage: every registered lk:: name has a doc entry. */
+    eval_ok(interp,
+      "let __lkents [get [get [get $__m entries] 0] entries]\n"
+      "let __names [List::map [lambda {e} { get $e name }] $__lkents]\n"
+      "var __missing ()\n"
+      "foreach __k [Ns::keys $lk] {\n"
+      "  if [not [List::any? [lambda {n} { == $n $__k }] $__names]] {\n"
+      "    set! __missing [List::push $__missing $__k]\n"
+      "  }\n"
+      "}\n"
+      "String::join $__missing \", \"",
+      &r);
+    if (r) {
+      const char *missing = lcl_value_to_string(r);
+      if (missing && missing[0] != '\0') {
+        if (g_cur_ok)
+          printf("FAIL\n");
+        printf("    undocumented lk:: procs: %s\n", missing);
+        g_cur_ok = 0;
+      }
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    /* Doctests: run every example against the live bindings. */
+    eval_ok(interp, "Doc::report [Doc::doctest $__m]", &r);
+    if (r) {
+      long fails = -1;
+      CHECK(lcl_value_to_int(r, &fails) == LCL_OK);
+      CHECK(fails == 0);
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+  }
+
+  free(src);
+
+  /* Same treatment for the DSL's inline docs (lib/lk-dsl.lcl — a real
+   * evaluated library, already loaded above by make_dsl_interp).
+   * Coverage skips underscore-prefixed (private) names. */
+  src = read_text_file(TEST_DSL_PATH);
+  CHECK(src != NULL);
+
+  if (g_cur_ok && src) {
+    lcl_define_take(interp, "__dsl_src", lcl_string_new(src));
+
+    eval_ok(interp, "let __dm [Doc::extract $__dsl_src]", &r);
+    if (r) {
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    eval_ok(interp,
+      "let __dents [get [get [get $__dm entries] 0] entries]\n"
+      "let __dnames [List::map [lambda {e} { get $e name }] $__dents]\n"
+      "var __dmissing ()\n"
+      "foreach __k [Ns::keys $lk_dsl] {\n"
+      "  if [not [== [String::range $__k 0 1] \"_\"]] {\n"
+      "    if [not [List::any? [lambda {n} { == $n $__k }] $__dnames]] {\n"
+      "      set! __dmissing [List::push $__dmissing $__k]\n"
+      "    }\n"
+      "  }\n"
+      "}\n"
+      "String::join $__dmissing \", \"",
+      &r);
+    if (r) {
+      const char *missing = lcl_value_to_string(r);
+      if (missing && missing[0] != '\0') {
+        if (g_cur_ok)
+          printf("FAIL\n");
+        printf("    undocumented lk_dsl procs: %s\n", missing);
+        g_cur_ok = 0;
+      }
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+
+    eval_ok(interp, "Doc::report [Doc::doctest $__dm]", &r);
+    if (r) {
+      long fails = -1;
+      CHECK(lcl_value_to_int(r, &fails) == LCL_OK);
+      CHECK(fails == 0);
+      lcl_ref_dec(r);
+      r = NULL;
+    }
+  }
+
+  free(src);
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -4582,6 +4757,9 @@ int main(void) {
   test_annot_present_errors();
   test_dsl_translator_matcher_dict();
   test_dsl_split_controlled_command();
+
+  /* Companion-doc doctests (docs/lk.lcl) */
+  test_lk_docs_doctests();
 
   printf("\n%d tests: %d passed, %d failed\n", g_tests, g_pass, g_fail);
 

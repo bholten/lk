@@ -30,6 +30,15 @@ With `LK_BUILD_LCL=ON`, Lcl is fetched via CMake `FetchContent` (a pinned commit
 
 The project is **C89** (`-std=c90 -pedantic -Wall -Wextra`). No C99/C11 features — declare variables at block top, use `/* */` comments only. Exception: SDL-dependent files (`src/sdl/`, `src/lcl/lcl-lk-main.c`) use C11 because SDL3 headers require it.
 
+## Documentation (Lcl Doc system)
+
+Script-facing docs use lcl's Doc package (`;;;` doc comments + `>>` doctests compared against `repr`; see `docs/README.md` in the lcl repo). The lcl pin includes it (bumped to 7ad5d1a, 2026-08-11). Two doc sources, both enforced by `lcl_lk_test`:
+
+- **`docs/lk.lcl`** — companion doc file for the C-defined `lk::` namespace (stub bodies, **never evaluated** — evaluating it would shadow the real C procs). The final test in `lcl_lk_test` reads its text (path via `TEST_LK_DOCS_PATH`), evals the fetched Doc package (`TEST_DOC_LIB_PATH` → `${lcl_SOURCE_DIR}/lib/doc/src/Doc.lcl`), runs `Doc::extract` + `Doc::doctest` — so every `>>` example executes against the live C bindings — and asserts **coverage**: every name in the live `lk` namespace (`Ns::keys`) must have a doc entry. Adding a proc without documenting it fails the suite. Coverage is forward-only: the docs may describe SDL-only procs (`window_*`, `register_font`) that aren't registered in non-SDL builds; those entries are prose-only (no doctests — they need a display).
+- **`lib/lk-dsl.lcl`** — inline `;;;` docs (it is a real evaluated library). Same test extracts it and enforces coverage over the `lk_dsl` namespace's non-underscore names; private `_helpers` keep plain `;;` comments and are skipped.
+
+Doctest authoring rules that bit us: examples in one doc block share a scope, blocks are independent (each block sets up its own ui/doc); tree handles are borrowed from the ui, so blocks must hold the ui in a variable while using a tree (an anonymous `[lk::ui_create]` inside a `let t [lk::begin_frame ...]` gets GC'd and the tree dangles); opaque reprs (`<opaque:lk_ui>` etc.) are stable expected values; dict reprs have unstable key order — assert via `get` instead; comment text inside braced bodies participates in brace/quote balancing, so keep braces, brackets, and double quotes paired in all doc prose.
+
 ## Architecture
 
 ### Core Data Model (`src/core/`)

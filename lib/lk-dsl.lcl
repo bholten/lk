@@ -18,6 +18,19 @@
 ;;; across widgets, compose with [Dict::merge $base $override].
 ;;; Unknown prop keys are hard errors (see _apply_props).
 
+;;; The Layer 2 DSL: `app`, `view`, `theme`, `translator`, `keybinding`,
+;;; `on`, `event_handler`, and one command per widget kind, all exported
+;;; into the caller's scope.
+;;;
+;;; Every widget command shares one shape — `kind id ?props-dict?
+;;; ?body-block?` — with the two trailing args disambiguated by value
+;;; shape: a dict is props, anything else is the body block.  Known
+;;; prop keys: text, focusable, disabled, w, h, padding, gap, align,
+;;; justify, hidden, tooltip, split_ratio, split_controlled, grow,
+;;; editor, value, tag, present.  `tag` maps to `lk::tag`, `present`
+;;; (a 2-element ptype + value list) to `lk::present`, everything else
+;;; to `lk::prop`.  Unknown keys and malformed trailing args are hard
+;;; errors carrying the widget id.
 namespace lk_dsl {
 
     ;; ---- Module state ----
@@ -143,54 +156,94 @@ namespace lk_dsl {
         return $node
     }
 
+    ;;; Vertical stack container.  Children lay out top to bottom;
+    ;;; `gap` spaces them, `align` crosses, `justify` distributes, and
+    ;;; per-child `grow` weights share leftover height.
     proc column {id *rest} {
         _make_node column $id $rest
     }
 
+    ;;; Horizontal stack container (the row-axis twin of `column`).
     proc row {id *rest} {
         _make_node row $id $rest
     }
 
+    ;;; Text display widget; set the string with the `text` prop.
     proc label {id *rest} {
         _make_node label $id $rest
     }
 
+    ;;; Click target.  Give it `focusable 1` for keyboard focus and a
+    ;;; `present` prop to make clicks emit commands via translators.
     proc button {id *rest} {
         _make_node button $id $rest
     }
 
+    ;;; Single-line text input.  Edits emit value_changed events; feed
+    ;;; the edited text back in as the `text` prop each frame.
     proc text_input {id *rest} {
         _make_node text_input $id $rest
     }
 
+    ;;; Flexible empty space.  An unsized spacer grows with weight 1;
+    ;;; give it `w`/`h` for fixed space or `grow 0` to pin it.
     proc spacer {id *rest} {
         _make_node spacer $id $rest
     }
 
+    ;;; Vertical scroll container: clips children, wheel-scrolls, and
+    ;;; shows a scrollbar when content overflows.
     proc scroll {id *rest} {
         _make_node scroll $id $rest
     }
 
+    ;;; Dropdown selector; its `option` children are the choices.  The
+    ;;; `value` prop picks the initial selection by option text;
+    ;;; selecting emits value_changed with the option text.
     proc dropdown {id *rest} {
         _make_node dropdown $id $rest
     }
 
+    ;;; One dropdown choice; the `text` prop is its label and value.
     proc option {id *rest} {
         _make_node option $id $rest
     }
 
+    ;;; Two panes side by side with a draggable vertical divider.
+    ;;; `split_ratio` (per-mille, 0..1000) sets the initial split;
+    ;;; `split_controlled 1` makes the app own the ratio (dragging
+    ;;; emits value_changed but writes no state).
     proc split_h {id *rest} {
         _make_node split_h $id $rest
     }
 
+    ;;; Two panes stacked with a draggable horizontal divider (the
+    ;;; vertical twin of `split_h`).
     proc split_v {id *rest} {
         _make_node split_v $id $rest
     }
 
+    ;;; Multi-line editor widget.  Wire it to a document view with the
+    ;;; `editor` prop (an opaque from `lk::editor_new`):
+    ;;;
+    ;;;   editor "src" #{editor $ed focusable 1}
     proc editor {id *rest} {
         _make_node editor $id $rest
     }
 
+    ;;; Declare theme rules.  The body sees a `rule` command:
+    ;;;
+    ;;;   rule <kind> ?selector-dict? style-dict
+    ;;;
+    ;;; kind "*" matches any; one dict arg is the style, two are
+    ;;; selector then style.  Selector keys: `tag`, `state` (focused,
+    ;;; hovered, disabled); unknown keys error.  Style keys are the
+    ;;; `lk::theme_rule` set (bg, fg, border_color, padding, gap,
+    ;;; align, justify, font_id, font_size, ...):
+    ;;;
+    ;;;   theme {
+    ;;;       rule button #{tag primary state hovered} #{bg (65 120 210)}
+    ;;;   }
     proc theme {body} {
         ;; rule <kind> ?selector-dict? style-dict
         ;; kind "*" matches any.  One dict arg = style; two = selector
@@ -238,6 +291,9 @@ namespace lk_dsl {
         eval $body
     }
 
+    ;;; Register a translator: gestures on nodes presenting `ptype`
+    ;;; emit `cmd` (handle it with `on`).
+    ;;;
     ;;; A dict anywhere in the trailing args is the matcher (DSL v2
     ;;; style): keys `button` (primary|middle|secondary) and `mods`
     ;;; ("ctrl", "ctrl+shift", ...); unknown keys hard-error.  The
@@ -291,6 +347,12 @@ namespace lk_dsl {
         }
     }
 
+    ;;; Bind a key chord to a command: `keybinding <keycode> <mods>
+    ;;; ?<ptype>? <cmd>`.  The 3-arg form is global (any focus); the
+    ;;; 4-arg form fires only with a `ptype` presentation under focus.
+    ;;; Sugar for a key_down translator:
+    ;;;
+    ;;;   keybinding g ctrl GotoLine
     proc keybinding {keycode mods *rest} {
         if [== [len $rest] 1] {
             ;; 3-arg form: keybinding key mods cmd (global, no ptype)
@@ -301,16 +363,24 @@ namespace lk_dsl {
         }
     }
 
+    ;;; Register a handler for a named command.  The handler receives
+    ;;; the command dict (`name`, `args`, `source_value`,
+    ;;; `source_node_id`, and `hit` for interior presentations):
+    ;;;
+    ;;;   on Select [lambda {cmd} { puts [get $cmd args] }]
     proc on {cmd_name handler} {
         set! _cmd_handlers [put $_cmd_handlers $cmd_name $handler]
     }
 
-    ;; ---- Event handler ----
+    ;;; Install an app-level event handler on the window; the callable
+    ;;; receives an event dict for every event no widget consumed.
     proc event_handler {callable} {
         lk::window_set_event_handler $_win $callable
     }
 
-    ;; ---- View ----
+    ;;; Declare the view: the body re-runs every frame to rebuild the
+    ;;; tree under an implicit root window node.  Keep widget ids
+    ;;; stable across frames — retained state and focus follow ids.
     proc view {body} {
         set! _view_body $body
     }
@@ -341,6 +411,15 @@ namespace lk_dsl {
         set! _parent_stack ()
     }
 
+    ;;; Create the window and run the app: `app "Title" ?props-dict?
+    ;;; body-block`.
+    ;;;
+    ;;; Props: `width` and `height` (default 800x600), `font` (a .ttf
+    ;;; path) and `font_size` (default 16); unknown keys hard-error.
+    ;;; The body runs once to register `theme`, `translator`,
+    ;;; `keybinding`, `on`, `view`, and `event_handler`; then the
+    ;;; frame loop runs the view body every frame until the window
+    ;;; closes, and the window is destroyed on the way out.
     proc app {title *rest} {
         var props #{}
         var body {}
