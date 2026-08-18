@@ -5417,6 +5417,66 @@ static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* lk::annot_store_seq [store] -> int
+ * Monotonic count of record-set mutations (add/remove/clear/present,
+ * delete-sweep).  Compare for change. */
+static lcl_return_code c_lk_annot_store_seq(lcl_interp *interp, int argc,
+                                            lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_annot *aw;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::annot_store_seq: expected 1 argument (store)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  *out = lcl_int_new((long)lk_annot_store_seq(aw->store));
+
+  return LCL_RC_OK;
+}
+
+/* lk::annot_layers [store] -> (name ...)
+ * Registered layer names in registration order. */
+static lcl_return_code c_lk_annot_layers(lcl_interp *interp, int argc,
+                                         lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_annot *aw;
+  lcl_value *list;
+  lk_u32 i;
+  lk_u32 n;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "lk::annot_layers: expected 1 argument (store)");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[0]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  list = lcl_list_new();
+  n = lk_annot_layer_count(aw->store);
+
+  for (i = 0; i < n; i++) {
+    lcl_value *name = lcl_string_new(lk_annot_layer_name(aw->store, i));
+
+    lcl_list_push(&list, name);
+    lcl_ref_dec(name);
+  }
+
+  *out = list;
+
+  return LCL_RC_OK;
+}
+
 /* ============================================================================
  * Range presentations (weft-surface track, S1)
  * ============================================================================
@@ -5839,6 +5899,10 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(
       ns, "annot_layer_register",
       lcl_c_proc_new("lk::annot_layer_register", c_lk_annot_layer_register));
+  lcl_ns_def_take(ns, "annot_store_seq",
+                  lcl_c_proc_new("lk::annot_store_seq", c_lk_annot_store_seq));
+  lcl_ns_def_take(ns, "annot_layers",
+                  lcl_c_proc_new("lk::annot_layers", c_lk_annot_layers));
   lcl_ns_def_take(
       ns, "annot_layer_priority",
       lcl_c_proc_new("lk::annot_layer_priority", c_lk_annot_layer_priority));

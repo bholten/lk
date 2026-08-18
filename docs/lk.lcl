@@ -1062,6 +1062,40 @@ namespace lk {
     ;;; >> lk::annot_layer_priority [lk::annot_store_new] "links" 10
     proc annot_layer_priority {s layer priority} {}
 
+    ;;; The store's registered layer names, in registration order
+    ;;; (implicit registration by `lk::annot_add` counts).  For a
+    ;;; projector that wants to style "every layer I don't already
+    ;;; know" without walking each record.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [lk::annot_store_new]
+    ;;; >> lk::annot_attach $s [lk::doc_new "hello"]
+    ;;; >> lk::annot_add $s 0 2 "notes"
+    ;;; >> lk::annot_layer_register $s "plumb"
+    ;;; >> lk::annot_layers $s
+    ;;; ("notes" "plumb")
+    proc annot_layers {s} {}
+
+    ;;; A monotonic count of record-set mutations: add, remove, clear,
+    ;;; clear_layer, set_present, and records swallowed by a document
+    ;;; delete.  Anchor motion under ordinary edits does NOT count
+    ;;; (positions are queried live; the document's `lk::doc_revision`
+    ;;; tracks that).  Compare a remembered value for change -- the cheap
+    ;;; "did anyone touch this store?" a per-frame projector needs.
+    ;;;
+    ;;; Examples:
+    ;;; >> let s [lk::annot_store_new]
+    ;;; >> lk::annot_attach $s [lk::doc_new "hello"]
+    ;;; >> lk::annot_store_seq $s
+    ;;; 0
+    ;;; >> let a [lk::annot_add $s 0 2 "notes"]
+    ;;; >> lk::annot_store_seq $s
+    ;;; 1
+    ;;; >> lk::annot_remove $s $a
+    ;;; >> lk::annot_store_seq $s
+    ;;; 2
+    proc annot_store_seq {s} {}
+
     ;; ---- range presentations (weft-surface) --------------------------
 
     ;;; Attach a presentation (ptype + ANY Lcl value) to an annotation

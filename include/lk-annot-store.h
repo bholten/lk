@@ -135,6 +135,11 @@ typedef struct lk_annot_store {
   lk_document *doc; /* attached document, NULL when detached */
   lk_u32 sub_id;
   lk_revision doc_rev; /* follows delta->after */
+  lk_u32 change_seq;   /* bumped by every record-set mutation: add,
+                          remove, clear, clear_layer, set_present, and
+                          the delete-transform sweep.  Lets a projector
+                          ask "did anything change since I last looked?"
+                          without a subscriber (weft-surface QoL) */
 
   /* Optional presentation-value release hook (installed by the
    * bindings): fires exactly once whenever a presentation value
@@ -175,6 +180,18 @@ void lk_annot_store_attach(lk_annot_store *s, lk_document *d);
 /* The store's current revision (the attached document's revision as
  * of the last notification; the attach point's revision before any). */
 lk_revision lk_annot_store_rev(const lk_annot_store *s);
+
+/* Monotonic count of record-set mutations (see change_seq).  Compare
+ * for change; a stored value equal to the current one means no add,
+ * remove, clear or presentation change happened in between.  Anchor
+ * motion under document edits does NOT bump it (positions are
+ * queried live anyway); use lk_annot_store_rev for that. */
+lk_u32 lk_annot_store_seq(const lk_annot_store *s);
+
+/* Registered layers, in registration order (auto-registration by
+ * lk_annot_add counts).  Names are borrowed from the store. */
+lk_u32 lk_annot_layer_count(const lk_annot_store *s);
+const char *lk_annot_layer_name(const lk_annot_store *s, lk_u32 index);
 
 /**
  ** Annotation CRUD

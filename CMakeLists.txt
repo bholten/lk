@@ -149,7 +149,7 @@ if(LK_BUILD_LCL)
   FetchContent_Declare(
     lcl
     GIT_REPOSITORY https://github.com/bholten/lcl.git
-    GIT_TAG        74b9cf0d7a1c86a87c7efafdef6f96bd68828ade
+    GIT_TAG        2ac5cc5029dfedd1cd48bb9b71dd4f412d986012
   )
   FetchContent_MakeAvailable(lcl)
 

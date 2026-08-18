@@ -3777,6 +3777,68 @@ static void test_annot_errors(void) {
   END_TEST();
 }
 
+static void test_annot_seq_and_layers(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot: store_seq counts mutations; layers lists names");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let d [lk::doc_new \"hello world\"]\n"
+          "let s [lk::annot_store_new]\n"
+          "lk::annot_attach $s $d",
+          &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  check_int(interp, "lk::annot_store_seq $s", 0);
+  check_int(interp, "len [lk::annot_layers $s]", 0);
+
+  eval_ok(interp, "let a [lk::annot_add $s 0 5 \"notes\"]", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  check_int(interp, "lk::annot_store_seq $s", 1);
+  check_str(interp, "String::join [lk::annot_layers $s] \",\"", "notes");
+
+  /* Registration order is kept; explicit registration counts. */
+  eval_ok(interp,
+          "lk::annot_layer_register $s \"plumb\"\n"
+          "let b [lk::annot_add $s 6 11 \"style\"]",
+          &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  check_str(interp, "String::join [lk::annot_layers $s] \",\"",
+            "notes,plumb,style");
+  check_int(interp, "lk::annot_store_seq $s", 2);
+
+  /* Anchor motion alone does not count; a delete that drops a record
+   * does. */
+  eval_ok(interp, "lk::doc_insert $d 0 \"x\"", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  check_int(interp, "lk::annot_store_seq $s", 2);
+
+  check_int(interp, "lk::annot_remove $s $a", 1);
+  check_int(interp, "lk::annot_store_seq $s", 3);
+  check_int(interp, "lk::annot_remove $s $a", 0);
+  check_int(interp, "lk::annot_store_seq $s", 3);
+
+  eval_ok(interp, "lk::doc_delete $d 0 12", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  check_int(interp, "len [lk::annot_by_layer $s \"style\"]", 0);
+  check_int(interp, "lk::annot_store_seq $s", 4);
+
+  eval_expect_err(interp, "lk::annot_layers $d", "expected lk_annot_store",
+                  NULL, NULL);
+  eval_expect_err(interp, "lk::annot_store_seq", "lk::annot_store_seq",
+                  "argument", NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_dsl_editor_widget(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -4795,6 +4857,7 @@ int main(void) {
   test_annot_queries();
   test_annot_anchor_tracking();
   test_annot_errors();
+  test_annot_seq_and_layers();
   test_dsl_editor_widget();
   test_dsl_unknown_prop_lists_editor();
 

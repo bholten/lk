@@ -812,6 +812,58 @@ static void test_sub_revision_tracking(void) {
   END_TEST();
 }
 
+static void test_store_seq_and_layers(void) {
+  as_fix f;
+  lk_u32 a;
+  lk_u32 b;
+
+  BEGIN_TEST("annot store: change_seq + layer listing");
+
+  as_init(&f, 40);
+  CHECK(lk_annot_store_seq(f.st) == 0);
+  CHECK(lk_annot_layer_count(f.st) == 0);
+
+  a = lk_annot_add(f.st, 0, 5, "notes", NULL, NULL, 0);
+  CHECK(a != 0);
+  CHECK(lk_annot_store_seq(f.st) == 1);
+  CHECK(lk_annot_layer_count(f.st) == 1);
+  CHECK(strcmp(lk_annot_layer_name(f.st, 0), "notes") == 0);
+  CHECK(lk_annot_layer_name(f.st, 1) == NULL);
+
+  lk_annot_register_layer(f.st, "plumb");
+  b = lk_annot_add(f.st, 10, 20, "style", NULL, NULL, 0);
+  CHECK(b != 0);
+  CHECK(lk_annot_layer_count(f.st) == 3);
+  CHECK(strcmp(lk_annot_layer_name(f.st, 1), "plumb") == 0);
+  CHECK(strcmp(lk_annot_layer_name(f.st, 2), "style") == 0);
+  CHECK(lk_annot_store_seq(f.st) == 2);
+
+  /* anchor motion is not a record-set change */
+  CHECK(as_insert(&f, 0, 3));
+  CHECK(lk_annot_store_seq(f.st) == 2);
+
+  CHECK(lk_annot_remove(f.st, a));
+  CHECK(lk_annot_store_seq(f.st) == 3);
+  CHECK(!lk_annot_remove(f.st, a));
+  CHECK(lk_annot_store_seq(f.st) == 3);
+
+  /* a delete that swallows a record bumps once; one that does not
+   * leaves the sequence alone */
+  CHECK(as_delete(&f, 0, 2));
+  CHECK(lk_annot_store_seq(f.st) == 3);
+  CHECK(as_delete(&f, 0, 30));
+  CHECK(lk_annot_store_seq(f.st) == 4);
+
+  lk_annot_store_clear_layer(f.st, "style");
+  CHECK(lk_annot_store_seq(f.st) == 5);
+  lk_annot_store_clear(f.st);
+  CHECK(lk_annot_store_seq(f.st) == 6);
+  CHECK(lk_annot_layer_count(f.st) == 3); /* layers survive clear */
+
+  as_destroy(&f);
+  END_TEST();
+}
+
 /* ================================================================
  * (c) styled-span render tests (stub backend, exact geometry)
  * ================================================================ */
@@ -1644,6 +1696,7 @@ void lk_annot_run_tests(void) {
   test_sub_undo_round_trip();
   test_sub_destroy_order();
   test_sub_revision_tracking();
+  test_store_seq_and_layers();
 
   printf("\nlk styled-span render tests:\n");
   test_span_midline_three_runs();

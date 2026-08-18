@@ -502,6 +502,10 @@ static void annot_apply_delete(lk_annot_store *s, lk_u32 pos, lk_u32 len) {
     }
   }
 
+  if (write_idx != s->record_count) {
+    s->change_seq++;
+  }
+
   s->record_count = write_idx;
 
   for (i = 0; i < s->layer_count; i++) {
@@ -564,6 +568,7 @@ lk_annot_store *lk_annot_store_new(void *(*alloc)(void *, lk_u32),
       ud, ANNOT_INITIAL_RECORD_CAP * (lk_u32)sizeof(lk_annot_record));
   s->record_cap = ANNOT_INITIAL_RECORD_CAP;
   s->next_record_id = 1;
+  s->change_seq = 0;
 
   s->layers = (lk_annot_layer *)alloc(
       ud, ANNOT_INITIAL_LAYER_CAP * (lk_u32)sizeof(lk_annot_layer));
@@ -633,6 +638,7 @@ void lk_annot_store_clear(lk_annot_store *s) {
   s->anchor_count = 0;
   idmap_clear(&s->anchor_map);
   idmap_clear(&s->record_map);
+  s->change_seq++;
 
   for (i = 0; i < s->layer_count; i++) {
     s->layers[i].state = LK_LAYER_DIRTY;
@@ -668,6 +674,7 @@ void lk_annot_store_clear_layer(lk_annot_store *s, const char *layer) {
   }
 
   s->record_count = write_idx;
+  s->change_seq++;
   l = find_layer(s, layer);
 
   if (l) {
@@ -693,6 +700,22 @@ lk_revision lk_annot_store_rev(const lk_annot_store *s) {
   zero.lo = 0;
 
   return s ? s->doc_rev : zero;
+}
+
+lk_u32 lk_annot_store_seq(const lk_annot_store *s) {
+  return s ? s->change_seq : 0;
+}
+
+lk_u32 lk_annot_layer_count(const lk_annot_store *s) {
+  return s ? s->layer_count : 0;
+}
+
+const char *lk_annot_layer_name(const lk_annot_store *s, lk_u32 index) {
+  if (!s || index >= s->layer_count) {
+    return NULL;
+  }
+
+  return s->layers[index].name;
 }
 
 /* ---- Annotation CRUD ---- */
@@ -790,6 +813,8 @@ lk_u32 lk_annot_add(lk_annot_store *s, lk_u32 start, lk_u32 end,
     lk_annot_register_layer(s, layer);
   }
 
+  s->change_seq++;
+
   return id;
 
 cleanup_meta:
@@ -845,6 +870,7 @@ int lk_annot_remove(lk_annot_store *s, lk_u32 id) {
   }
 
   s->record_count--;
+  s->change_seq++;
 
   return 1;
 }
@@ -1049,6 +1075,7 @@ int lk_annot_set_present(lk_annot_store *s, lk_u32 id, lk_u32 type_id,
   pres_detach(s, r); /* fires the hook for any prior value */
   r->pres_type = type_id;
   r->pres_value = value;
+  s->change_seq++;
 
   return 1;
 }
