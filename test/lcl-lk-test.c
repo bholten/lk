@@ -84,7 +84,7 @@ static void test_ui_create_destroy(void) {
   /* Check it's an opaque */
   eval_ok(interp, "opaque? $ui", &r);
   if (r) {
-    long v;
+    lcl_int v;
     lcl_value_to_int(r, &v);
     CHECK(v == 1);
     lcl_ref_dec(r);
@@ -143,7 +143,7 @@ static void test_node_returns_index(void) {
     &r);
 
   if (r) {
-    long ix;
+    lcl_int ix;
     CHECK(lcl_value_to_int(r, &ix) == LCL_OK);
     CHECK(ix >= 1);
     lcl_ref_dec(r);
@@ -324,7 +324,7 @@ static void test_tree_returns_current(void) {
     "opaque? $cur",
     &r);
   if (r) {
-    long v;
+    lcl_int v;
     lcl_value_to_int(r, &v);
     CHECK(v == 1);
     lcl_ref_dec(r);
@@ -359,7 +359,7 @@ static void test_state_set_get(void) {
 
   eval_ok(interp, "Lk::state_get $ui \"main\" 256", &r);
   if (r) {
-    long v;
+    lcl_int v;
     CHECK(lcl_value_to_int(r, &v) == LCL_OK);
     CHECK(v == 99);
     lcl_ref_dec(r);
@@ -580,7 +580,7 @@ static void test_two_frames_diff(void) {
   /* Check changeset has an "updated" entry */
   eval_ok(interp, "len $cs2", &r);
   if (r) {
-    long len;
+    lcl_int len;
     lcl_value_to_int(r, &len);
     CHECK(len > 0);
     lcl_ref_dec(r);
@@ -619,7 +619,7 @@ static void test_full_tree_build_in_proc(void) {
     &r);
 
   if (r) {
-    long len;
+    lcl_int len;
     lcl_value_to_int(r, &len);
     CHECK(len == 3);  /* 3 nodes added: main, root, greeting */
     lcl_ref_dec(r);
@@ -1404,7 +1404,7 @@ static void test_overlay_count_proc(void) {
 
   eval_ok(interp, "Lk::overlay_count $ui", &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 0);
     lcl_ref_dec(r);
@@ -1508,7 +1508,7 @@ static void test_overlay_push_modal(void) {
 
   eval_ok(interp, "Lk::overlay_count $ui", &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 1);
     lcl_ref_dec(r);
@@ -1586,7 +1586,7 @@ static void test_overlay_pop_proc(void) {
 
   eval_ok(interp, "Lk::overlay_count $ui", &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 0);
     lcl_ref_dec(r);
@@ -1629,7 +1629,7 @@ static void test_overlay_push_errors(void) {
   /* Nothing was pushed by the failed calls. */
   eval_ok(interp, "Lk::overlay_count $ui", &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 0);
     lcl_ref_dec(r);
@@ -2068,7 +2068,7 @@ static void test_state_internal_keys_blocked(void) {
   r = NULL;
   eval_ok(interp, "Lk::state_get $ui \"main\" 300", &r);
   if (r) {
-    long v;
+    lcl_int v;
     CHECK(lcl_value_to_int(r, &v) == LCL_OK);
     CHECK(v == 7);
     lcl_ref_dec(r);
@@ -2503,7 +2503,7 @@ static void test_dsl_on_dispatch(void) {
     "Lk::state_get $u sink 300",
     &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 7);
     lcl_ref_dec(r);
@@ -2537,7 +2537,7 @@ static void test_dsl_frame_view_rebuild(void) {
     "len $cs",
     &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 4); /* root + main + greet + ok all ADDED */
     lcl_ref_dec(r);
@@ -2572,7 +2572,7 @@ static void test_dsl_frame_view_rebuild(void) {
     "len $cs2",
     &r);
   if (r) {
-    long v = -1;
+    lcl_int v = -1;
     lcl_value_to_int(r, &v);
     CHECK(v == 0);
     lcl_ref_dec(r);
@@ -2660,17 +2660,22 @@ static void test_dsl_props_dict_merge(void) {
  */
 
 /* Eval an expression and check its int result. */
-static void check_int(lcl_interp *interp, const char *src, long expect) {
+static void check_int(lcl_interp *interp, const char *src, lcl_int expect) {
   lcl_value *r = NULL;
 
   eval_ok(interp, src, &r);
   if (r) {
-    long v = -99999;
+    lcl_int v = -99999;
     CHECK(lcl_value_to_int(r, &v) == LCL_OK);
     if (v != expect) {
+      char got[LCL_INT_STRLEN];
+      char want[LCL_INT_STRLEN];
+
+      lcl_int_format(got, v);
+      lcl_int_format(want, expect);
       if (g_cur_ok)
         printf("FAIL\n");
-      printf("    %s => %ld, expected %ld\n", src, v, expect);
+      printf("    %s => %s, expected %s\n", src, got, want);
       g_cur_ok = 0;
     }
     lcl_ref_dec(r);
@@ -5669,7 +5674,7 @@ static void test_lcl_presentation_pipeline(void) {
   /* Lk::editor_pos_at against the same layout snapshot */
   eval_ok(interp, "Lk::editor_pos_at $ed 67 8", &r);
   if (r) {
-    long v = -2;
+    lcl_int v = -2;
     lcl_value_to_int(r, &v);
     /* x=67 -> nearest boundary 8 (still valid: the edit above
      * invalidated geometry, so accept -1 or 8?  No: pos_at needs a
@@ -5687,7 +5692,7 @@ static void test_lcl_presentation_pipeline(void) {
 
   eval_ok(interp, "Lk::editor_pos_at $ed 67 8", &r);
   if (r) {
-    long v = -2;
+    lcl_int v = -2;
     lcl_value_to_int(r, &v);
     CHECK(v == 8);
     lcl_ref_dec(r);
@@ -5696,7 +5701,7 @@ static void test_lcl_presentation_pipeline(void) {
 
   eval_ok(interp, "Lk::editor_pos_at $ed -5 -5", &r);
   if (r) {
-    long v = -2;
+    lcl_int v = -2;
     lcl_value_to_int(r, &v);
     CHECK(v == -1);
     lcl_ref_dec(r);
@@ -5735,7 +5740,7 @@ static int focus_probe_handler(lk_event *event, lk_ix node_ix, void *ud) {
   }
 
   args[0] = lcl_lk_event_to_dict(event, p->intern);
-  args[1] = lcl_int_new((long)node_ix);
+  args[1] = lcl_int_new((lcl_int)node_ix);
   lcl_call_proc(p->interp, p->handler, 2, args, &result);
   lcl_ref_dec(args[0]);
   lcl_ref_dec(args[1]);
@@ -6391,7 +6396,7 @@ static void test_forms_theme_accent(void) {
 
 static char *read_text_file(const char *path) {
   FILE *f = fopen(path, "rb");
-  long n;
+  lcl_int n;
   char *buf;
 
   if (!f)
@@ -6476,7 +6481,7 @@ static void test_lk_docs_doctests(void) {
     /* Doctests: run every example against the live bindings. */
     eval_ok(interp, "Doc::report [Doc::doctest $__m]", &r);
     if (r) {
-      long fails = -1;
+      lcl_int fails = -1;
       CHECK(lcl_value_to_int(r, &fails) == LCL_OK);
       CHECK(fails == 0);
       lcl_ref_dec(r);
@@ -6528,7 +6533,7 @@ static void test_lk_docs_doctests(void) {
 
     eval_ok(interp, "Doc::report [Doc::doctest $__dm]", &r);
     if (r) {
-      long fails = -1;
+      lcl_int fails = -1;
       CHECK(lcl_value_to_int(r, &fails) == LCL_OK);
       CHECK(fails == 0);
       lcl_ref_dec(r);
