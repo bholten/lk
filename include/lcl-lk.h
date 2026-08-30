@@ -27,6 +27,15 @@ void lcl_register_lk(lcl_interp *interp);
  * before or after lcl_register_lk; Lk::args reads the latest. */
 void lcl_lk_set_args(int argc, char **argv);
 
+/* The Layer-2 DSL (lib/lk-dsl.lcl), compiled into the library.
+ * lcl_lk_dsl_source returns the text (NUL-terminated; *len is the
+ * byte count, NUL excluded; len may be NULL).  lcl_lk_load_dsl
+ * evaluates it into `interp` under the name "lk-dsl.lcl": the same
+ * result as evaluating the file, with no path involved.  Returns
+ * lcl_eval_*'s code; on LCL_RC_ERR the interp error is set. */
+const char *lcl_lk_dsl_source(size_t *len);
+lcl_return_code lcl_lk_load_dsl(lcl_interp *interp);
+
 #ifdef __cplusplus
 }
 #endif

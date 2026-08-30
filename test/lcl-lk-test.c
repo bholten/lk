@@ -1880,22 +1880,51 @@ static void test_split_ratio_prop_lcl(void) {
 /* Interp with core + lk + the Layer-2 DSL prelude evaluated. */
 static lcl_interp *make_dsl_interp(void) {
   lcl_interp *interp = make_interp();
-  lcl_value *r = NULL;
-  int rc = lcl_eval_file(interp, TEST_DSL_PATH, &r);
+  int rc = lcl_lk_load_dsl(interp);
 
-  if (r) {
-    lcl_ref_dec(r);
-  }
   if (rc != LCL_RC_OK) {
     const char *msg = lcl_interp_error_msg(interp);
     if (g_cur_ok) {
       printf("FAIL\n");
     }
-    printf("    dsl load error (%s): %s\n", TEST_DSL_PATH,
+    printf("    dsl load error (embedded lk-dsl.lcl): %s\n",
            msg ? msg : "(null)");
     g_cur_ok = 0;
   }
   return interp;
+}
+
+static char *read_text_file(const char *path);
+
+/* The prelude the library carries is lib/lk-dsl.lcl byte for byte
+ * (tools/embed.cmake regenerates it on every change), and evaluating
+ * it names the source so diagnostics still say lk-dsl.lcl. */
+static void test_dsl_embedded_matches_file(void) {
+  char *file = read_text_file(TEST_DSL_PATH);
+  size_t len = 0;
+  const char *src = lcl_lk_dsl_source(&len);
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("dsl: embedded prelude == lib/lk-dsl.lcl");
+  CHECK(file != NULL);
+  CHECK(src != NULL && len > 0);
+  CHECK(src[len] == '\0');
+  if (file && src) {
+    CHECK(strlen(file) == len);
+    CHECK(memcmp(file, src, len) == 0);
+  }
+  free(file);
+
+  interp = make_dsl_interp();
+  eval_ok(interp, "Proc::origin ${LkDsl::app}", &r);
+  if (r) {
+    const char *o = lcl_value_to_string(r);
+    CHECK(o && strstr(o, "lk-dsl.lcl") != NULL);
+    lcl_ref_dec(r);
+  }
+  lcl_interp_free(interp);
+  END_TEST();
 }
 
 /* Point the DSL's module state at a fresh ui + open frame.  After this
@@ -7540,6 +7569,7 @@ int main(void) {
   test_doc_mutation_errors();
   test_doc_line_procs();
   test_int_args_checked();
+  test_dsl_embedded_matches_file();
   test_doc_char_col();
   test_doc_find_binding();
   test_doc_find_errors();

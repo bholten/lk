@@ -57,19 +57,32 @@ int main(int argc, char **argv) {
   lcl_register_random(interp);
 #endif
 
-#ifdef LK_DSL_PATH
+  /* The DSL prelude ships inside lcl_lk.  LK_DSL_FILE=<path> evaluates
+   * a file instead -- editing lib/lk-dsl.lcl without a rebuild. */
   {
-    lcl_value *dsl_result = NULL;
-    int dsl_rc = lcl_eval_file(interp, LK_DSL_PATH, &dsl_result);
-    if (dsl_result) {
-      lcl_ref_dec(dsl_result);
+    const char *dsl_file = getenv("LK_DSL_FILE");
+    int dsl_rc;
+
+    if (dsl_file && dsl_file[0]) {
+      lcl_value *dsl_result = NULL;
+
+      dsl_rc = lcl_eval_file(interp, dsl_file, &dsl_result);
+
+      if (dsl_result) {
+        lcl_ref_dec(dsl_result);
+      }
+    } else {
+      dsl_file = "embedded lib/lk-dsl.lcl";
+      dsl_rc = lcl_lk_load_dsl(interp);
     }
+
     if (dsl_rc != LCL_RC_OK) {
-      fprintf(stderr, "Warning: failed to load DSL prelude (%s)\n",
-              LK_DSL_PATH);
+      const char *msg = lcl_interp_error_msg(interp);
+
+      fprintf(stderr, "Warning: failed to load DSL prelude (%s): %s\n",
+              dsl_file, msg ? msg : "(no message)");
     }
   }
-#endif
 
   rc = lcl_eval_file(interp, argv[1], &result);
 
