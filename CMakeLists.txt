@@ -316,7 +316,25 @@ if(LK_BUILD_LCL)
   )
   FetchContent_MakeAvailable(lcl)
 
-  add_library(lcl_lk STATIC src/lcl/lcl-lk.c)
+  # The Layer-2 DSL travels inside the library: lib/lk-dsl.lcl is
+  # embedded as a byte array (tools/embed.cmake) and evaluated by
+  # lcl_lk_load_dsl, so a runner needs no path to the source tree --
+  # the first thing an Emscripten build has no use for.  Regenerated
+  # whenever the .lcl changes.
+  set(_lk_dsl_prelude_c ${CMAKE_CURRENT_BINARY_DIR}/lk-dsl-prelude.c)
+
+  add_custom_command(
+    OUTPUT ${_lk_dsl_prelude_c}
+    COMMAND ${CMAKE_COMMAND}
+      -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl
+      -DOUTPUT=${_lk_dsl_prelude_c}
+      -DSYMBOL=lcl_lk_dsl_prelude
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.cmake
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.cmake
+    COMMENT "Embedding lib/lk-dsl.lcl")
+
+  add_library(lcl_lk STATIC src/lcl/lcl-lk.c ${_lk_dsl_prelude_c})
 
   target_include_directories(lcl_lk
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -337,9 +355,6 @@ if(LK_BUILD_LCL)
       ${CMAKE_CURRENT_SOURCE_DIR}/include
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
-
-    target_compile_definitions(lcl_lk_main PRIVATE
-      LK_DSL_PATH="${CMAKE_CURRENT_SOURCE_DIR}/lib/lk-dsl.lcl")
 
     if(LK_LCL_IO)
       target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_IO)

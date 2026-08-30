@@ -2529,6 +2529,33 @@ static lcl_return_code c_lk_version(lcl_interp *interp, int argc,
 
 /* ---- Lk::args: script arguments (lcl_lk_set_args) ---- */
 
+/* tools/embed.cmake generates these from lib/lk-dsl.lcl (CMake
+ * target lcl_lk). */
+extern const unsigned char lcl_lk_dsl_prelude[];
+extern const size_t lcl_lk_dsl_prelude_len;
+
+const char *lcl_lk_dsl_source(size_t *len) {
+  if (len) {
+    *len = lcl_lk_dsl_prelude_len;
+  }
+
+  return (const char *)lcl_lk_dsl_prelude;
+}
+
+lcl_return_code lcl_lk_load_dsl(lcl_interp *interp) {
+  lcl_value *result = NULL;
+  lcl_return_code rc;
+
+  rc = lcl_eval_bytes_file(interp, (const char *)lcl_lk_dsl_prelude,
+                           lcl_lk_dsl_prelude_len, "lk-dsl.lcl", &result);
+
+  if (result) {
+    lcl_ref_dec(result);
+  }
+
+  return rc;
+}
+
 static int g_lk_argc = 0;
 static char **g_lk_argv = NULL;
 
