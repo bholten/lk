@@ -891,11 +891,11 @@ static lcl_return_code c_lk_end_frame(lcl_interp *interp, int argc,
     lcl_dict_put(&dict, "kind", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ch->id);
+    v = lcl_int_new((lcl_int)ch->id);
     lcl_dict_put(&dict, "id", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ch->node_ix);
+    v = lcl_int_new((lcl_int)ch->node_ix);
     lcl_dict_put(&dict, "node_ix", v);
     lcl_ref_dec(v);
 
@@ -990,7 +990,7 @@ static lcl_return_code c_lk_node(lcl_interp *interp, int argc, lcl_value **argv,
 
   ix = lk_tree_add_node_c(t, id_str, (lk_kind)kind_val);
 
-  *out = lcl_int_new((long)ix);
+  *out = lcl_int_new((lcl_int)ix);
 
   return LCL_RC_OK;
 }
@@ -999,7 +999,7 @@ static lcl_return_code c_lk_node(lcl_interp *interp, int argc, lcl_value **argv,
 static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   lk_tree *t;
-  long ix;
+  lcl_int ix;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::set_root: expected 2 arguments");
@@ -1030,7 +1030,7 @@ static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_tree *t;
-  long parent_ix, child_ix;
+  lcl_int parent_ix, child_ix;
 
   if (argc != 3) {
     lcl_set_error(interp, "Lk::append_child: expected 3 arguments");
@@ -1067,7 +1067,7 @@ static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
                                  lcl_value **out) {
   lk_tree *t;
-  long node_ix;
+  lcl_int node_ix;
   const char *key_str;
   int key_val;
   lk_value lv;
@@ -1112,7 +1112,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
     if (node_ix > 0 && (lk_u32)node_ix < t->node_count &&
         ((lk_kind)t->nodes[node_ix].kind == UIK_SLIDER ||
          (lk_kind)t->nodes[node_ix].kind == UIK_LIST)) {
-      long i;
+      lcl_int i;
       if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
         lcl_set_error(interp,
                       (lk_kind)t->nodes[node_ix].kind == UIK_SLIDER
@@ -1129,7 +1129,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   case UIP_DISABLED:
   case UIP_CHECKED:
   case UIP_HIDDEN: {
-    long b;
+    lcl_int b;
     if (lcl_value_to_int(argv[3], &b) != LCL_OK) {
       lcl_set_error(interp, "Lk::prop: bool prop expects integer");
       return LCL_RC_ERR;
@@ -1145,7 +1145,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   case UIP_CONTROLLED:
   case UIP_MIN:
   case UIP_MAX: {
-    long i;
+    lcl_int i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
       lcl_set_error(interp, "Lk::prop: numeric prop expects integer");
       return LCL_RC_ERR;
@@ -1155,7 +1155,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   }
   case UIP_ROWS:
   case UIP_ROW: {
-    long i;
+    lcl_int i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK || i < 0) {
       lcl_set_error(interp, key_val == UIP_ROWS
                                 ? "Lk::prop: rows expects an integer >= 0"
@@ -1168,7 +1168,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   case UIP_ROW_H:
   case UIP_STEP:
   case UIP_COLUMNS: {
-    long i;
+    lcl_int i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK || i < 1) {
       lcl_set_error(interp, key_val == UIP_STEP
                                 ? "Lk::prop: step expects an integer >= 1"
@@ -1181,7 +1181,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
     break;
   }
   case UIP_GROW: {
-    long i;
+    lcl_int i;
     if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
       lcl_set_error(interp, "Lk::prop: grow expects an integer >= 0");
       return LCL_RC_ERR;
@@ -1291,7 +1291,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
  * number becomes i32, anything else renders to a string. */
 static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
   const char *sv;
-  long iv;
+  lcl_int iv;
 
   if (lcl_value_get_string(v, &sv) == LCL_OK) {
     return lk_v_cstr(t->intern, sv);
@@ -1313,7 +1313,7 @@ static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
 static lcl_return_code c_lk_present(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   lk_tree *t;
-  long node_ix;
+  lcl_int node_ix;
   const char *ptype_str;
   lk_value pvs[LK_PRES_MAX_ARGS];
   lk_u8 count = 0;
@@ -1532,8 +1532,8 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
  * has the ui for arena + resource-table access). */
 static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
   switch (v->tag) {
-  case UIV_I32: return lcl_int_new((long)v->as.i);
-  case UIV_BOOL: return lcl_int_new((long)v->as.b);
+  case UIV_I32: return lcl_int_new((lcl_int)v->as.i);
+  case UIV_BOOL: return lcl_int_new((lcl_int)v->as.b);
   case UIV_STR: {
     const char *s = lk_intern_cstr(intern, v->as.str_id);
     return lcl_string_new(s ? s : "");
@@ -1614,19 +1614,19 @@ static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
     lcl_value *locus = lcl_dict_new();
     char rev[32];
 
-    v = lcl_int_new((long)hit->locus[0]);
+    v = lcl_int_new((lcl_int)hit->locus[0]);
     lcl_dict_put(&locus, "annot_id", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)hit->locus[1]);
+    v = lcl_int_new((lcl_int)hit->locus[1]);
     lcl_dict_put(&locus, "start", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)hit->locus[2]);
+    v = lcl_int_new((lcl_int)hit->locus[2]);
     lcl_dict_put(&locus, "end", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)hit->locus[3]);
+    v = lcl_int_new((lcl_int)hit->locus[3]);
     lcl_dict_put(&locus, "pos", v);
     lcl_ref_dec(v);
 
@@ -1644,13 +1644,13 @@ static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
     /* a STYLED_TEXT span: #{start end pos} */
     lcl_value *locus = lcl_dict_new();
 
-    v = lcl_int_new((long)hit->locus[0]);
+    v = lcl_int_new((lcl_int)hit->locus[0]);
     lcl_dict_put(&locus, "start", v);
     lcl_ref_dec(v);
-    v = lcl_int_new((long)hit->locus[1]);
+    v = lcl_int_new((lcl_int)hit->locus[1]);
     lcl_dict_put(&locus, "end", v);
     lcl_ref_dec(v);
-    v = lcl_int_new((long)hit->locus[2]);
+    v = lcl_int_new((lcl_int)hit->locus[2]);
     lcl_dict_put(&locus, "pos", v);
     lcl_ref_dec(v);
     lcl_dict_put(&dict, "locus", locus);
@@ -1660,7 +1660,7 @@ static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
     int i;
 
     for (i = 0; i < 6; i++) {
-      v = lcl_int_new((long)hit->locus[i]);
+      v = lcl_int_new((lcl_int)hit->locus[i]);
       lcl_list_push(&locus, v);
       lcl_ref_dec(v);
     }
@@ -1700,7 +1700,7 @@ static lcl_value *command_to_dict(const lk_command *cmd, lk_ui *ui) {
   }
 
   /* source_node */
-  v = lcl_int_new((long)cmd->source_node);
+  v = lcl_int_new((lcl_int)cmd->source_node);
   lcl_dict_put(&dict, "source_node", v);
   lcl_ref_dec(v);
 
@@ -1985,7 +1985,7 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
   const char *node_str;
-  long key;
+  lcl_int key;
   lk_node_id nid;
   lk_value lv;
   lk_state *st;
@@ -2017,7 +2017,7 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
   /* Keys below LKS_USER are internal widget state — scripts never
    * poke widget state (initial values are props, e.g. the dropdown's
    * `value`).  App-owned state starts at LKS_USER. */
-  if (key < (long)LKS_USER) {
+  if (key < (lcl_int)LKS_USER) {
     lcl_set_error(interp,
                   "Lk::state_set: keys below 256 (LKS_USER) are internal "
                   "widget state");
@@ -2031,7 +2031,7 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
    * anything else renders (mirrors coerce_lk_value). */
   {
     const char *sv;
-    long iv;
+    lcl_int iv;
 
     if (lcl_value_get_string(argv[3], &sv) == LCL_OK) {
       lv = lk_v_cstr(ui->intern, sv);
@@ -2055,7 +2055,7 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
   const char *node_str;
-  long key;
+  lcl_int key;
   lk_node_id nid;
   lk_value lv;
   lk_state *st;
@@ -2086,7 +2086,7 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
 
   /* Same barrier as Lk::state_set: internal widget state is not
    * script-visible. */
-  if (key < (long)LKS_USER) {
+  if (key < (lcl_int)LKS_USER) {
     lcl_set_error(interp,
                   "Lk::state_get: keys below 256 (LKS_USER) are internal "
                   "widget state");
@@ -2099,8 +2099,8 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
   lv = lk_state_get(st, nid, (lk_u16)key);
 
   switch (lv.tag) {
-  case UIV_I32: *out = lcl_int_new((long)lv.as.i); break;
-  case UIV_BOOL: *out = lcl_int_new((long)lv.as.b); break;
+  case UIV_I32: *out = lcl_int_new((lcl_int)lv.as.i); break;
+  case UIV_BOOL: *out = lcl_int_new((lcl_int)lv.as.b); break;
   case UIV_STR: {
     const char *s = lk_intern_cstr(ui->intern, lv.as.str_id);
     *out = lcl_string_new(s ? s : "");
@@ -2301,8 +2301,8 @@ static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
   const char *text;
-  long font_id = 0;
-  long font_size = 0;
+  lcl_int font_id = 0;
+  lcl_int font_size = 0;
   const lk_text_backend *tb;
   lk_text_metrics m;
   lcl_value *list;
@@ -2347,10 +2347,10 @@ static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
   {
     lcl_value *v;
 
-    v = lcl_int_new((long)m.w);
+    v = lcl_int_new((lcl_int)m.w);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
-    v = lcl_int_new((long)m.h);
+    v = lcl_int_new((lcl_int)m.h);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
   }
@@ -2485,7 +2485,7 @@ static lcl_return_code c_lk_node_rect(lcl_interp *interp, int argc,
     parts[3] = r.h;
 
     for (i = 0; i < 4; i++) {
-      v = lcl_int_new((long)parts[i]);
+      v = lcl_int_new((lcl_int)parts[i]);
       lcl_list_push(&list, v);
       lcl_ref_dec(v);
     }
@@ -2574,7 +2574,7 @@ static void dict_put_cstr(lcl_value **dict, const char *key, const char *s) {
   lcl_ref_dec(v);
 }
 
-static void dict_put_int(lcl_value **dict, const char *key, long i) {
+static void dict_put_int(lcl_value **dict, const char *key, lcl_int i) {
   lcl_value *v = lcl_int_new(i);
 
   lcl_dict_put(dict, key, v);
@@ -2692,7 +2692,7 @@ static lcl_return_code c_lk_time_ms(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_ui_time_ms(ui));
+  *out = lcl_int_new((lcl_int)lk_ui_time_ms(ui));
 
   return LCL_RC_OK;
 }
@@ -2706,7 +2706,7 @@ static lcl_return_code c_lk_time_ms(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
                                 lcl_value **out) {
   lk_tree *t;
-  long node_ix;
+  lcl_int node_ix;
   const char *tag_str;
 
   if (argc != 3) {
@@ -2744,10 +2744,10 @@ static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
 static int parse_color_list(lcl_value *list, lk_color *out) {
   size_t len;
   lcl_value *v;
-  long r;
-  long g;
-  long b;
-  long a;
+  lcl_int r;
+  lcl_int g;
+  lcl_int b;
+  lcl_int a;
 
   len = lcl_list_len(list);
 
@@ -2889,7 +2889,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "padding");
 
   if (v) {
-    long iv;
+    lcl_int iv;
     if (lcl_value_to_int(v, &iv) == LCL_OK) {
       style.padding = (lk_i32)iv;
       field_mask |= LK_SF_PADDING;
@@ -2900,7 +2900,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "gap");
 
   if (v) {
-    long iv;
+    lcl_int iv;
     if (lcl_value_to_int(v, &iv) == LCL_OK) {
       style.gap = (lk_i32)iv;
       field_mask |= LK_SF_GAP;
@@ -2911,7 +2911,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "font_id");
 
   if (v) {
-    long iv;
+    lcl_int iv;
     if (lcl_value_to_int(v, &iv) != LCL_OK || iv < 0) {
       lcl_set_error(interp,
                     "Lk::theme_rule: font_id must be a non-negative int");
@@ -2927,7 +2927,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "font_size");
 
   if (v) {
-    long iv;
+    lcl_int iv;
     if (lcl_value_to_int(v, &iv) != LCL_OK || iv < 0) {
       lcl_set_error(interp,
                     "Lk::theme_rule: font_size must be a non-negative int");
@@ -2943,7 +2943,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "border_width");
 
   if (v) {
-    long iv;
+    lcl_int iv;
     if (lcl_value_to_int(v, &iv) == LCL_OK) {
       style.border_width = (lk_i32)iv;
       field_mask |= LK_SF_BORDER_WIDTH;
@@ -2954,7 +2954,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "border_radius");
 
   if (v) {
-    long iv;
+    lcl_int iv;
     if (lcl_value_to_int(v, &iv) == LCL_OK) {
       style.border_radius = (lk_i32)iv;
       field_mask |= LK_SF_BORDER_RADIUS;
@@ -3056,7 +3056,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_intern_str(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
-  long id;
+  lcl_int id;
   const char *s;
 
   if (argc != 2) {
@@ -3109,7 +3109,7 @@ static lcl_return_code c_lk_intern_id(lcl_interp *interp, int argc,
   }
 
   id = lk_intern_cid(ui->intern, s);
-  *out = lcl_int_new((long)id);
+  *out = lcl_int_new((lcl_int)id);
 
   return LCL_RC_OK;
 }
@@ -3165,15 +3165,15 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
   lcl_dict_put(&dict, "phase", v);
   lcl_ref_dec(v);
 
-  v = lcl_int_new((long)ev->mods);
+  v = lcl_int_new((lcl_int)ev->mods);
   lcl_dict_put(&dict, "mods", v);
   lcl_ref_dec(v);
 
-  v = lcl_int_new((long)ev->handled);
+  v = lcl_int_new((lcl_int)ev->handled);
   lcl_dict_put(&dict, "handled", v);
   lcl_ref_dec(v);
 
-  v = lcl_int_new((long)ev->target);
+  v = lcl_int_new((lcl_int)ev->target);
   lcl_dict_put(&dict, "target", v);
   lcl_ref_dec(v);
 
@@ -3182,26 +3182,26 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
   case LK_EVENT_POINTER_MOVE:
   case LK_EVENT_POINTER_DOWN:
   case LK_EVENT_POINTER_UP:
-    v = lcl_int_new((long)ev->data.pointer.x);
+    v = lcl_int_new((lcl_int)ev->data.pointer.x);
     lcl_dict_put(&dict, "x", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ev->data.pointer.y);
+    v = lcl_int_new((lcl_int)ev->data.pointer.y);
     lcl_dict_put(&dict, "y", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ev->data.pointer.button);
+    v = lcl_int_new((lcl_int)ev->data.pointer.button);
     lcl_dict_put(&dict, "button", v);
     lcl_ref_dec(v);
     break;
 
   case LK_EVENT_KEY_DOWN:
   case LK_EVENT_KEY_UP:
-    v = lcl_int_new((long)ev->data.key.keycode);
+    v = lcl_int_new((lcl_int)ev->data.key.keycode);
     lcl_dict_put(&dict, "keycode", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ev->data.key.repeat);
+    v = lcl_int_new((lcl_int)ev->data.key.repeat);
     lcl_dict_put(&dict, "repeat", v);
     lcl_ref_dec(v);
     break;
@@ -3213,21 +3213,21 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
     break;
 
   case LK_EVENT_WHEEL:
-    v = lcl_int_new((long)ev->data.wheel.dx);
+    v = lcl_int_new((lcl_int)ev->data.wheel.dx);
     lcl_dict_put(&dict, "dx", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ev->data.wheel.dy);
+    v = lcl_int_new((lcl_int)ev->data.wheel.dy);
     lcl_dict_put(&dict, "dy", v);
     lcl_ref_dec(v);
     break;
 
   case LK_EVENT_WINDOW_RESIZE:
-    v = lcl_int_new((long)ev->data.window.w);
+    v = lcl_int_new((lcl_int)ev->data.window.w);
     lcl_dict_put(&dict, "w", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)ev->data.window.h);
+    v = lcl_int_new((lcl_int)ev->data.window.h);
     lcl_dict_put(&dict, "h", v);
     lcl_ref_dec(v);
     break;
@@ -3435,8 +3435,8 @@ static lcl_return_code image_wrap_register(lcl_interp *interp,
 static lcl_return_code c_lk_image_new(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  long w;
-  long h;
+  lcl_int w;
+  lcl_int h;
   lk_image *img;
 
   if (argc != 3) {
@@ -3496,11 +3496,11 @@ static lcl_return_code c_lk_image_size(lcl_interp *interp, int argc,
   lk_image_size(iw->img, &w, &h);
   list = lcl_list_new();
 
-  v = lcl_int_new((long)w);
+  v = lcl_int_new((lcl_int)w);
   lcl_list_push(&list, v);
   lcl_ref_dec(v);
 
-  v = lcl_int_new((long)h);
+  v = lcl_int_new((lcl_int)h);
   lcl_list_push(&list, v);
   lcl_ref_dec(v);
 
@@ -3511,13 +3511,13 @@ static lcl_return_code c_lk_image_size(lcl_interp *interp, int argc,
 
 /* Shared (x, y) validation for the pixel accessors.  Returns the
  * byte offset of the pixel, or sets the error and returns -1. */
-static long image_px_offset(lcl_interp *interp, const char *proc,
+static lcl_int image_px_offset(lcl_interp *interp, const char *proc,
                             struct lcl_lk_image *iw, lcl_value *xv,
                             lcl_value *yv) {
   lk_u32 w = 0;
   lk_u32 h = 0;
-  long x;
-  long y;
+  lcl_int x;
+  lcl_int y;
   char err[96];
 
   lk_image_size(iw->img, &w, &h);
@@ -3530,21 +3530,21 @@ static long image_px_offset(lcl_interp *interp, const char *proc,
     return -1;
   }
 
-  if (x < 0 || y < 0 || x >= (long)w || y >= (long)h) {
+  if (x < 0 || y < 0 || x >= (lcl_int)w || y >= (lcl_int)h) {
     sprintf(err, "%.40s: pixel out of range", proc);
     lcl_set_error(interp, err);
 
     return -1;
   }
 
-  return (y * (long)w + x) * 4;
+  return (y * (lcl_int)w + x) * 4;
 }
 
 /* Lk::image_get_px [img x y] -> (r g b a) */
 static lcl_return_code c_lk_image_get_px(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
-  long off;
+  lcl_int off;
   const lk_u8 *px;
   lcl_value *list;
   int i;
@@ -3571,7 +3571,7 @@ static lcl_return_code c_lk_image_get_px(lcl_interp *interp, int argc,
   list = lcl_list_new();
 
   for (i = 0; i < 4; i++) {
-    lcl_value *v = lcl_int_new((long)px[i]);
+    lcl_value *v = lcl_int_new((lcl_int)px[i]);
 
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
@@ -3587,7 +3587,7 @@ static lcl_return_code c_lk_image_get_px(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_image_set_px(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
-  long off;
+  lcl_int off;
   lk_color c;
   lk_u8 *px;
 
@@ -3636,9 +3636,9 @@ static lcl_return_code c_lk_image_bytes(lcl_interp *interp, int argc,
   struct lcl_lk_image *iw;
   lk_u32 w = 0;
   lk_u32 h = 0;
-  long off;
-  long len;
-  long total;
+  lcl_int off;
+  lcl_int len;
+  lcl_int total;
   char *hex;
 
   if (argc != 3) {
@@ -3662,7 +3662,7 @@ static lcl_return_code c_lk_image_bytes(lcl_interp *interp, int argc,
   }
 
   lk_image_size(iw->img, &w, &h);
-  total = (long)w * (long)h * 4;
+  total = (lcl_int)w * (lcl_int)h * 4;
 
   if (off < 0 || len < 1 || off > total - len) {
     lcl_set_error(interp, "Lk::image_bytes: range out of bounds");
@@ -3693,8 +3693,8 @@ static lcl_return_code c_lk_image_set_bytes(lcl_interp *interp, int argc,
   struct lcl_lk_image *iw;
   lk_u32 w = 0;
   lk_u32 h = 0;
-  long off;
-  long total;
+  lcl_int off;
+  lcl_int total;
   const char *hex;
   unsigned char *bytes;
   lk_u32 n = 0;
@@ -3733,9 +3733,9 @@ static lcl_return_code c_lk_image_set_bytes(lcl_interp *interp, int argc,
   }
 
   lk_image_size(iw->img, &w, &h);
-  total = (long)w * (long)h * 4;
+  total = (lcl_int)w * (lcl_int)h * 4;
 
-  if (off < 0 || off > total - (long)n) {
+  if (off < 0 || off > total - (lcl_int)n) {
     free(bytes);
     lcl_set_error(interp, "Lk::image_set_bytes: range out of bounds");
 
@@ -3829,7 +3829,7 @@ static int canvas_color(lcl_interp *interp, const char *proc, lcl_value *v,
  * 0..255 (hard error otherwise). */
 static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
                          lcl_value **argv, int idx, lk_u8 *out) {
-  long v;
+  lcl_int v;
   char err[96];
 
   *out = 1;
@@ -3856,8 +3856,8 @@ static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
 static lcl_return_code c_lk_canvas_new(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  long w = 0;
-  long h = 0;
+  lcl_int w = 0;
+  lcl_int h = 0;
   lk_canvas *cv;
   struct lcl_lk_canvas *cw;
   lk_resource_ref ref;
@@ -3947,10 +3947,10 @@ static lcl_return_code c_lk_canvas_size(lcl_interp *interp, int argc,
   lk_canvas_size(cw->cv, &w, &h);
 
   list = lcl_list_new();
-  v = lcl_int_new((long)w);
+  v = lcl_int_new((lcl_int)w);
   lcl_list_push(&list, v);
   lcl_ref_dec(v);
-  v = lcl_int_new((long)h);
+  v = lcl_int_new((lcl_int)h);
   lcl_list_push(&list, v);
   lcl_ref_dec(v);
 
@@ -3964,8 +3964,8 @@ static lcl_return_code c_lk_canvas_set_size(lcl_interp *interp, int argc,
                                             lcl_value **argv,
                                             lcl_value **out) {
   struct lcl_lk_canvas *cw;
-  long w;
-  long h;
+  lcl_int w;
+  lcl_int h;
 
   if (argc != 3) {
     lcl_set_error(interp,
@@ -4233,7 +4233,7 @@ static lcl_return_code c_lk_spans_count(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_spans_count(sw->sp));
+  *out = lcl_int_new((lcl_int)lk_spans_count(sw->sp));
 
   return LCL_RC_OK;
 }
@@ -4242,7 +4242,7 @@ static lcl_return_code c_lk_spans_count(lcl_interp *interp, int argc,
 static int spans_range_args(lcl_interp *interp, const char *proc,
                             lcl_value *a, lcl_value *b, lk_u32 *start,
                             lk_u32 *end) {
-  long s, e;
+  lcl_int s, e;
   char err[96];
 
   if (lcl_value_to_int(a, &s) != LCL_OK || lcl_value_to_int(b, &e) != LCL_OK ||
@@ -4351,7 +4351,7 @@ static lcl_return_code c_lk_spans_add(lcl_interp *interp, int argc,
   v = lcl_dict_peek(argv[3], "underline");
 
   if (v) {
-    long u;
+    lcl_int u;
 
     if (lcl_value_to_int(v, &u) != LCL_OK) {
       lcl_set_error(interp, "Lk::spans_add: underline must be 0 or 1");
@@ -4471,7 +4471,7 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
                                                lcl_value **out) {
   lk_ui *ui = NULL;
   const char *id_str;
-  long x, y;
+  lcl_int x, y;
   lk_u32 pos = 0;
 
   if (argc != 4) {
@@ -4500,7 +4500,7 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
 
   if (lk_styled_text_pos_at(ui, lk_intern_cid(ui->intern, id_str), (lk_i32)x,
                             (lk_i32)y, &pos)) {
-    *out = lcl_int_new((long)pos);
+    *out = lcl_int_new((lcl_int)pos);
   } else {
     *out = lcl_int_new(-1);
   }
@@ -4519,7 +4519,7 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_context_menu(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  long x, y;
+  lcl_int x, y;
 
   if (argc != 3) {
     lcl_set_error(interp, "Lk::context_menu: expected 3 arguments (ui, x, y)");
@@ -4538,7 +4538,7 @@ static lcl_return_code c_lk_context_menu(lcl_interp *interp, int argc,
   }
 
   *out = lcl_int_new(
-      (long)lk_menu_open_context(ui, lk_ui_tree(ui), (lk_i32)x, (lk_i32)y));
+      (lcl_int)lk_menu_open_context(ui, lk_ui_tree(ui), (lk_i32)x, (lk_i32)y));
 
   return LCL_RC_OK;
 }
@@ -4559,7 +4559,8 @@ static lcl_return_code c_lk_context_menu_focus(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_menu_open_context_at_focus(ui, lk_ui_tree(ui)));
+  *out = lcl_int_new(
+      (lcl_int)lk_menu_open_context_at_focus(ui, lk_ui_tree(ui)));
 
   return LCL_RC_OK;
 }
@@ -4655,7 +4656,7 @@ static int menu_item_from_lcl(lcl_interp *interp, lk_ui *ui, lcl_value *v,
     e = lcl_dict_peek(v, "enabled");
 
     if (e) {
-      long en;
+      lcl_int en;
 
       if (lcl_value_to_int(e, &en) != LCL_OK) {
         lcl_set_error(interp, "Lk::menu_open: enabled must be 0 or 1");
@@ -4697,7 +4698,7 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
   size_t n, i;
   lk_node_id owner = 0;
   int anchor = -1;
-  long x = 0, y = 0;
+  lcl_int x = 0, y = 0;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::menu_open: expected 2 arguments (ui, spec)");
@@ -4788,7 +4789,7 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
     }
   }
 
-  *out = lcl_int_new((long)lk_menu_open(ui, owner, (lk_u8)anchor, (lk_i32)x,
+  *out = lcl_int_new((lcl_int)lk_menu_open(ui, owner, (lk_u8)anchor, (lk_i32)x,
                                         (lk_i32)y, buf, (lk_u32)n));
 
   return LCL_RC_OK;
@@ -4833,10 +4834,10 @@ static lcl_return_code c_lk_menu_items(lcl_interp *interp, int argc,
     v = lcl_string_new(s ? s : "");
     lcl_dict_put(&d, "accel", v);
     lcl_ref_dec(v);
-    v = lcl_int_new((long)it->enabled);
+    v = lcl_int_new((lcl_int)it->enabled);
     lcl_dict_put(&d, "enabled", v);
     lcl_ref_dec(v);
-    v = lcl_int_new((long)it->separator);
+    v = lcl_int_new((lcl_int)it->separator);
     lcl_dict_put(&d, "separator", v);
     lcl_ref_dec(v);
     lcl_list_push(&list, d);
@@ -4863,7 +4864,7 @@ static lcl_return_code c_lk_menu_hover(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_menu_hover(ui));
+  *out = lcl_int_new((lcl_int)lk_menu_hover(ui));
 
   return LCL_RC_OK;
 }
@@ -4872,7 +4873,7 @@ static lcl_return_code c_lk_menu_hover(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_menu_activate(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  long i;
+  lcl_int i;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::menu_activate: expected 2 arguments (ui, index)");
@@ -4889,7 +4890,7 @@ static lcl_return_code c_lk_menu_activate(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_menu_activate(ui, (lk_u32)i));
+  *out = lcl_int_new((lcl_int)lk_menu_activate(ui, (lk_u32)i));
 
   return LCL_RC_OK;
 }
@@ -4949,10 +4950,10 @@ static lcl_return_code c_lk_list_range(lcl_interp *interp, int argc,
   if (lk_list_range(ui, lk_intern_cid(ui->intern, id_str), &first, &count)) {
     lcl_value *v;
 
-    v = lcl_int_new((long)first);
+    v = lcl_int_new((lcl_int)first);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
-    v = lcl_int_new((long)count);
+    v = lcl_int_new((lcl_int)count);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
   }
@@ -4967,7 +4968,7 @@ static lcl_return_code c_lk_list_scroll_to(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
   const char *id_str;
-  long row;
+  lcl_int row;
 
   if (argc != 3) {
     lcl_set_error(interp,
@@ -4991,7 +4992,7 @@ static lcl_return_code c_lk_list_scroll_to(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_list_scroll_to_row(
+  *out = lcl_int_new((lcl_int)lk_list_scroll_to_row(
       ui, lk_intern_cid(ui->intern, id_str), (lk_i32)row));
 
   return LCL_RC_OK;
@@ -5015,7 +5016,7 @@ static lcl_return_code c_lk_canvas_op_count(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_canvas_op_count(cw->cv));
+  *out = lcl_int_new((lcl_int)lk_canvas_op_count(cw->cv));
 
   return LCL_RC_OK;
 }
@@ -5316,7 +5317,7 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
   }
 
   args[0] = ev_dict;
-  args[1] = lcl_int_new((long)node_ix);
+  args[1] = lcl_int_new((lcl_int)node_ix);
 
   rc = lcl_call_proc(lw->interp, lw->event_handler, 2, args, &result);
 
@@ -5325,7 +5326,7 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
   }
 
   if (rc == LCL_RC_OK && result) {
-    long handled;
+    lcl_int handled;
     if (lcl_value_to_int(result, &handled) == LCL_OK && handled) {
       event->handled = 1;
     }
@@ -5419,7 +5420,7 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   cfg.font_path = NULL;
 
   if (argc >= 2) {
-    long w;
+    lcl_int w;
 
     if (lcl_value_to_int(argv[1], &w) == LCL_OK) {
       cfg.width = (int)w;
@@ -5427,7 +5428,7 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   }
 
   if (argc >= 3) {
-    long h;
+    lcl_int h;
 
     if (lcl_value_to_int(argv[2], &h) == LCL_OK) {
       cfg.height = (int)h;
@@ -5439,7 +5440,7 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   }
 
   if (argc >= 5) {
-    long sz;
+    lcl_int sz;
 
     if (lcl_value_to_int(argv[4], &sz) == LCL_OK) {
       cfg.font_size = (int)sz;
@@ -5632,7 +5633,7 @@ static lcl_return_code c_lk_register_font(lcl_interp *interp, int argc,
   path = lcl_value_to_string(argv[1]);
   id = lk_window_register_font(lw->win, path);
 
-  *out = lcl_int_new((long)id);
+  *out = lcl_int_new((lcl_int)id);
 
   return LCL_RC_OK;
 }
@@ -5661,7 +5662,7 @@ static lcl_return_code c_lk_window_icon(lcl_interp *interp, int argc,
 
   path = lcl_value_to_string(argv[1]);
 
-  *out = lcl_int_new((long)lk_window_set_icon(lw->win, path));
+  *out = lcl_int_new((lcl_int)lk_window_set_icon(lw->win, path));
 
   return LCL_RC_OK;
 }
@@ -5697,7 +5698,7 @@ static lcl_return_code c_lk_window_screenshot(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_window_request_screenshot(lw->win, path));
+  *out = lcl_int_new((lcl_int)lk_window_request_screenshot(lw->win, path));
 
   return LCL_RC_OK;
 }
@@ -5771,7 +5772,7 @@ static lcl_return_code c_lk_window_icon_hex(lcl_interp *interp, int argc,
   ok = lk_window_set_icon_mem(lw->win, bytes, n);
   free(bytes);
 
-  *out = lcl_int_new((long)ok);
+  *out = lcl_int_new((lcl_int)ok);
 
   return LCL_RC_OK;
 }
@@ -5890,7 +5891,7 @@ static lcl_return_code c_lk_image_save(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)ok);
+  *out = lcl_int_new((lcl_int)ok);
 
   return LCL_RC_OK;
 }
@@ -6086,7 +6087,7 @@ static lcl_return_code c_lk_overlay_count(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_overlay_count(ui));
+  *out = lcl_int_new((lcl_int)lk_overlay_count(ui));
 
   return LCL_RC_OK;
 }
@@ -6191,7 +6192,7 @@ static lcl_return_code c_lk_overlay_push(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "dismiss_on_outside");
 
   if (v) {
-    long b;
+    lcl_int b;
 
     if (lcl_value_to_int(v, &b) != LCL_OK) {
       lcl_set_error(interp, "Lk::overlay_push: dismiss_on_outside expects int");
@@ -6204,7 +6205,7 @@ static lcl_return_code c_lk_overlay_push(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "traps_focus");
 
   if (v) {
-    long b;
+    lcl_int b;
 
     if (lcl_value_to_int(v, &b) != LCL_OK) {
       lcl_set_error(interp, "Lk::overlay_push: traps_focus expects int");
@@ -6474,7 +6475,7 @@ static lcl_return_code c_lk_doc_len(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_doc_len(dw->doc));
+  *out = lcl_int_new((lcl_int)lk_doc_len(dw->doc));
 
   return LCL_RC_OK;
 }
@@ -6496,7 +6497,7 @@ static lcl_return_code c_lk_doc_line_count(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_doc_line_count(dw->doc));
+  *out = lcl_int_new((lcl_int)lk_doc_line_count(dw->doc));
 
   return LCL_RC_OK;
 }
@@ -6509,7 +6510,7 @@ static lcl_return_code c_lk_doc_line_count(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  long pos;
+  lcl_int pos;
 
   if (argc != 2) {
     lcl_set_error(interp,
@@ -6531,7 +6532,7 @@ static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_doc_pos_to_line(dw->doc, (lk_u32)pos));
+  *out = lcl_int_new((lcl_int)lk_doc_pos_to_line(dw->doc, (lk_u32)pos));
 
   return LCL_RC_OK;
 }
@@ -6543,7 +6544,7 @@ static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  long line;
+  lcl_int line;
 
   if (argc != 2) {
     lcl_set_error(interp,
@@ -6571,7 +6572,7 @@ static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_doc_line_start(dw->doc, (lk_u32)line));
+  *out = lcl_int_new((lcl_int)lk_doc_line_start(dw->doc, (lk_u32)line));
 
   return LCL_RC_OK;
 }
@@ -6583,7 +6584,7 @@ static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  long line;
+  lcl_int line;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::doc_line_end: expected 2 arguments (doc, line)");
@@ -6610,7 +6611,7 @@ static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_doc_line_end(dw->doc, (lk_u32)line));
+  *out = lcl_int_new((lcl_int)lk_doc_line_end(dw->doc, (lk_u32)line));
 
   return LCL_RC_OK;
 }
@@ -6632,7 +6633,7 @@ static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  long pos;
+  lcl_int pos;
   lk_u32 at;
   lk_u32 col;
   char buf[256];
@@ -6689,7 +6690,7 @@ static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
     at += got;
   }
 
-  *out = lcl_int_new((long)col);
+  *out = lcl_int_new((lcl_int)col);
 
   return LCL_RC_OK;
 }
@@ -6706,7 +6707,7 @@ static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
   const char *needle;
-  long from = 0;
+  lcl_int from = 0;
   lk_u32 pos = 0;
 
   if (argc != 2 && argc != 3) {
@@ -6742,7 +6743,7 @@ static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
 
   if (lk_doc_find(dw->doc, needle, (lk_u32)strlen(needle), (lk_u32)from,
                   &pos)) {
-    *out = lcl_int_new((long)pos);
+    *out = lcl_int_new((lcl_int)pos);
   } else {
     *out = lcl_int_new(-1);
   }
@@ -6784,7 +6785,7 @@ static lcl_return_code c_lk_doc_revision(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  long pos;
+  lcl_int pos;
   const char *text;
 
   if (argc != 3) {
@@ -6824,8 +6825,8 @@ static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_delete(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  long pos;
-  long len;
+  lcl_int pos;
+  lcl_int len;
 
   if (argc != 3) {
     lcl_set_error(interp, "Lk::doc_delete: expected 3 arguments (doc, pos, len)");
@@ -6928,15 +6929,15 @@ static void lcl_doc_sub_bridge(void *ud, const lk_document *d,
     lcl_value *dict = lcl_dict_new();
     lcl_value *v;
 
-    v = lcl_int_new((long)dl->start);
+    v = lcl_int_new((lcl_int)dl->start);
     lcl_dict_put(&dict, "start", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)dl->deleted_len);
+    v = lcl_int_new((lcl_int)dl->deleted_len);
     lcl_dict_put(&dict, "deleted_len", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)dl->inserted_len);
+    v = lcl_int_new((lcl_int)dl->inserted_len);
     lcl_dict_put(&dict, "inserted_len", v);
     lcl_ref_dec(v);
 
@@ -6950,7 +6951,7 @@ static void lcl_doc_sub_bridge(void *ud, const lk_document *d,
     lcl_dict_put(&dict, "inserted", v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)dl->origin);
+    v = lcl_int_new((lcl_int)dl->origin);
     lcl_dict_put(&dict, "origin", v);
     lcl_ref_dec(v);
 
@@ -7021,7 +7022,7 @@ static lcl_return_code c_lk_doc_subscribe(lcl_interp *interp, int argc,
   sub->next = dw->subs;
   dw->subs = sub;
 
-  *out = lcl_int_new((long)sub->id);
+  *out = lcl_int_new((lcl_int)sub->id);
 
   return LCL_RC_OK;
 }
@@ -7031,7 +7032,7 @@ static lcl_return_code c_lk_doc_unsubscribe(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
   struct lcl_doc_sub **link;
-  long id;
+  lcl_int id;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::doc_unsubscribe: expected 2 arguments (doc, id)");
@@ -7156,7 +7157,7 @@ static lcl_return_code c_lk_history_undo(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_history_undo(hw->hist, dw->doc));
+  *out = lcl_int_new((lcl_int)lk_history_undo(hw->hist, dw->doc));
 
   return LCL_RC_OK;
 }
@@ -7185,7 +7186,7 @@ static lcl_return_code c_lk_history_redo(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_history_redo(hw->hist, dw->doc));
+  *out = lcl_int_new((lcl_int)lk_history_redo(hw->hist, dw->doc));
 
   return LCL_RC_OK;
 }
@@ -7208,7 +7209,7 @@ static lcl_return_code c_lk_history_can_undo(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_history_can_undo(hw->hist));
+  *out = lcl_int_new((lcl_int)lk_history_can_undo(hw->hist));
 
   return LCL_RC_OK;
 }
@@ -7231,7 +7232,7 @@ static lcl_return_code c_lk_history_can_redo(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_history_can_redo(hw->hist));
+  *out = lcl_int_new((lcl_int)lk_history_can_redo(hw->hist));
 
   return LCL_RC_OK;
 }
@@ -7278,7 +7279,7 @@ static lcl_return_code c_lk_history_at_saved(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_history_at_saved(hw->hist));
+  *out = lcl_int_new((lcl_int)lk_history_at_saved(hw->hist));
 
   return LCL_RC_OK;
 }
@@ -7404,7 +7405,7 @@ static lcl_return_code c_lk_editor_cursor(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_editor_cursor(ew->ed));
+  *out = lcl_int_new((lcl_int)lk_editor_cursor(ew->ed));
 
   return LCL_RC_OK;
 }
@@ -7414,7 +7415,7 @@ static lcl_return_code c_lk_editor_set_cursor(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
   struct lcl_lk_editor *ew;
-  long pos;
+  lcl_int pos;
 
   if (argc != 2) {
     lcl_set_error(interp,
@@ -7497,11 +7498,11 @@ static lcl_return_code c_lk_editor_selection(lcl_interp *interp, int argc,
   if (lk_editor_selection(ew->ed, &start, &end)) {
     lcl_value *v;
 
-    v = lcl_int_new((long)start);
+    v = lcl_int_new((lcl_int)start);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
 
-    v = lcl_int_new((long)end);
+    v = lcl_int_new((lcl_int)end);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
   }
@@ -7540,7 +7541,7 @@ static lcl_return_code c_lk_editor_carets(lcl_interp *interp, int argc,
     lcl_value *v;
 
     lk_editor_caret(ew->ed, i, &cur, NULL, NULL);
-    v = lcl_int_new((long)cur);
+    v = lcl_int_new((lcl_int)cur);
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
   }
@@ -7584,11 +7585,11 @@ static lcl_return_code c_lk_editor_selections(lcl_interp *interp, int argc,
     if (lk_editor_caret(ew->ed, i, NULL, &s, &en)) {
       lcl_value *v;
 
-      v = lcl_int_new((long)s);
+      v = lcl_int_new((lcl_int)s);
       lcl_list_push(&entry, v);
       lcl_ref_dec(v);
 
-      v = lcl_int_new((long)en);
+      v = lcl_int_new((lcl_int)en);
       lcl_list_push(&entry, v);
       lcl_ref_dec(v);
     }
@@ -7615,7 +7616,7 @@ static lcl_return_code c_lk_editor_set_editable(lcl_interp *interp, int argc,
                                                 lcl_value **argv,
                                                 lcl_value **out) {
   struct lcl_lk_editor *ew;
-  long on;
+  lcl_int on;
 
   if (argc != 2) {
     lcl_set_error(
@@ -7837,7 +7838,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
     break;
 
   case LK_ED_SET_CURSOR: {
-    long pos;
+    lcl_int pos;
 
     if (extra < 1 || extra > 2) {
       lcl_set_error(interp,
@@ -7871,7 +7872,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
   }
 
   case LK_ED_SCROLL_LINES: {
-    long lines;
+    lcl_int lines;
 
     if (extra != 1 || lcl_value_to_int(argv[2], &lines) != LCL_OK) {
       lcl_set_error(
@@ -7886,7 +7887,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
   }
 
   case LK_ED_ADD_CURSOR_AT: {
-    long pos;
+    lcl_int pos;
 
     if (extra != 1 || lcl_value_to_int(argv[2], &pos) != LCL_OK || pos < 0) {
       lcl_set_error(interp,
@@ -7929,7 +7930,8 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
   }
 
   *out = lcl_int_new(
-      (long)lk_editor_command(ew->ed, ew->ui, (lk_editor_cmd_id)cmd_val, &arg));
+      (lcl_int)lk_editor_command(ew->ed, ew->ui, (lk_editor_cmd_id)cmd_val,
+                                 &arg));
 
   return LCL_RC_OK;
 }
@@ -7940,8 +7942,8 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
 static int span_from_dict(lcl_interp *interp, lcl_value *dict,
                           lk_edit_span *sp) {
   lcl_value *v;
-  long a;
-  long b;
+  lcl_int a;
+  lcl_int b;
 
   if (lcl_value_type_of(dict) != LCL_DICT) {
     lcl_set_error(interp,
@@ -8046,7 +8048,7 @@ static int span_from_dict(lcl_interp *interp, lcl_value *dict,
   v = lcl_dict_peek(dict, "underline");
 
   if (v) {
-    long u;
+    lcl_int u;
 
     if (lcl_value_to_int(v, &u) != LCL_OK) {
       lcl_set_error(interp, "Lk::editor_set_spans: underline expects an int");
@@ -8255,8 +8257,8 @@ static lcl_return_code c_lk_annot_attach(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long start;
-  long end;
+  lcl_int start;
+  lcl_int end;
   const char *layer;
   lk_u32 id;
   const char **keys = NULL;
@@ -8361,7 +8363,7 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)id);
+  *out = lcl_int_new((lcl_int)id);
 
   return LCL_RC_OK;
 }
@@ -8370,7 +8372,7 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long id;
+  lcl_int id;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::annot_remove: expected 2 arguments (store, id)");
@@ -8390,7 +8392,7 @@ static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_annot_remove(aw->store, (lk_u32)id));
+  *out = lcl_int_new((lcl_int)lk_annot_remove(aw->store, (lk_u32)id));
 
   return LCL_RC_OK;
 }
@@ -8400,7 +8402,7 @@ static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long id;
+  lcl_int id;
   lk_u32 start;
   lk_u32 end;
   lcl_value *list;
@@ -8432,11 +8434,11 @@ static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
 
   list = lcl_list_new();
 
-  v = lcl_int_new((long)start);
+  v = lcl_int_new((lcl_int)start);
   lcl_list_push(&list, v);
   lcl_ref_dec(v);
 
-  v = lcl_int_new((long)end);
+  v = lcl_int_new((lcl_int)end);
   lcl_list_push(&list, v);
   lcl_ref_dec(v);
 
@@ -8450,7 +8452,7 @@ static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long id;
+  lcl_int id;
   const char *val;
 
   if (argc != 3) {
@@ -8498,7 +8500,7 @@ static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long id;
+  lcl_int id;
   const lk_annot_record *rec;
 
   if (argc != 2) {
@@ -8539,7 +8541,7 @@ static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_meta_all(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long id;
+  lcl_int id;
   const lk_annot_record *rec;
   lcl_value *d;
   lk_u32 i;
@@ -8591,7 +8593,7 @@ static lcl_value *annot_query_to_list(const lk_annot_query *q) {
   lk_u32 i;
 
   for (i = 0; i < q->count; i++) {
-    lcl_value *v = lcl_int_new((long)q->ids[i]);
+    lcl_value *v = lcl_int_new((lcl_int)q->ids[i]);
 
     lcl_list_push(&list, v);
     lcl_ref_dec(v);
@@ -8604,8 +8606,8 @@ static lcl_value *annot_query_to_list(const lk_annot_query *q) {
 static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long start;
-  long end;
+  lcl_int start;
+  lcl_int end;
   const char *layer = NULL;
   lk_annot_query q;
 
@@ -8650,7 +8652,7 @@ static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_at(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long pos;
+  lcl_int pos;
   const char *layer = NULL;
   lk_annot_query q;
 
@@ -8766,7 +8768,7 @@ static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
                                                  lcl_value **argv,
                                                  lcl_value **out) {
   struct lcl_lk_annot *aw;
-  long prio;
+  lcl_int prio;
 
   if (argc != 3) {
     lcl_set_error(interp,
@@ -8824,7 +8826,7 @@ static lcl_return_code c_lk_annot_store_seq(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((long)lk_annot_store_seq(aw->store));
+  *out = lcl_int_new((lcl_int)lk_annot_store_seq(aw->store));
 
   return LCL_RC_OK;
 }
@@ -8908,7 +8910,7 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
   struct lcl_lk_annot *aw;
-  long id;
+  lcl_int id;
   const char *ptype_str;
   struct lcl_pres_box *box;
   lk_resource_ref ref;
@@ -9018,8 +9020,8 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_editor_pos_at(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
-  long x;
-  long y;
+  lcl_int x;
+  lcl_int y;
   lk_u32 pos = 0;
 
   if (argc != 3) {
@@ -9043,7 +9045,7 @@ static lcl_return_code c_lk_editor_pos_at(lcl_interp *interp, int argc,
   }
 
   if (lk_editor_pos_at(ew->ed, (lk_i32)x, (lk_i32)y, &pos)) {
-    *out = lcl_int_new((long)pos);
+    *out = lcl_int_new((lcl_int)pos);
   } else {
     *out = lcl_int_new(-1);
   }
