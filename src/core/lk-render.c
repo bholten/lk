@@ -1,8 +1,8 @@
 #include <string.h>
 
 #include "lk-memory.h"
-#include "lk-tabs.h"
 #include "lk-overlay.h"
+#include "lk-tabs.h"
 #include <lk.h>
 
 int lk_render_list_push(lk_render_list *rl, lk_render_cmd cmd) {

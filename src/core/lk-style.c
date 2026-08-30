@@ -509,14 +509,12 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
     }
 
     if (lk_node_has_prop(t, n, UIP_TEXT_ALIGN)) {
-      styles[n].text_align =
-          (lk_u8)lk_node_prop_i32(t, n, UIP_TEXT_ALIGN, 0);
+      styles[n].text_align = (lk_u8)lk_node_prop_i32(t, n, UIP_TEXT_ALIGN, 0);
       set_mask |= LK_SF_TEXT_ALIGN;
     }
 
     if (lk_node_has_prop(t, n, UIP_TEXT_VALIGN)) {
-      styles[n].text_valign =
-          (lk_u8)lk_node_prop_i32(t, n, UIP_TEXT_VALIGN, 0);
+      styles[n].text_valign = (lk_u8)lk_node_prop_i32(t, n, UIP_TEXT_VALIGN, 0);
       set_mask |= LK_SF_TEXT_VALIGN;
     }
 

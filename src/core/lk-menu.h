@@ -19,10 +19,10 @@
 struct lk_menu_state {
   lk_menu_item *items;
   lk_u32 count, cap;
-  lk_i32 hover;    /* -1 = none */
+  lk_i32 hover; /* -1 = none */
   lk_node_id owner;
-  lk_rect rect;    /* last resolved popup rect (render / hit) */
-  lk_i32 row_h;    /* row metrics of that resolution */
+  lk_rect rect; /* last resolved popup rect (render / hit) */
+  lk_i32 row_h; /* row metrics of that resolution */
   lk_u8 placed;
 };
 

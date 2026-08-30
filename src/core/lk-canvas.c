@@ -261,8 +261,7 @@ int lk_canvas_polyline(lk_canvas *c, const lk_i32 *xy, lk_u32 n_points,
   /* Bytes first so an op-array failure can roll them back cheaply. */
   saved_bytes = c->bytes_count;
 
-  if (!canvas_push_bytes(c, xy, n_points * 2u * (lk_u32)sizeof(lk_i32),
-                         &off)) {
+  if (!canvas_push_bytes(c, xy, n_points * 2u * (lk_u32)sizeof(lk_i32), &off)) {
     return 0;
   }
 
@@ -498,10 +497,18 @@ static int emit_lines(lk_render_list *out, const lk_i32 *xy, lk_u32 n,
     lk_i32 x = xy[i * 2] + ox;
     lk_i32 y = xy[i * 2 + 1] + oy;
 
-    if (x < minx) minx = x;
-    if (x > maxx) maxx = x;
-    if (y < miny) miny = y;
-    if (y > maxy) maxy = y;
+    if (x < minx) {
+      minx = x;
+    }
+    if (x > maxx) {
+      maxx = x;
+    }
+    if (y < miny) {
+      miny = y;
+    }
+    if (y > maxy) {
+      maxy = y;
+    }
 
     win[pending * 2] = x;
     win[pending * 2 + 1] = y;

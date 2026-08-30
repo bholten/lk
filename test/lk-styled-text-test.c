@@ -22,7 +22,8 @@
 
 /* ---- helpers ---- */
 
-static lk_rect *layout_ui(lk_ui *ui, lk_i32 vw, lk_i32 vh, lk_style **out_styles) {
+static lk_rect *layout_ui(lk_ui *ui, lk_i32 vw, lk_i32 vh,
+                          lk_style **out_styles) {
   lk_layout_cfg cfg;
   lk_rect *rects;
   lk_style *styles;
@@ -113,8 +114,8 @@ static void rows_str(const char *text, lk_i32 width, lk_wrap_mode mode,
 
   out[0] = 0;
 
-  while (lk_styled_text_row(lk_text_backend_stub(), 0, 0, lk_str_c(text),
-                            width, mode, k, &s, &e)) {
+  while (lk_styled_text_row(lk_text_backend_stub(), 0, 0, lk_str_c(text), width,
+                            mode, k, &s, &e)) {
     if (k > 0 && n + 1 < cap) {
       out[n++] = '|';
     }
@@ -247,7 +248,8 @@ static void test_rows_policy(void) {
   CHECK(rows_eq("abcdefghijk", 40, LK_WRAP_CHARACTER, "abcde|fghij|k"));
   /* UTF-8: 5 two-byte codepoints fit 40 px. */
   CHECK(rows_eq("\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9", 40,
-                LK_WRAP_CHARACTER, "\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9|\xc3\xa9"));
+                LK_WRAP_CHARACTER,
+                "\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9|\xc3\xa9"));
 
   /* WORD: break after the last space; trailing space stays up. */
   CHECK(rows_eq("aaa bbb ccc", 56, LK_WRAP_WORD, "aaa bbb |ccc"));
@@ -275,8 +277,8 @@ static void test_rows_policy(void) {
   CHECK_EQ(lk_styled_text_row_count(lk_text_backend_stub(), 0, 0,
                                     lk_str_c("aaa bbb ccc"), 40, LK_WRAP_WORD),
            3);
-  CHECK_EQ(lk_styled_text_row_count(lk_text_backend_stub(), 0, 0,
-                                    lk_str_c(""), 40, LK_WRAP_WORD),
+  CHECK_EQ(lk_styled_text_row_count(lk_text_backend_stub(), 0, 0, lk_str_c(""),
+                                    40, LK_WRAP_WORD),
            1);
 
   END_TEST();
@@ -327,9 +329,9 @@ static void test_fit_column(void) {
     lk_ix inner = find(ui, "inner");
 
     CHECK_EQ(r[st].w, 80);
-    CHECK_EQ(r[st].h, 32);             /* two rows */
+    CHECK_EQ(r[st].h, 32);              /* two rows */
     CHECK_EQ(r[after].y, r[st].y + 32); /* the sibling sits below both */
-    CHECK_EQ(r[inner].h, 48);          /* the column grew to fit */
+    CHECK_EQ(r[inner].h, 48);           /* the column grew to fit */
     free(r);
     free(styles);
   }
@@ -392,8 +394,7 @@ static void test_fit_scroll(void) {
     lk_tree_add_prop(t, sc, UIP_W, lk_v_i32(80));
     lk_tree_add_prop(t, sc, UIP_H, lk_v_i32(24));
     lk_tree_add_prop(t, sc, UIP_PADDING, lk_v_i32(0));
-    lk_tree_add_prop(t, st, UIP_TEXT,
-                     lk_v_cstr(t->intern, "aaaa bbbbb cccc"));
+    lk_tree_add_prop(t, st, UIP_TEXT, lk_v_cstr(t->intern, "aaaa bbbbb cccc"));
     lk_ui_end_frame(ui);
   }
 
@@ -616,8 +617,7 @@ static void test_pos_and_presentation(void) {
 
   BEGIN_TEST("styled text: pos_at + presented range -> command via matcher");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "word", 0, 0, 0, 0,
-                          "Look");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "word", 0, 0, 0, 0, "Look");
 
   {
     lk_tree *t = lk_ui_begin_frame(ui);
@@ -661,9 +661,9 @@ static void test_pos_and_presentation(void) {
   CHECK_EQ(lk_styled_text_pos_at(ui, st_id, 11, 12, &pos), 1);
   CHECK_EQ(pos, 0);
   CHECK_EQ(lk_styled_text_pos_at(ui, st_id, 5, 5, &pos), 0); /* outside */
-  CHECK_EQ(lk_styled_text_pos_at(ui, lk_intern_cid(ui->intern, "col"), 27,
-                                 30, &pos),
-           0); /* not a styled text */
+  CHECK_EQ(
+      lk_styled_text_pos_at(ui, lk_intern_cid(ui->intern, "col"), 27, 30, &pos),
+      0); /* not a styled text */
 
   /* Click on "bbbb": the presentation translates to Look with the
    * value as arg 0 and a text-range locus. */

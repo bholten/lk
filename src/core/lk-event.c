@@ -131,8 +131,8 @@ int lk_event_enqueue(lk_ui *ui, const lk_event *ev) {
 
   if (ui->pending_count >= ui->pending_cap) {
     lk_u32 new_cap = ui->pending_cap ? ui->pending_cap * 2 : 8;
-    lk_event *np = (lk_event *)ui->alloc(
-        ui->alloc_ud, (lk_u32)(sizeof(lk_event) * new_cap));
+    lk_event *np = (lk_event *)ui->alloc(ui->alloc_ud,
+                                         (lk_u32)(sizeof(lk_event) * new_cap));
 
     if (!np) {
       return 0;
@@ -204,9 +204,8 @@ void lk_ui_flush_events(lk_ui *ui, const lk_tree *t) {
  * target = the newly focused node's index when resolvable (the
  * VALUE_CHANGED convention), else the root so clear-events still
  * route.  Callers only invoke this when prev != next. */
-static void focus_event_enqueue(lk_ui *ui, const lk_tree *t,
-                                lk_node_id prev_id, lk_node_id next_id,
-                                lk_ix target) {
+static void focus_event_enqueue(lk_ui *ui, const lk_tree *t, lk_node_id prev_id,
+                                lk_node_id next_id, lk_ix target) {
   lk_event ev;
 
   memset(&ev, 0, sizeof(ev));
@@ -487,8 +486,8 @@ lk_node_id lk_focus_next(lk_ui *ui, const lk_tree *t) {
   }
 
   scope = focus_scope_root(ui, t, &ignore_hidden);
-  count = collect_focusable(t, ui->state, scope, ignore_hidden, buf,
-                            t->node_count);
+  count =
+      collect_focusable(t, ui->state, scope, ignore_hidden, buf, t->node_count);
 
   if (count == 0) {
     lk_sys_dealloc(NULL, buf);
@@ -535,8 +534,8 @@ lk_node_id lk_focus_prev(lk_ui *ui, const lk_tree *t) {
   }
 
   scope = focus_scope_root(ui, t, &ignore_hidden);
-  count = collect_focusable(t, ui->state, scope, ignore_hidden, buf,
-                            t->node_count);
+  count =
+      collect_focusable(t, ui->state, scope, ignore_hidden, buf, t->node_count);
 
   if (count == 0) {
     lk_sys_dealloc(NULL, buf);

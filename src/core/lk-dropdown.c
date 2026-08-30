@@ -26,8 +26,9 @@
 #define DROPDOWN_CHEVRON_W 14 /* reserved space on trigger's right edge */
 #define DROPDOWN_OPTION_PAD_Y 4
 #define DROPDOWN_MIN_OPTION_H 20
-#define DROPDOWN_POPUP_MAX_HEIGHT 240 /* taller popups scroll (LKS_POPUP_SCROLL) */
-#define DROPDOWN_SCROLL_BAR_W 6       /* popup overflow indicator width */
+#define DROPDOWN_POPUP_MAX_HEIGHT                                              \
+  240                           /* taller popups scroll (LKS_POPUP_SCROLL) */
+#define DROPDOWN_SCROLL_BAR_W 6 /* popup overflow indicator width */
 
 /* ---- State helpers ---- */
 
@@ -182,7 +183,7 @@ static lk_i32 dropdown_selected(const lk_tree *t, lk_ix n,
 /* Return the currently-selected option's text, or the dropdown's own
  * UIP_TEXT as a fallback (e.g. "Select…"). */
 static lk_u32 selected_text_id(const lk_tree *t, lk_ix n,
-                                const lk_state *state) {
+                               const lk_state *state) {
   lk_i32 sel = dropdown_selected(t, n, state);
   lk_ix opt;
 
@@ -281,8 +282,8 @@ static lk_i32 popup_scroll_max(lk_u32 count, lk_i32 row_h, lk_i32 inset) {
 }
 
 /* Current scroll offset clamped to [0, max]. */
-static lk_i32 popup_scroll_eff(const lk_tree *t, lk_ix n,
-                               const lk_state *state, lk_i32 max) {
+static lk_i32 popup_scroll_eff(const lk_tree *t, lk_ix n, const lk_state *state,
+                               lk_i32 max) {
   lk_i32 s = get_i32(state, t->nodes[n].id, LKS_POPUP_SCROLL);
 
   if (s < 0) {
@@ -299,8 +300,8 @@ static lk_i32 popup_scroll_eff(const lk_tree *t, lk_ix n,
 /* ---- Measure ---- */
 
 static void measure_dropdown(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                              const lk_layout_cfg *cfg, lk_i32 *out_w,
-                              lk_i32 *out_h) {
+                             const lk_layout_cfg *cfg, lk_i32 *out_w,
+                             lk_i32 *out_h) {
   lk_i32 pad = cfg->styles ? cfg->styles[n].padding
                            : lk_node_prop_i32(t, n, UIP_PADDING, 0);
   lk_i32 bw = cfg->styles ? cfg->styles[n].border_width : 0;
@@ -325,8 +326,8 @@ static void measure_dropdown(const lk_tree *t, lk_ix n, const lk_size *sizes,
 }
 
 static void measure_option(const lk_tree *t, lk_ix n, const lk_size *sizes,
-                            const lk_layout_cfg *cfg, lk_i32 *out_w,
-                            lk_i32 *out_h) {
+                           const lk_layout_cfg *cfg, lk_i32 *out_w,
+                           lk_i32 *out_h) {
   /* Options don't participate in the main layout pass.  Zero size is
    * fine — the dropdown places them in its overlay. */
   (void)t;
@@ -340,8 +341,8 @@ static void measure_option(const lk_tree *t, lk_ix n, const lk_size *sizes,
 /* ---- Render (main pass — just the collapsed trigger) ---- */
 
 static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                             const lk_style *style, const lk_state *state,
-                             const lk_widget_geom *geom, lk_render_list *out) {
+                            const lk_style *style, const lk_state *state,
+                            const lk_widget_geom *geom, lk_render_list *out) {
   lk_i32 pad = style->padding;
   lk_i32 bw = style->border_width;
   lk_i32 inset = pad + bw;
@@ -402,8 +403,8 @@ static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
  * a well-formed widget even if someone adds it outside a dropdown
  * (useful for tests). */
 static void render_option(const lk_tree *t, lk_ix n, const lk_rect *rect,
-                           const lk_style *style, const lk_state *state,
-                           const lk_widget_geom *geom, lk_render_list *out) {
+                          const lk_style *style, const lk_state *state,
+                          const lk_widget_geom *geom, lk_render_list *out) {
   (void)t;
   (void)n;
   (void)rect;
@@ -419,7 +420,7 @@ static void render_option(const lk_tree *t, lk_ix n, const lk_rect *rect,
  * originating event completes (drained at the end of the outermost
  * lk_event_route call). */
 static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n,
-                                lk_u32 new_value_id) {
+                               lk_u32 new_value_id) {
   lk_event ev;
   (void)t;
   memset(&ev, 0, sizeof(ev));
@@ -675,8 +676,7 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
-  if (ev->type != LK_EVENT_POINTER_DOWN &&
-      ev->type != LK_EVENT_POINTER_MOVE) {
+  if (ev->type != LK_EVENT_POINTER_DOWN && ev->type != LK_EVENT_POINTER_MOVE) {
     return 0;
   }
 
@@ -760,10 +760,9 @@ void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
   }
 }
 
-lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
-                                const lk_rect *rects,
-                                const lk_style *styles,
-                                const lk_layout_cfg *cfg) {
+lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n, const lk_rect *rects,
+                               const lk_style *styles,
+                               const lk_layout_cfg *cfg) {
   lk_rect trigger = rects[n];
   lk_u32 count = count_options(t, n);
   lk_i32 row_h = option_row_height(cfg);
@@ -788,20 +787,18 @@ lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
                            cfg ? cfg->viewport_h : 0, trigger.w, popup_h);
 }
 
-lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n,
-                                 lk_u32 opt_index,
-                                 const lk_rect *rects,
-                                 const lk_style *styles,
-                                 const lk_layout_cfg *cfg) {
+lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n, lk_u32 opt_index,
+                                const lk_rect *rects, const lk_style *styles,
+                                const lk_layout_cfg *cfg) {
   lk_rect popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
   lk_rect out;
   lk_i32 row_h = option_row_height(cfg);
   lk_i32 pad = styles ? styles[n].padding : 0;
   lk_i32 bw = styles ? styles[n].border_width : 0;
   lk_i32 inset = pad + bw;
-  lk_i32 scroll = popup_scroll_eff(
-      t, n, cfg ? cfg->state : NULL,
-      popup_scroll_max(count_options(t, n), row_h, inset));
+  lk_i32 scroll =
+      popup_scroll_eff(t, n, cfg ? cfg->state : NULL,
+                       popup_scroll_max(count_options(t, n), row_h, inset));
 
   out.x = popup.x + inset;
   out.y = popup.y + inset + (lk_i32)opt_index * row_h - scroll;
@@ -812,9 +809,8 @@ lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n,
 
 /* ---- Overlay render (dispatch target for lk-overlay.c) ---- */
 
-void lk_dropdown_render_popup(const lk_tree *t, lk_ix n,
-                              const lk_rect *rects, const lk_style *styles,
-                              const lk_state *state,
+void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
+                              const lk_style *styles, const lk_state *state,
                               const lk_layout_cfg *cfg, lk_render_list *out) {
   lk_node_id nid;
   lk_u32 count;
@@ -931,8 +927,8 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n,
 
     r = lk_dropdown_option_rect(t, n, i, rects, styles, cfg);
 
-    if (max_scroll > 0 && (r.y + r.h <= popup.y + inset ||
-                           r.y >= popup.y + inset + inner_h)) {
+    if (max_scroll > 0 &&
+        (r.y + r.h <= popup.y + inset || r.y >= popup.y + inset + inner_h)) {
       continue;
     }
 

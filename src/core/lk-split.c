@@ -408,8 +408,8 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
   lk_i32 avail;
   int dragging;
 
-  if (ev->type != LK_EVENT_POINTER_DOWN &&
-      ev->type != LK_EVENT_POINTER_MOVE && ev->type != LK_EVENT_POINTER_UP) {
+  if (ev->type != LK_EVENT_POINTER_DOWN && ev->type != LK_EVENT_POINTER_MOVE &&
+      ev->type != LK_EVENT_POINTER_UP) {
     return 0;
   }
 

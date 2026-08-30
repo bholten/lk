@@ -73,8 +73,8 @@ int lk_window_request_screenshot(lk_window *win, const char *path);
  * handler; a no-op when the loop is not running. */
 void lk_window_stop(lk_window *win);
 int lk_window_set_icon_mem(lk_window *win, const void *data, lk_u32 len);
-int lk_window_set_icon_rgba(lk_window *win, int w, int h,
-                            const void *pixels, int pitch);
+int lk_window_set_icon_rgba(lk_window *win, int w, int h, const void *pixels,
+                            int pitch);
 
 /* Image file IO (image track, docs/image-widget.md).  Loaders decode
  * BMP always (SDL core) plus PNG and whatever else SDL3_image knows
@@ -108,8 +108,7 @@ typedef void (*lk_file_dialog_fn)(void *ud, const char *const *paths,
 void lk_window_open_file_dialog(lk_window *win,
                                 const lk_file_dialog_filter *filters,
                                 int nfilters, const char *default_location,
-                                int allow_many, lk_file_dialog_fn fn,
-                                void *ud);
+                                int allow_many, lk_file_dialog_fn fn, void *ud);
 void lk_window_save_file_dialog(lk_window *win,
                                 const lk_file_dialog_filter *filters,
                                 int nfilters, const char *default_location,

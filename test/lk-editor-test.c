@@ -91,8 +91,8 @@ static void fix_init_ex(ed_fix *f, const char *text, lk_i32 vw, lk_i32 vh,
   lk_history_attach(f->hist, f->doc);
   f->ed = lk_editor_new(NULL, NULL, NULL, f->doc, f->hist);
   f->ui = lk_ui_create(NULL);
-  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(),
-                                f->ed, "ed");
+  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(), f->ed,
+                                "ed");
   lk_ui_set_text_backend(f->ui, lk_text_backend_stub());
   f->cfg.text = lk_text_backend_stub();
   f->cfg.viewport_w = vw;
@@ -300,8 +300,8 @@ static int run_is(const lk_render_list *rl, const lk_render_cmd *c,
 }
 
 static int is_sel_fill(const lk_render_cmd *c) {
-  return c->op == LK_ROP_FILL_RECT && c->color.r == 80 &&
-         c->color.g == 120 && c->color.b == 200 && c->color.a == 128;
+  return c->op == LK_ROP_FILL_RECT && c->color.r == 80 && c->color.g == 120 &&
+         c->color.b == 200 && c->color.a == 128;
 }
 
 static lk_u32 count_sel_fills(const lk_render_list *rl) {
@@ -317,8 +317,7 @@ static lk_u32 count_sel_fills(const lk_render_list *rl) {
   return n;
 }
 
-static const lk_render_cmd *nth_sel_fill(const lk_render_list *rl,
-                                         lk_u32 idx) {
+static const lk_render_cmd *nth_sel_fill(const lk_render_list *rl, lk_u32 idx) {
   lk_u32 i;
   lk_u32 n = 0;
 
@@ -349,8 +348,8 @@ static const lk_render_cmd *find_cursor_fill(const lk_render_list *rl) {
 }
 
 static int fix_render(ed_fix *f, lk_render_list *rl) {
-  return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL,
-                         lk_ui_state(f->ui), NULL, rl);
+  return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL, lk_ui_state(f->ui),
+                         NULL, rl);
 }
 
 /* Build "line 0\nline 1\n...\nline N-1" (no trailing newline). */
@@ -361,8 +360,8 @@ static void make_lines(char *buf, lk_u32 cap, int nlines) {
   buf[0] = '\0';
 
   for (i = 0; i < nlines; i++) {
-    off += (lk_u32)sprintf(buf + off, i + 1 < nlines ? "line %d\n" : "line %d",
-                           i);
+    off +=
+        (lk_u32)sprintf(buf + off, i + 1 < nlines ? "line %d\n" : "line %d", i);
 
     if (off + 16 > cap) {
       break;
@@ -1441,8 +1440,8 @@ static void test_render_tab_expansion(void) {
 
 /* nth FILL_RECT sitting in the scrollbar column (x == bar_x, w ==
  * bar width): 0 = track, 1 = thumb.  NULL when absent. */
-static const lk_render_cmd *nth_bar_fill(const lk_render_list *rl,
-                                         lk_i32 bar_x, lk_u32 idx) {
+static const lk_render_cmd *nth_bar_fill(const lk_render_list *rl, lk_i32 bar_x,
+                                         lk_u32 idx) {
   lk_u32 i, seen = 0;
 
   for (i = 0; i < rl->count; i++) {
@@ -1776,8 +1775,8 @@ static void test_degrade_stale_ref(void) {
   memset(&rl, 0, sizeof(rl));
 
   /* live ref resolves */
-  CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui),
-                            f.node) == f.ed);
+  CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui), f.node) ==
+        f.ed);
 
   CHECK(fix_render(&f, &rl));
   CHECK_EQ(count_runs(&rl), 1);
@@ -1785,8 +1784,8 @@ static void test_degrade_stale_ref(void) {
   /* release the resource: the tree still carries the (now stale) ref */
   lk_resource_release(lk_ui_resources(f.ui), f.ref);
 
-  CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui),
-                            f.node) == NULL);
+  CHECK(lk_editor_from_node(lk_ui_resources(f.ui), lk_ui_tree(f.ui), f.node) ==
+        NULL);
 
   fix_layout(&f);
   CHECK(fix_render(&f, &rl));
@@ -1831,8 +1830,8 @@ static void test_utf8_typing_backspace(void) {
 
   fix_init(&f, "", 400, 80);
 
-  CHECK(send_text(&f, "\xC3\xA9") == 1);       /* e-acute */
-  CHECK(send_text(&f, "\xE6\x97\xA5") == 1);   /* CJK sun */
+  CHECK(send_text(&f, "\xC3\xA9") == 1);     /* e-acute */
+  CHECK(send_text(&f, "\xE6\x97\xA5") == 1); /* CJK sun */
   CHECK_EQ(lk_doc_len(f.doc), 5);
   CHECK_EQ(lk_editor_cursor(f.ed), 5);
 
@@ -2436,8 +2435,7 @@ static void test_wrap_distant_reanchor(void) {
   fix_layout(&f);
 
   /* bottom-placed: anchor backs up 4 rows from (line 90, row 0) */
-  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte,
-           lk_doc_line_start(f.doc, 88));
+  CHECK_EQ(lk_editor_get_viewport(f.ed).top_byte, lk_doc_line_start(f.doc, 88));
   CHECK_EQ(lk_editor_wrap_rows(f.ed, 88), 2);
   CHECK_EQ(lk_editor_wrap_rows(f.ed, 90), 2);
 
@@ -2737,8 +2735,7 @@ static void test_wrap_word_splice(void) {
   BEGIN_TEST("wrap word: edit splice re-measures the touched line");
 
   /* 3 x "hello world foo" = 2 word rows each, all visible (h = 96) */
-  fix_init(&f, "hello world foo\nhello world foo\nhello world foo", 80,
-           96);
+  fix_init(&f, "hello world foo\nhello world foo\nhello world foo", 80, 96);
   fix_wrap_word(&f);
 
   CHECK_EQ(lk_editor_wrap_rows(f.ed, 0), 2);
@@ -3930,8 +3927,7 @@ static void test_keymap_tables_valid(void) {
         (lk_u8)LK_ED_MOVE_WORD_LEFT);
   CHECK(lk_editor_key_lookup(LKK_UP, LK_MOD_CTRL | LK_MOD_SHIFT)->cmd ==
         (lk_u8)LK_ED_ADD_CURSOR_ABOVE);
-  CHECK(lk_editor_key_lookup(LKK_UP, LK_MOD_CTRL)->cmd ==
-        (lk_u8)LK_ED_MOVE_UP);
+  CHECK(lk_editor_key_lookup(LKK_UP, LK_MOD_CTRL)->cmd == (lk_u8)LK_ED_MOVE_UP);
   CHECK(lk_editor_key_lookup(LKK_Z, LK_MOD_CTRL)->cmd == (lk_u8)LK_ED_UNDO);
   CHECK(lk_editor_key_lookup(LKK_Z, LK_MOD_CTRL | LK_MOD_SHIFT)->cmd ==
         (lk_u8)LK_ED_REDO);
@@ -4034,8 +4030,8 @@ static void test_mc_ctrl_click_toggle_and_drag(void) {
 
   /* ctrl+click on line 1 col 0 adds a caret and starts a drag that
    * extends ONLY the new primary */
-  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 16, LK_MOD_CTRL,
-                          0) == 1);
+  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 16, LK_MOD_CTRL, 0) ==
+        1);
   CHECK_EQ(lk_editor_caret_count(f.ed), 2);
   CHECK_EQ(lk_capture_current(f.ui), f.nid);
 
@@ -4050,8 +4046,8 @@ static void test_mc_ctrl_click_toggle_and_drag(void) {
   CHECK_EQ(cur, 0);
 
   /* ctrl+click exactly on the other caret removes it (no capture) */
-  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 0, LK_MOD_CTRL,
-                          0) == 1);
+  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 0, LK_MOD_CTRL, 0) ==
+        1);
   CHECK_EQ(lk_editor_caret_count(f.ed), 1);
   CHECK_EQ(lk_capture_current(f.ui), 0);
 
@@ -4070,8 +4066,7 @@ static void test_mc_box_drag_event(void) {
   fix_init(&f, "abcd\nefgh\nij", 400, 80);
 
   /* anchor at line 0 col 1, drag to line 2 col 3 */
-  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 8, 0, LK_MOD_ALT,
-                          0) == 1);
+  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 8, 0, LK_MOD_ALT, 0) == 1);
   CHECK(lk_editor_box_active(f.ed));
   CHECK_EQ(lk_capture_current(f.ui), f.nid);
 
@@ -4110,8 +4105,8 @@ static void test_mc_box_zero_width_append(void) {
 
   /* a zero-width box at col 2 across all three lines: the empty line
    * and the short line clamp -- three empty carets */
-  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 16, 0, LK_MOD_ALT,
-                          0) == 1);
+  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 16, 0, LK_MOD_ALT, 0) ==
+        1);
   CHECK(send_pointer_full(&f, LK_EVENT_POINTER_MOVE, 16, 32, 0, 0) == 1);
   send_pointer_full(&f, LK_EVENT_POINTER_UP, 16, 32, 0, 0);
 
@@ -4136,8 +4131,7 @@ static void test_mc_box_wrapped_rows(void) {
   CHECK(lk_editor_set_wrap_mode(f.ed, LK_EDITOR_WRAP_CHARACTER) == 1);
   fix_layout(&f);
 
-  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 0, LK_MOD_ALT,
-                          0) == 1);
+  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 0, LK_MOD_ALT, 0) == 1);
   CHECK(send_pointer_full(&f, LK_EVENT_POINTER_MOVE, 0, 16, 0, 0) == 1);
   send_pointer_full(&f, LK_EVENT_POINTER_UP, 0, 16, 0, 0);
 
@@ -4175,8 +4169,7 @@ static void test_mc_box_cap_keeps_active_end(void) {
 
   /* anchor at line 0, then scroll the viewport far away and keep
    * dragging: the anchor triple is viewport-independent */
-  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 0, LK_MOD_ALT,
-                          0) == 1);
+  CHECK(send_pointer_full(&f, LK_EVENT_POINTER_DOWN, 0, 0, LK_MOD_ALT, 0) == 1);
   cmd_scroll(&f, 1400);
   fix_layout(&f);
 

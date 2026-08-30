@@ -1,18 +1,18 @@
 #include <string.h>
 
+#include "lk-canvas.h"
 #include "lk-check.h"
 #include "lk-dropdown.h"
 #include "lk-grid.h"
 #include "lk-image.h"
-#include "lk-canvas.h"
-#include "lk-memory.h"
 #include "lk-list.h"
-#include "lk-styled-text.h"
-#include "lk-text-align.h"
+#include "lk-memory.h"
 #include "lk-scroll.h"
 #include "lk-slider.h"
 #include "lk-split.h"
+#include "lk-styled-text.h"
 #include "lk-tabs.h"
+#include "lk-text-align.h"
 #include "lk-text-input.h"
 #include <lk-editor.h>
 #include <lk.h>
@@ -165,8 +165,7 @@ static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
 
 /* Stash the measured run size for render's text_align placement
  * (render has no text backend).  NULL geom: text draws at START. */
-static void stash_run(const lk_layout_cfg *cfg, lk_ix n, lk_i32 tw,
-                      lk_i32 th) {
+static void stash_run(const lk_layout_cfg *cfg, lk_ix n, lk_i32 tw, lk_i32 th) {
   if (cfg->geom) {
     cfg->geom[n].run.w = tw;
     cfg->geom[n].run.h = th;
@@ -257,8 +256,7 @@ static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
  * clamped to [0, GROW_WEIGHT_MAX] (the core has no assert facility;
  * negatives clamp silently, the bindings hard-error).  An unsized
  * SPACER keeps its legacy weight of 1; everything else is fixed. */
-static lk_i32 grow_weight(const lk_tree *t, lk_ix child,
-                          lk_prop_key main_key) {
+static lk_i32 grow_weight(const lk_tree *t, lk_ix child, lk_prop_key main_key) {
   if (lk_node_has_prop(t, child, UIP_GROW)) {
     lk_i32 w = lk_node_prop_i32(t, child, UIP_GROW, 0);
 
@@ -409,8 +407,8 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
   }
 
   if (axis == 0 && child_count > 0) {
-    bases = (lk_i32 *)lk_sys_alloc(NULL,
-                                   (lk_u32)(sizeof(lk_i32) * child_count));
+    bases =
+        (lk_i32 *)lk_sys_alloc(NULL, (lk_u32)(sizeof(lk_i32) * child_count));
   }
 
   bi = 0;
@@ -539,8 +537,7 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
           sib = t->nodes[sib].next_sibling;
         }
 
-        child_main +=
-            leftover * wgt / total_weight + (rank < residual ? 1 : 0);
+        child_main += leftover * wgt / total_weight + (rank < residual ? 1 : 0);
       }
     }
 
@@ -583,7 +580,6 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
     child = t->nodes[child].next_sibling;
   }
-
 
   if (bases) {
     lk_sys_dealloc(NULL, bases);

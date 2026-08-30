@@ -132,8 +132,7 @@ static void test_key_fallback_discipline(void) {
   BEGIN_TEST("keys: fallback is key-only, ptype-less only, root-enabled");
 
   /* A ptype-less POINTER translator must NOT fall back to the root. */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "", 0, 0, 0, 0,
-                         "Click");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "", 0, 0, 0, 0, "Click");
   /* A ptype-scoped key translator must NOT fire without its ptype. */
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0, (lk_u16)LKK_S,
                          LK_MOD_CTRL, 0, "Save");

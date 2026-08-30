@@ -71,8 +71,8 @@ static void pfix_init(pres_fix *f, const char *text, int with_button,
   f->store = lk_annot_store_new(NULL, NULL, NULL);
   lk_annot_store_attach(f->store, f->doc);
   f->ui = lk_ui_create(NULL);
-  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(),
-                                f->ed, "ed");
+  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(), f->ed,
+                                "ed");
   lk_ui_set_text_backend(f->ui, lk_text_backend_stub());
   f->cfg.text = lk_text_backend_stub();
   f->cfg.viewport_w = 640;
@@ -333,9 +333,9 @@ static void test_translate_presentations_direct(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = f.node;
-  CHECK_EQ(lk_translate_presentations(f.ui, lk_ui_tree(f.ui), f.node, &ev,
-                                      hits, 2),
-           1);
+  CHECK_EQ(
+      lk_translate_presentations(f.ui, lk_ui_tree(f.ui), f.node, &ev, hits, 2),
+      1);
   CHECK_EQ(ev.handled, 1);
 
   q = lk_ui_commands(f.ui);
@@ -351,9 +351,9 @@ static void test_translate_presentations_direct(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = f.node;
-  CHECK_EQ(lk_translate_presentations(f.ui, lk_ui_tree(f.ui), f.node, &ev,
-                                      hits, 2),
-           0);
+  CHECK_EQ(
+      lk_translate_presentations(f.ui, lk_ui_tree(f.ui), f.node, &ev, hits, 2),
+      0);
   CHECK_EQ(ev.handled, 0);
 
   END_TEST();
@@ -506,24 +506,24 @@ static void test_ctrl_click_translator_beats_add_caret(void) {
   a = lk_annot_add(f.store, 0, 5, "l", NULL, NULL, 0);
   lk_annot_set_present(f.store, a, intern(&f, "act"), lk_v_i32(1));
   lk_ui_add_translator_s(f.ui, LK_EVENT_POINTER_DOWN, "act", 0, 0,
-                         (lk_u8)LK_MOD_CTRL,
-                         (lk_u8)LK_POINTER_BUTTON_PRIMARY, "Execute");
+                         (lk_u8)LK_MOD_CTRL, (lk_u8)LK_POINTER_BUTTON_PRIMARY,
+                         "Execute");
 
   /* ctrl+click INSIDE the range: the app translator keeps
    * right-of-way -- command fires, NO caret is added, and the click
    * stays fully pinned (no focus/capture) */
-  CHECK_EQ(pfix_click(&f, (lk_u8)LK_POINTER_BUTTON_PRIMARY,
-                      (lk_u8)LK_MOD_CTRL, 2),
-           1);
+  CHECK_EQ(
+      pfix_click(&f, (lk_u8)LK_POINTER_BUTTON_PRIMARY, (lk_u8)LK_MOD_CTRL, 2),
+      1);
   CHECK_EQ(lk_ui_commands(f.ui)->count, 1);
   CHECK_EQ(lk_editor_caret_count(f.ed), 1);
   CHECK_EQ(lk_capture_current(f.ui), 0);
 
   /* ctrl+click OUTSIDE any candidate: the widget default fires --
    * a caret is added and the new primary starts a drag */
-  CHECK_EQ(pfix_click(&f, (lk_u8)LK_POINTER_BUTTON_PRIMARY,
-                      (lk_u8)LK_MOD_CTRL, 8),
-           1);
+  CHECK_EQ(
+      pfix_click(&f, (lk_u8)LK_POINTER_BUTTON_PRIMARY, (lk_u8)LK_MOD_CTRL, 8),
+      1);
   CHECK_EQ(lk_editor_caret_count(f.ed), 2);
   CHECK_EQ(lk_capture_current(f.ui), f.nid);
 
@@ -594,8 +594,8 @@ static void test_resource_presentation_roundtrip(void) {
 
   memset(&ptype_desc, 0, sizeof(ptype_desc));
   ptype_desc.name = "payload";
-  pref = lk_resource_register(lk_ui_resources(f.ui), &ptype_desc, &payload,
-                              "p");
+  pref =
+      lk_resource_register(lk_ui_resources(f.ui), &ptype_desc, &payload, "p");
 
   a = lk_annot_add(f.store, 0, 11, "l", NULL, NULL, 0);
   lk_annot_set_present(f.store, a, intern(&f, "obj"), lk_v_resource(pref));
@@ -620,8 +620,8 @@ static void test_resource_presentation_roundtrip(void) {
  * the queue arena at query time. */
 static lk_ui *g_text_src_ui;
 
-static lk_u32 text_source_query(void *ud, lk_u32 pos,
-                                lk_presentation_hit *out, lk_u32 cap) {
+static lk_u32 text_source_query(void *ud, lk_u32 pos, lk_presentation_hit *out,
+                                lk_u32 cap) {
   (void)ud;
   (void)pos;
 
@@ -717,8 +717,7 @@ static void test_stale_locus_detectable(void) {
 
   a = lk_annot_add(f.store, 0, 11, "l", NULL, NULL, 0);
   lk_annot_set_present(f.store, a, intern(&f, "act"), lk_v_i32(1));
-  lk_ui_add_translator_s(f.ui, LK_EVENT_POINTER_DOWN, "act", 0, 0, 0, 0,
-                         "Do");
+  lk_ui_add_translator_s(f.ui, LK_EVENT_POINTER_DOWN, "act", 0, 0, 0, 0, "Do");
 
   CHECK_EQ(pfix_click(&f, 0, 0, 5), 1);
   captured = lk_ui_commands(f.ui)->cmds[0];

@@ -117,8 +117,7 @@ lk_rect lk_tooltip_rect(const lk_tree *t, lk_ix n, const lk_overlay *ov,
   }
 
   return lk_anchor_resolve(ov, rects[n], cfg ? cfg->viewport_w : 0,
-                           cfg ? cfg->viewport_h : 0,
-                           m.w + LK_TOOLTIP_PAD * 2,
+                           cfg ? cfg->viewport_h : 0, m.w + LK_TOOLTIP_PAD * 2,
                            m.h + LK_TOOLTIP_PAD * 2);
 }
 

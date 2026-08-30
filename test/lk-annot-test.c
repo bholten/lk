@@ -793,20 +793,17 @@ static void test_sub_revision_tracking(void) {
   as_init(&f, 40);
 
   /* attach point: store rev == document rev */
-  CHECK(lk_revision_equal(lk_annot_store_rev(f.st),
-                          lk_doc_revision(f.doc)));
+  CHECK(lk_revision_equal(lk_annot_store_rev(f.st), lk_doc_revision(f.doc)));
 
   CHECK(as_insert(&f, 0, 3));
-  CHECK(lk_revision_equal(lk_annot_store_rev(f.st),
-                          lk_doc_revision(f.doc)));
+  CHECK(lk_revision_equal(lk_annot_store_rev(f.st), lk_doc_revision(f.doc)));
 
   /* multi-op transaction: still ends at the document's revision */
   lk_doc_begin(f.doc, 100);
   as_insert(&f, 0, 1);
   as_delete(&f, 5, 2);
   lk_doc_commit(f.doc);
-  CHECK(lk_revision_equal(lk_annot_store_rev(f.st),
-                          lk_doc_revision(f.doc)));
+  CHECK(lk_revision_equal(lk_annot_store_rev(f.st), lk_doc_revision(f.doc)));
 
   as_destroy(&f);
   END_TEST();
@@ -902,8 +899,8 @@ static void sp_init(sp_fix *f, const char *text, lk_i32 vw, lk_i32 vh) {
   f->doc = lk_doc_from_str(NULL, NULL, NULL, text, (lk_u32)strlen(text));
   f->ed = lk_editor_new(NULL, NULL, NULL, f->doc, NULL);
   f->ui = lk_ui_create(NULL);
-  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(),
-                                f->ed, "ed");
+  f->ref = lk_resource_register(lk_ui_resources(f->ui), lk_editor_type(), f->ed,
+                                "ed");
   lk_ui_set_text_backend(f->ui, lk_text_backend_stub());
   f->cfg.text = lk_text_backend_stub();
   f->cfg.viewport_w = vw;
@@ -921,8 +918,8 @@ static void sp_destroy(sp_fix *f) {
 }
 
 static int sp_render(sp_fix *f, lk_render_list *rl) {
-  return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL,
-                         lk_ui_state(f->ui), NULL, rl);
+  return lk_render_build(lk_ui_tree(f->ui), f->rects, NULL, lk_ui_state(f->ui),
+                         NULL, rl);
 }
 
 /* test palette (distinct from the theme and the selection color) */
@@ -1024,8 +1021,7 @@ static lk_u32 sp_count_runs_colored(const lk_render_list *rl, lk_color c) {
 }
 
 /* First FILL_RECT with exactly this color (NULL if none). */
-static const lk_render_cmd *sp_find_fill(const lk_render_list *rl,
-                                         lk_color c) {
+static const lk_render_cmd *sp_find_fill(const lk_render_list *rl, lk_color c) {
   lk_u32 i;
 
   for (i = 0; i < rl->count; i++) {

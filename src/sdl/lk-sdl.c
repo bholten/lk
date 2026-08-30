@@ -282,8 +282,7 @@ static lk_u32 sdl_text_index_from_x(void *ud, lk_str run, lk_u16 font_id,
   return ix;
 }
 
-static lk_i32 sdl_text_line_height(void *ud, lk_u16 font_id,
-                                   lk_u16 font_size) {
+static lk_i32 sdl_text_line_height(void *ud, lk_u16 font_id, lk_u16 font_size) {
   lk_window *win = (lk_window *)ud;
   TTF_Font *font = sdl_text_instance(win, font_id, font_size);
 
@@ -493,8 +492,8 @@ int lk_window_set_icon_mem(lk_window *win, const void *data, lk_u32 len) {
     return 0;
   }
 
-  return sdl_icon_apply(win,
-                        sdl_image_decode(SDL_IOFromConstMem(data, (size_t)len)));
+  return sdl_icon_apply(
+      win, sdl_image_decode(SDL_IOFromConstMem(data, (size_t)len)));
 }
 
 int lk_window_set_icon_rgba(lk_window *win, int w, int h, const void *pixels,
@@ -605,8 +604,7 @@ static SDL_Surface *sdl_image_wrap(const lk_image *img) {
 
   lk_image_size(img, &w, &h);
   return SDL_CreateSurfaceFrom((int)w, (int)h, SDL_PIXELFORMAT_RGBA32,
-                               lk_image_pixels((lk_image *)img),
-                               (int)(w * 4));
+                               lk_image_pixels((lk_image *)img), (int)(w * 4));
 }
 
 int lk_image_save_bmp(const lk_image *img, const char *path) {
@@ -914,9 +912,11 @@ static sdl_dialog_ctx *sdl_dialog_ctx_new(lk_window *win,
 /* Shared front half of the two public dialog calls.  Returns the
  * ready ctx or NULL after delivering the degrade (fn(ud, NULL, 0))
  * when the machinery can't be set up. */
-static sdl_dialog_ctx *sdl_dialog_prepare(
-    lk_window *win, const lk_file_dialog_filter *filters, int nfilters,
-    const char *default_location, lk_file_dialog_fn fn, void *ud) {
+static sdl_dialog_ctx *sdl_dialog_prepare(lk_window *win,
+                                          const lk_file_dialog_filter *filters,
+                                          int nfilters,
+                                          const char *default_location,
+                                          lk_file_dialog_fn fn, void *ud) {
   sdl_dialog_ctx *ctx;
 
   if (!win || !fn) {
@@ -927,10 +927,9 @@ static sdl_dialog_ctx *sdl_dialog_prepare(
     g_dialog_event_type = SDL_RegisterEvents(1);
   }
 
-  ctx = g_dialog_event_type
-            ? sdl_dialog_ctx_new(win, filters, nfilters, default_location, fn,
-                                 ud)
-            : NULL;
+  ctx = g_dialog_event_type ? sdl_dialog_ctx_new(win, filters, nfilters,
+                                                 default_location, fn, ud)
+                            : NULL;
 
   if (!ctx) {
     fn(ud, NULL, 0);
@@ -1575,8 +1574,8 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
       const lk_style *styles = lk_ui_styles(win->ui);
       memset(&lcfg, 0, sizeof(lcfg));
 
-      lcfg.text =
-          sdl_text_have_faces(win) ? &win->text_backend : lk_text_backend_stub();
+      lcfg.text = sdl_text_have_faces(win) ? &win->text_backend
+                                           : lk_text_backend_stub();
       /* Same backend for widget event handlers (click-to-position). */
       lk_ui_set_text_backend(win->ui, lcfg.text);
 
@@ -1676,14 +1675,13 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
         if (!captured && have_rects) {
           /* Overlay hit-test first (popups draw on top of everything) */
-          lk_ev.target = lk_hit_test_overlay(win->ui, win->rects, &lcfg,
-                                             lk_ev.data.pointer.x,
-                                             lk_ev.data.pointer.y);
+          lk_ev.target =
+              lk_hit_test_overlay(win->ui, win->rects, &lcfg,
+                                  lk_ev.data.pointer.x, lk_ev.data.pointer.y);
 
           if (lk_ev.target == 0) {
-            lk_ev.target =
-                lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
-                            lk_ev.data.pointer.y);
+            lk_ev.target = lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
+                                       lk_ev.data.pointer.y);
           }
 
           /* Pointer-down outside any open overlay closes it.
@@ -1691,10 +1689,9 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
            * the user clicked.  A modal (focus-trapping, non-dismissing)
            * overlay consumes the click instead — skip routing. */
           if (lk_ev.type == LK_EVENT_POINTER_DOWN) {
-            if (lk_overlay_dismiss_outside(win->ui, win->rects, &lcfg,
-                                           lk_ev.data.pointer.x,
-                                           lk_ev.data.pointer.y) ==
-                LK_DISMISS_BLOCKED) {
+            if (lk_overlay_dismiss_outside(
+                    win->ui, win->rects, &lcfg, lk_ev.data.pointer.x,
+                    lk_ev.data.pointer.y) == LK_DISMISS_BLOCKED) {
               continue;
             }
           }

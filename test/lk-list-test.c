@@ -273,9 +273,8 @@ static void test_list_cursor_keys_and_click(void) {
   BEGIN_TEST("list: keys move the cursor + VALUE_CHANGED, row click sets it");
 
   lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "rows", 0, 0, 0, 0,
-                          "Cursor");
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
-                          "Pick");
+                         "Cursor");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Pick");
   build_frame(ui, 100, 0, 8, 0, -1);
   {
     /* present `rows` on the list so its value_changed becomes Cursor */

@@ -37,8 +37,8 @@ typedef struct doc_rec {
   lk_doc_delta deltas[REC_MAX_DELTAS];
   char ins[REC_MAX_DELTAS][REC_MAX_BYTES];
   char del[REC_MAX_DELTAS][REC_MAX_BYTES];
-  int order;  /* value of *seq when last notified */
-  int *seq;   /* optional shared call-order counter */
+  int order; /* value of *seq when last notified */
+  int *seq;  /* optional shared call-order counter */
 } doc_rec;
 
 static void rec_listener(void *ud, const lk_document *d,
@@ -1276,8 +1276,7 @@ static void test_delta_seq_newline_delete(void) {
 }
 
 static void test_delta_seq_lines_replaced(void) {
-  lk_document *d =
-      lk_doc_from_str(NULL, NULL, NULL, "aaa\nbbb\nccc\nddd", 15);
+  lk_document *d = lk_doc_from_str(NULL, NULL, NULL, "aaa\nbbb\nccc\nddd", 15);
   doc_rec rec;
   char buf[32];
 
@@ -1601,7 +1600,7 @@ static void test_doc_get_byte_piece_boundary(void) {
 
   BEGIN_TEST("doc: get_byte at piece boundaries");
 
-  CHECK(lk_doc_insert(d, 5, "XX", 2)); /* [hello][XX][ world] */
+  CHECK(lk_doc_insert(d, 5, "XX", 2));  /* [hello][XX][ world] */
   CHECK_EQ(lk_doc_get_byte(d, 5), 'X'); /* original|add boundary */
   CHECK_EQ(lk_doc_get_byte(d, 7), ' '); /* add|original boundary */
 

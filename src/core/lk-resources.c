@@ -224,8 +224,7 @@ void *lk_resource_get(const lk_resources *rs, lk_resource_ref ref,
 }
 
 int lk_resources_lookup_names(const lk_resources *rs, lk_resource_ref ref,
-                              const char **type_name,
-                              const char **debug_name) {
+                              const char **type_name, const char **debug_name) {
   const lk_resource_slot *s;
 
   if (!rs || ref.id == 0 || ref.id > rs->count) {
