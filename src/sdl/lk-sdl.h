@@ -19,6 +19,17 @@ typedef void (*lk_frame_fn)(lk_tree *t, void *ud);
 
 lk_window *lk_window_create(const lk_window_cfg *cfg);
 void lk_window_destroy(lk_window *win);
+
+/* One frame: build (begin/end frame around `frame`), resolve styles,
+ * lay out, poll and route events, re-lay out, render, present.
+ * Returns 1 while the window should keep going, 0 once it has
+ * stopped (close request, or lk_window_stop) -- a stop requested
+ * during the step still gets that frame rendered.  Never blocks
+ * beyond the work itself: pacing (vsync, or a sleep without it) is
+ * the caller's.  lk_window_run is `while (step) pace;` for hosts
+ * that can block; a host that cannot -- a browser's main thread --
+ * calls this from its own frame callback instead. */
+int lk_window_step(lk_window *win, lk_frame_fn frame, void *ud);
 void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud);
 lk_ui *lk_window_ui(lk_window *win);
 
@@ -67,10 +78,11 @@ int lk_window_set_icon(lk_window *win, const char *path);
  * missing file. */
 int lk_window_request_screenshot(lk_window *win, const char *path);
 
-/* Leave lk_window_run after the current iteration completes (the
- * frame is still rendered and a pending screenshot still saved).
- * Safe from a frame callback, a command handler, or an event
- * handler; a no-op when the loop is not running. */
+/* Stop the window: lk_window_run returns after the current iteration
+ * completes (the frame is still rendered and a pending screenshot
+ * still saved) and lk_window_step returns 0 from then on.  Safe from
+ * a frame callback, a command handler, or an event handler; a no-op
+ * when already stopped. */
 void lk_window_stop(lk_window *win);
 int lk_window_set_icon_mem(lk_window *win, const void *data, lk_u32 len);
 int lk_window_set_icon_rgba(lk_window *win, int w, int h, const void *pixels,

@@ -5633,6 +5633,46 @@ static lcl_return_code c_lk_window_run(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* Lk::window_step [win, view_proc] -> 1 (keep going) / 0 (stopped) */
+static lcl_return_code c_lk_window_step(lcl_interp *interp, int argc,
+                                        lcl_value **argv, lcl_value **out) {
+  struct lcl_lk_window *lw;
+  struct lcl_lk_frame_ctx frame_ctx;
+  int more;
+
+  if (argc != 2) {
+    lcl_set_error(interp, "Lk::window_step: expected 2 arguments");
+    return LCL_RC_ERR;
+  }
+
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
+
+  if (!lcl_is_callable(argv[1])) {
+    lcl_set_error(interp, "Lk::window_step: expected callable view proc");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lw->event_handler) {
+    lk_window_set_event_handler(lw->win, lcl_lk_event_handler, lw);
+  }
+
+  frame_ctx.interp = interp;
+  frame_ctx.view_fn = lcl_ref_inc(argv[1]);
+
+  more = lk_window_step(lw->win, lcl_lk_frame, &frame_ctx);
+
+  lcl_ref_dec(frame_ctx.view_fn);
+
+  *out = lcl_int_new(more ? 1 : 0);
+
+  return *out ? LCL_RC_OK : LCL_RC_ERR;
+}
+
 /* Lk::window_ui [win] -> opaque<lk_ui> */
 static lcl_return_code c_lk_window_ui(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
@@ -9482,6 +9522,8 @@ void lcl_register_lk(lcl_interp *interp) {
                   lcl_c_proc_new("Lk::window_destroy", c_lk_window_destroy));
   lcl_ns_def_take(ns, "window_run",
                   lcl_c_proc_new("Lk::window_run", c_lk_window_run));
+  lcl_ns_def_take(ns, "window_step",
+                  lcl_c_proc_new("Lk::window_step", c_lk_window_step));
   lcl_ns_def_take(ns, "window_ui",
                   lcl_c_proc_new("Lk::window_ui", c_lk_window_ui));
   lcl_ns_def_take(ns, "window_set_event_handler",
