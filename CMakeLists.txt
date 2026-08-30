@@ -320,7 +320,7 @@ if(LK_BUILD_LCL)
   FetchContent_Declare(
     lcl
     GIT_REPOSITORY https://github.com/bholten/lcl.git
-    GIT_TAG        846a9b10b3bc5567f5b09bf3abbe346ba567adb6
+    GIT_TAG        8da8c0d253c0f9c02e6240c1a680bcbd2fa3ee3a
   )
   FetchContent_MakeAvailable(lcl)
 
@@ -364,27 +364,70 @@ if(LK_BUILD_LCL)
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
 
-    if(LK_LCL_IO)
-      target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_IO)
-      target_link_libraries(lcl_lk_main PRIVATE lcl_io)
+    # The optional Lcl packages a runner registers (Io::, Regex::,
+    # Xoshiro::), shared by the native and the browser runner.
+    function(lk_runner_packages target)
+      if(LK_LCL_IO)
+        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_IO)
+        target_link_libraries(${target} PRIVATE lcl_io)
+      endif()
+
+      if(LK_LCL_REGEX)
+        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_REGEX)
+        target_link_libraries(${target} PRIVATE lcl_regex)
+      endif()
+
+      if(LK_LCL_RANDOM)
+        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_RANDOM)
+        target_link_libraries(${target} PRIVATE lcl_random)
+      endif()
+
+      target_compile_options(${target} PRIVATE -Wall -Wextra)
+
+      set_target_properties(${target} PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED OFF
+        C_EXTENSIONS OFF)
+    endfunction()
+
+    lk_runner_packages(lcl_lk_main)
+
+    if(EMSCRIPTEN)
+      # The browser runner: lcl_lk_web.html + .js + .wasm + .data.  The
+      # script becomes /app.lcl in the page's filesystem and the font
+      # keeps its host path, so a script naming an absolute font path
+      # (the Widget Tour does) needs no change.  Serve build-emcc over
+      # HTTP (python3 -m http.server) -- browsers will not fetch .wasm
+      # and .data from file://.
+      set(LK_WASM_APP "${CMAKE_CURRENT_SOURCE_DIR}/examples/tour-dsl.lcl"
+        CACHE FILEPATH "Script preloaded as /app.lcl into lcl_lk_web")
+      set(LK_WASM_FONT
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
+        CACHE FILEPATH "Font preloaded into lcl_lk_web at the same path")
+
+      if(NOT EXISTS "${LK_WASM_FONT}")
+        message(WARNING "LK_WASM_FONT not found: ${LK_WASM_FONT}")
+      endif()
+
+      add_executable(lcl_lk_web src/lcl/lcl-lk-wasm.c)
+      target_link_libraries(lcl_lk_web PRIVATE lcl_lk)
+      target_include_directories(lcl_lk_web PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
+      lk_runner_packages(lcl_lk_web)
+      set_target_properties(lcl_lk_web PROPERTIES SUFFIX ".html")
+      # SHELL: keeps each flag with its argument -- CMake de-duplicates
+      # repeated link-option tokens, which would drop the second flag.
+      target_link_options(lcl_lk_web PRIVATE
+        "SHELL:--preload-file ${LK_WASM_APP}@/app.lcl"
+        "SHELL:--preload-file ${LK_WASM_FONT}@${LK_WASM_FONT}"
+        "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/src/lcl/lcl-lk-web-shell.html"
+        -sMINIFY_HTML=0) # distro emsdks lack html-minifier-terser
+      set_property(TARGET lcl_lk_web APPEND PROPERTY LINK_DEPENDS
+        "${LK_WASM_APP}" "${LK_WASM_FONT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/lcl/lcl-lk-web-shell.html")
     endif()
-
-    if(LK_LCL_REGEX)
-      target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_REGEX)
-      target_link_libraries(lcl_lk_main PRIVATE lcl_regex)
-    endif()
-
-    if(LK_LCL_RANDOM)
-      target_compile_definitions(lcl_lk_main PRIVATE LK_HAVE_LCL_RANDOM)
-      target_link_libraries(lcl_lk_main PRIVATE lcl_random)
-    endif()
-
-    target_compile_options(lcl_lk_main PRIVATE -Wall -Wextra)
-
-    set_target_properties(lcl_lk_main PROPERTIES
-      C_STANDARD 11
-      C_STANDARD_REQUIRED OFF
-      C_EXTENSIONS OFF)
   endif()
 
   add_executable(lcl_lk_test test/lcl-lk-test.c)
@@ -440,9 +483,21 @@ if(EMSCRIPTEN)
     endif()
   endforeach()
 
-  foreach(_t lk_demo lcl_lk_main)
+  foreach(_t lk_demo lcl_lk_web)
     if(TARGET ${_t})
       target_link_options(${_t} PRIVATE ${_lk_wasm_link})
     endif()
   endforeach()
+
+  # lcl_lk_main under Emscripten is the node-side CLI: host filesystem
+  # and argv like the native binary.  With SDL_VIDEODRIVER=dummy it
+  # drives a script headless -- the Tour's --snap mode is the whole
+  # SDL pipeline (FreeType, layout, render, screenshot) under wasm.
+  if(TARGET lcl_lk_main)
+    target_link_options(lcl_lk_main PRIVATE ${_lk_wasm_link} -sNODERAWFS=1
+      -sEXIT_RUNTIME=1
+      "SHELL:--pre-js ${CMAKE_CURRENT_SOURCE_DIR}/src/lcl/lcl-lk-node-pre.js")
+    set_property(TARGET lcl_lk_main APPEND PROPERTY LINK_DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/lcl/lcl-lk-node-pre.js")
+  endif()
 endif()

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lk</title>
+<style>
+  body { margin: 0; background: #111; color: #ddd; font: 13px/1.4 monospace; }
+  #canvas { display: block; margin: 0 auto; background: #000; outline: none; }
+  #log { margin: 0; padding: 8px 12px; white-space: pre-wrap; max-height: 12em;
+         overflow: auto; color: #9c9; border-top: 1px solid #333; }
+  #log .err { color: #e88; }
+  #log .status { color: #888; }
+</style>
+</head>
+<body>
+<!-- SDL's Emscripten video driver draws into #canvas; tabindex lets it
+     take keyboard focus on click.  Everything the program prints (puts,
+     script errors, the runner's own messages) lands in #log below. -->
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<pre id="log"></pre>
+<script>
+  var log = document.getElementById('log');
+
+  function line(text, cls) {
+    var s = document.createElement('span');
+    if (cls) { s.className = cls; }
+    s.textContent = text + '\n';
+    log.appendChild(s);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: function (t) { line(t); },
+    printErr: function (t) { line(t, 'err'); },
+    setStatus: function (t) { if (t) { line(t, 'status'); } },
+    onAbort: function (what) { line('abort: ' + what, 'err'); },
+    // ?SDL_RENDER_DRIVER=software (any SDL_* or LK_* name) reaches the
+    // program's environment, the way a shell variable does natively.
+    preRun: [function () {
+      new URLSearchParams(location.search).forEach(function (v, k) {
+        if (/^(SDL|LK)_/.test(k)) { ENV[k] = v; line(k + '=' + v, 'status'); }
+      });
+    }]
+  };
+
+  window.addEventListener('error', function (e) {
+    line('error: ' + e.message, 'err');
+  });
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

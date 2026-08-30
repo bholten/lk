@@ -110,8 +110,8 @@ jobs:
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.69
-      - name: Install ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Install ninja + the Tour's font
+        run: sudo apt-get update && sudo apt-get install -y ninja-build fonts-liberation
       - name: Cache wasm SDL prefix
         id: wasm-sdl-cache
         uses: actions/cache@v4
@@ -130,6 +130,26 @@ jobs:
           test -f build-emcc/lcl_lk_main.wasm
       - name: Tests (node, SDL linked)
         run: node build-emcc/lk_test.js && node --stack-size=8000 build-emcc/lcl_lk_test.js
+      - name: Widget Tour snapshots under wasm (node, SDL dummy driver)
+        # The whole SDL pipeline -- FreeType, layout, software render,
+        # screenshot -- executing as wasm.  BMP despite the .png names:
+        # the wasm build has no SDL_image.
+        run: |
+          mkdir tour-wasm
+          SDL_VIDEODRIVER=dummy node --stack-size=8000 build-emcc/lcl_lk_main.js examples/tour-dsl.lcl --snap "$PWD/tour-wasm"
+          ls -l tour-wasm && test "$(ls tour-wasm | wc -l)" -eq 6
+      - uses: actions/upload-artifact@v4
+        with:
+          name: widget-tour-wasm-snapshots
+          path: tour-wasm/*.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcl-lk-web
+          path: |
+            build-emcc/lcl_lk_web.html
+            build-emcc/lcl_lk_web.js
+            build-emcc/lcl_lk_web.wasm
+            build-emcc/lcl_lk_web.data
 
   sdl:
     # Optional (manual dispatch): builds SDL3 / SDL3_ttf / SDL3_image
