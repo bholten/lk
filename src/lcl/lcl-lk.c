@@ -5590,6 +5590,74 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
 }
 
 /* Lk::window_destroy [win] -> "" */
+static void window_destroy_now(struct lcl_lk_window *lw) {
+  if (lw->event_handler) {
+    lcl_ref_dec(lw->event_handler);
+    lw->event_handler = NULL;
+  }
+
+  ui_teardown_bindings(lk_window_ui(lw->win));
+  lk_window_destroy(lw->win);
+  lw->win = NULL;
+}
+
+/* ---- Deferred run: hosts that cannot block (include/lcl-lk.h) ----
+ *
+ * A browser page has no way to sit inside Lk::window_run.  With
+ * deferral on, window_run records the window (retained, so the
+ * script dropping its handle cannot destroy it mid-run) and the view
+ * proc and returns; a window_destroy on that window is held back
+ * too, since the DSL's `app` issues one right after the run.  The
+ * host then calls lcl_lk_run_step from its frame callback until it
+ * returns 0, which releases everything and performs the held
+ * destroy.  One run at a time: a page has one main loop. */
+static int g_run_deferred = 0;
+
+static struct {
+  lcl_value *win_val; /* retained opaque<lk_window>; NULL = nothing pending */
+  struct lcl_lk_window *lw;
+  struct lcl_lk_frame_ctx frame; /* view_fn retained */
+  int destroy_after;
+} g_pending;
+
+void lcl_lk_set_run_deferred(int on) {
+  g_run_deferred = on ? 1 : 0;
+}
+
+int lcl_lk_run_pending(void) {
+  return g_pending.win_val != NULL;
+}
+
+static void pending_release(void) {
+  struct lcl_lk_window *lw = g_pending.lw;
+  lcl_value *win_val = g_pending.win_val;
+  int destroy = g_pending.destroy_after;
+
+  lcl_ref_dec(g_pending.frame.view_fn);
+  memset(&g_pending, 0, sizeof(g_pending));
+
+  if (destroy && lw->win) {
+    window_destroy_now(lw);
+  }
+
+  lcl_ref_dec(win_val);
+}
+
+int lcl_lk_run_step(void) {
+  if (!g_pending.win_val) {
+    return 0;
+  }
+
+  if (!g_pending.lw->win ||
+      !lk_window_step(g_pending.lw->win, lcl_lk_frame, &g_pending.frame)) {
+    pending_release();
+
+    return 0;
+  }
+
+  return 1;
+}
+
 static lcl_return_code c_lk_window_destroy(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5606,14 +5674,12 @@ static lcl_return_code c_lk_window_destroy(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lw->event_handler) {
-    lcl_ref_dec(lw->event_handler);
-    lw->event_handler = NULL;
+  if (g_pending.win_val && g_pending.lw == lw) {
+    /* Held until the deferred run ends (pending_release). */
+    g_pending.destroy_after = 1;
+  } else if (lw->win) {
+    window_destroy_now(lw);
   }
-
-  ui_teardown_bindings(lk_window_ui(lw->win));
-  lk_window_destroy(lw->win);
-  lw->win = NULL;
 
   *out = lcl_string_new("");
 
@@ -5646,6 +5712,25 @@ static lcl_return_code c_lk_window_run(lcl_interp *interp, int argc,
   /* Install event handler bridge if a handler has been set */
   if (lw->event_handler) {
     lk_window_set_event_handler(lw->win, lcl_lk_event_handler, lw);
+  }
+
+  if (g_run_deferred) {
+    if (g_pending.win_val) {
+      lcl_set_error(interp,
+                    "Lk::window_run: a deferred run is already pending");
+
+      return LCL_RC_ERR;
+    }
+
+    g_pending.win_val = lcl_ref_inc(argv[0]);
+    g_pending.lw = lw;
+    g_pending.frame.interp = interp;
+    g_pending.frame.view_fn = lcl_ref_inc(argv[1]);
+    g_pending.destroy_after = 0;
+
+    *out = lcl_string_new("");
+
+    return LCL_RC_OK;
   }
 
   frame_ctx.interp = interp;

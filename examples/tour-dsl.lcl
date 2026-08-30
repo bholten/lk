@@ -281,6 +281,9 @@ app "Widget Tour" #{font $font font_size 14 width 900 height 620} {
                     label "t3" #{text "dim: secondary information" tag dim}
                     label "t4" #{text "warn: something needs attention" tag warn}
                     spacer "sp1" #{h 8}
+
+                    label "t5" #{text "clicks: $clicks" tag dim}
+
                     row "btns" #{gap 8} {
                         button "b_plain" #{text "Plain" focusable 1 present (clicker (b)) tooltip "Counts clicks"}
                         button "b_primary" #{text "Primary" tag primary focusable 1 present (clicker (b))}
@@ -288,7 +291,7 @@ app "Widget Tour" #{font $font font_size 14 width 900 height 620} {
                         button "b_disabled" #{text "Disabled" disabled 1 present (clicker (b))}
                         button "b_focus" #{text "Focused" focusable 1 present (clicker (b))}
                     }
-                    label "t5" #{text "clicks: $clicks" tag dim}
+
                     spacer "sp2" #{h 8}
                     label "t7" #{text "text_align start / center / end, and text_valign center on a tall one" tag dim}
                     row "aligns" #{gap 8} {

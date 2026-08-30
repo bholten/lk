@@ -9,4 +9,5 @@ BreakBeforeBraces: Attach
 BreakStringLiterals: false
 InsertBraces: true
 PointerAlignment: Right
+SkipMacroDefinitionBody: true
 SpaceBeforeSquareBrackets: false

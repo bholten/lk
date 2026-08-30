@@ -2,7 +2,8 @@
 #define LK_H
 
 /* Library version.  CMake's project(VERSION) must agree -- the build
- * fails at configure time if it does not (the header is the truth). */
+ * fails at configure time if it does not (the header is the
+ * truth). */
 #define LK_VERSION_MAJOR 0
 #define LK_VERSION_MINOR 1
 #define LK_VERSION_PATCH 0
@@ -1888,12 +1889,15 @@ lk_ix lk_hit_test(const lk_tree *t, const lk_rect *rects, lk_i32 x, lk_i32 y);
 lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
                           const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y);
 
-/* Outcome of lk_overlay_dismiss_outside. */
-#define LK_DISMISS_NONE 0      /* no overlay affected */
-#define LK_DISMISS_DISMISSED 1 /* at least one overlay was dismissed */
-#define LK_DISMISS_BLOCKED                                                     \
-  2 /* a modal overlay consumed the click:                                     \
-     * caller must NOT route the event */
+/* Outcome of lk_overlay_dismiss_outside. no overlay affected */
+#define LK_DISMISS_NONE 0
+
+/* at least one overlay was dismissed */
+#define LK_DISMISS_DISMISSED 1
+
+/* a modal overlay consumed the click: caller must NOT route the
+ * event */
+#define LK_DISMISS_BLOCKED 2
 
 /* Handle a pointer-down at (x,y) with respect to the overlay stack.
  * Topmost-first: an overlay containing the point (or whose owner rect
