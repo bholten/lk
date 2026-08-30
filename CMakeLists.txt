@@ -23,6 +23,44 @@ include(GNUInstallDirs)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# Formatting.  `cmake --build build --target format` rewrites include/,
+# src/ and test/ with the repo's .clang-format (identical to Lcl's);
+# `format-check` fails when anything would change and is what CI runs.
+# LK_FORMAT_CHECK=ON folds the check into every build of this
+# directory.  Nothing here touches sources during an ordinary build,
+# and none of it exists when lk is embedded (FetchContent) or when
+# clang-format is not installed.
+option(LK_FORMAT_CHECK "Fail the build when sources are not clang-formatted" OFF)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  find_program(LK_CLANG_FORMAT_EXE clang-format)
+
+  if(LK_CLANG_FORMAT_EXE)
+    file(GLOB_RECURSE LK_FORMAT_SOURCES CONFIGURE_DEPENDS
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/*.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/*.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/*.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/*.h)
+
+    add_custom_target(format
+      COMMAND ${LK_CLANG_FORMAT_EXE} -i ${LK_FORMAT_SOURCES}
+      COMMENT "clang-format -i include/ src/ test/")
+
+    if(LK_FORMAT_CHECK)
+      set(_lk_format_check_all ALL)
+    else()
+      set(_lk_format_check_all)
+    endif()
+
+    add_custom_target(format-check ${_lk_format_check_all}
+      COMMAND ${LK_CLANG_FORMAT_EXE} --dry-run --Werror ${LK_FORMAT_SOURCES}
+      COMMENT "clang-format --dry-run --Werror include/ src/ test/")
+  elseif(LK_FORMAT_CHECK)
+    message(FATAL_ERROR "LK_FORMAT_CHECK=ON but clang-format was not found")
+  endif()
+endif()
+
 option(LK_ENABLE_CLANG_TIDY "Run clang-tidy alongside compilation" OFF)
 
 if(LK_ENABLE_CLANG_TIDY)

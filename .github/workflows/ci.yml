@@ -63,6 +63,19 @@ jobs:
           cmake -B build-tidy -DLK_BUILD_LCL=ON -DLK_ENABLE_CLANG_TIDY=ON
           cmake --build build-tidy -j
 
+  format:
+    # Whole-tree clang-format check (the `format-check` target).  The
+    # tree was formatted in one commit (ec8b195); this keeps it so.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Configure (no Lcl fetch needed)
+        run: cmake -B build-fmt -DLK_BUILD_LCL=OFF
+      - name: format-check
+        run: cmake --build build-fmt --target format-check
+
   sdl:
     # Optional (manual dispatch): builds SDL3 / SDL3_ttf / SDL3_image
     # from source, then runs every example headless under the offscreen
