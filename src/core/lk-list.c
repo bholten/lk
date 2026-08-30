@@ -536,8 +536,8 @@ static int event_list(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
       g = list_geom(ui, n);
 
       if (travel > 0) {
-        lk_i32 scroll_y = (lk_i32)((long)clamp(top, 0, travel) *
-                                   (long)g->list.max / (long)travel);
+        lk_i32 scroll_y = (lk_i32)((lk_i64)clamp(top, 0, travel) *
+                                   (lk_i64)g->list.max / (lk_i64)travel);
 
         lk_state_set(st, nid, LKS_SCROLL_Y,
                      lk_v_i32(clamp(scroll_y, 0, g->list.max)));
