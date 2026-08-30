@@ -2915,6 +2915,66 @@ static void test_doc_mutation_errors(void) {
   END_TEST();
 }
 
+/* Script integers are 64-bit (lcl_int); the widths lk consumes are 32
+ * or narrower.  Every narrowing in the binding is checked: a value
+ * that a bare cast would have wrapped into a plausible index is an
+ * error, never a silent truncation. */
+static void test_int_args_checked(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("int args: 64-bit script values never truncate");
+  interp = make_interp();
+
+  eval_ok(interp,
+    "let ui [Lk::ui_create]\n"
+    "let t [Lk::begin_frame $ui]\n"
+    "let w [Lk::node $t \"main\" \"window\"]\n"
+    "Lk::set_root $t $w\n"
+    "Lk::end_frame $ui\n"
+    "let d [Lk::doc_new \"ab\ncd\nef\"]\n"
+    "let s [Lk::annot_store_new]\n"
+    "Lk::annot_attach $s $d\n"
+    "let a [Lk::annot_add $s 0 5 \"m\"]",
+    &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  /* 2^32 + 1 wraps to line 1 (start 3) through a bare (lk_u32) cast;
+   * 2^32 wraps to pos 0 (column 1). */
+  eval_expect_err(interp, "Lk::doc_line_start $d 4294967297",
+                  "Lk::doc_line_start", "integer", NULL);
+  eval_expect_err(interp, "Lk::doc_char_col $d 4294967296",
+                  "Lk::doc_char_col", "integer", NULL);
+
+  /* arg_* sites tell the two failures apart. */
+  eval_expect_err(interp, "Lk::state_set $ui \"main\" 70000 1",
+                  "Lk::state_set: key out of range", NULL, NULL);
+  eval_expect_err(interp, "Lk::state_set $ui \"main\" abc 1",
+                  "Lk::state_set: key must be an integer", NULL, NULL);
+  eval_expect_err(interp, "Lk::annot_remove $s 4294967296",
+                  "Lk::annot_remove: id out of range", NULL, NULL);
+
+  /* A negative into an unsigned width is a range failure too. */
+  eval_expect_err(interp, "Lk::annot_remove $s -1", "id out of range", NULL,
+                  NULL);
+  eval_ok(interp, "let t2 [Lk::begin_frame $ui]", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+  eval_expect_err(interp, "Lk::set_root $t2 -1",
+                  "Lk::set_root: node_ix out of range", NULL, NULL);
+  eval_ok(interp, "Lk::end_frame $ui", &r);
+  if (r) lcl_ref_dec(r);
+  r = NULL;
+
+  /* In range is unchanged. */
+  check_int(interp, "Lk::doc_line_start $d 1", 3);
+  check_int(interp, "Lk::annot_remove $s $a", 1);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 static void test_doc_line_procs(void) {
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -6992,6 +7052,7 @@ int main(void) {
   test_doc_insert_delete();
   test_doc_mutation_errors();
   test_doc_line_procs();
+  test_int_args_checked();
   test_doc_char_col();
   test_doc_find_binding();
   test_doc_find_errors();

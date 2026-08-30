@@ -12,6 +12,7 @@
  * C89 (matches lk + lcl).
  */
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -377,6 +378,108 @@ static const char *arg_name(lcl_interp *interp, lcl_value *v,
   }
 
   return NULL;
+}
+
+/* Integer arguments.  An Lcl integer (lcl_int) is 64-bit on every
+ * host; the widths lk consumes are 32 or narrower, so the narrowing
+ * is checked, never a cast (the same discipline as Lcl's own
+ * lcl_std_index).  to_* return 1 and write *out when `v` is an
+ * integer that fits, else 0 and leave *out alone -- for sites that
+ * ignore a bad value.  arg_* additionally set the interp error:
+ * "<what> must be an integer" when `v` is not one, "<what> out of
+ * range" when it is but does not fit (a negative for an unsigned
+ * width included).  `what` names the proc and operand, e.g.
+ * "Lk::set_root: node_ix". */
+static int to_i32(lcl_value *v, lk_i32 *out) {
+  lcl_int n;
+
+  if (lcl_value_to_int(v, &n) != LCL_OK || n < INT_MIN || n > INT_MAX) {
+    return 0;
+  }
+
+  *out = (lk_i32)n;
+
+  return 1;
+}
+
+static int to_u32(lcl_value *v, lk_u32 *out) {
+  lcl_int n;
+
+  if (lcl_value_to_int(v, &n) != LCL_OK || n < 0 ||
+      n > (lcl_int)0xFFFFFFFFu) {
+    return 0;
+  }
+
+  *out = (lk_u32)n;
+
+  return 1;
+}
+
+static int to_u16(lcl_value *v, lk_u16 *out) {
+  lcl_int n;
+
+  if (lcl_value_to_int(v, &n) != LCL_OK || n < 0 || n > 0xFFFF) {
+    return 0;
+  }
+
+  *out = (lk_u16)n;
+
+  return 1;
+}
+
+static int to_u8(lcl_value *v, lk_u8 *out) {
+  lcl_int n;
+
+  if (lcl_value_to_int(v, &n) != LCL_OK || n < 0 || n > 0xFF) {
+    return 0;
+  }
+
+  *out = (lk_u8)n;
+
+  return 1;
+}
+
+static void err_int(lcl_interp *interp, const char *what, lcl_value *v) {
+  char err[128];
+  lcl_int n;
+
+  sprintf(err, "%.64s %s", what,
+          lcl_value_to_int(v, &n) == LCL_OK ? "out of range"
+                                            : "must be an integer");
+  lcl_set_error(interp, err);
+}
+
+static int arg_i32(lcl_interp *interp, const char *what, lcl_value *v,
+                   lk_i32 *out) {
+  if (!to_i32(v, out)) {
+    err_int(interp, what, v);
+
+    return 0;
+  }
+
+  return 1;
+}
+
+static int arg_u32(lcl_interp *interp, const char *what, lcl_value *v,
+                   lk_u32 *out) {
+  if (!to_u32(v, out)) {
+    err_int(interp, what, v);
+
+    return 0;
+  }
+
+  return 1;
+}
+
+static int arg_u16(lcl_interp *interp, const char *what, lcl_value *v,
+                   lk_u16 *out) {
+  if (!to_u16(v, out)) {
+    err_int(interp, what, v);
+
+    return 0;
+  }
+
+  return 1;
 }
 
 /* ============================================================================
@@ -999,7 +1102,7 @@ static lcl_return_code c_lk_node(lcl_interp *interp, int argc, lcl_value **argv,
 static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   lk_tree *t;
-  lcl_int ix;
+  lk_u32 ix;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::set_root: expected 2 arguments");
@@ -1013,13 +1116,12 @@ static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &ix) != LCL_OK) {
-    lcl_set_error(interp, "Lk::set_root: node_ix must be an integer");
+  if (!arg_u32(interp, "Lk::set_root: node_ix", argv[1], &ix)) {
 
     return LCL_RC_ERR;
   }
 
-  lk_tree_set_root(t, (lk_ix)ix);
+  lk_tree_set_root(t, ix);
 
   *out = lcl_string_new("");
 
@@ -1030,7 +1132,7 @@ static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_tree *t;
-  lcl_int parent_ix, child_ix;
+  lk_ix parent_ix, child_ix;
 
   if (argc != 3) {
     lcl_set_error(interp, "Lk::append_child: expected 3 arguments");
@@ -1044,19 +1146,15 @@ static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &parent_ix) != LCL_OK) {
-    lcl_set_error(interp, "Lk::append_child: parent_ix must be an integer");
-
+  if (!arg_u32(interp, "Lk::append_child: parent_ix", argv[1], &parent_ix)) {
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &child_ix) != LCL_OK) {
-    lcl_set_error(interp, "Lk::append_child: child_ix must be an integer");
-
+  if (!arg_u32(interp, "Lk::append_child: child_ix", argv[2], &child_ix)) {
     return LCL_RC_ERR;
   }
 
-  lk_tree_append_child(t, (lk_ix)parent_ix, (lk_ix)child_ix);
+  lk_tree_append_child(t, parent_ix, child_ix);
 
   *out = lcl_string_new("");
 
@@ -1067,7 +1165,7 @@ static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
                                  lcl_value **out) {
   lk_tree *t;
-  lcl_int node_ix;
+  lk_ix node_ix;
   const char *key_str;
   int key_val;
   lk_value lv;
@@ -1085,9 +1183,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &node_ix) != LCL_OK) {
-    lcl_set_error(interp, "Lk::prop: node_ix must be an integer");
-
+  if (!arg_u32(interp, "Lk::prop: node_ix", argv[1], &node_ix)) {
     return LCL_RC_ERR;
   }
 
@@ -1109,18 +1205,18 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
     /* Kind-dispatched: a slider's value and a list's value (its
      * cursor row) are integers (numeric text accepted); every other
      * kind's value is a string (dropdown option text, tabs tab id). */
-    if (node_ix > 0 && (lk_u32)node_ix < t->node_count &&
+    if (node_ix > 0 && node_ix < t->node_count &&
         ((lk_kind)t->nodes[node_ix].kind == UIK_SLIDER ||
          (lk_kind)t->nodes[node_ix].kind == UIK_LIST)) {
-      lcl_int i;
-      if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
+      lk_i32 i;
+      if (!to_i32(argv[3], &i)) {
         lcl_set_error(interp,
                       (lk_kind)t->nodes[node_ix].kind == UIK_SLIDER
                           ? "Lk::prop: slider value expects an integer"
                           : "Lk::prop: list value expects an integer");
         return LCL_RC_ERR;
       }
-      lv = lk_v_i32((lk_i32)i);
+      lv = lk_v_i32(i);
     } else {
       lv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3]));
     }
@@ -1134,7 +1230,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
       lcl_set_error(interp, "Lk::prop: bool prop expects integer");
       return LCL_RC_ERR;
     }
-    lv = lk_v_bool((int)b);
+    lv = lk_v_bool(b != 0);
     break;
   }
   case UIP_W:
@@ -1145,31 +1241,31 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   case UIP_CONTROLLED:
   case UIP_MIN:
   case UIP_MAX: {
-    lcl_int i;
-    if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
+    lk_i32 i;
+    if (!to_i32(argv[3], &i)) {
       lcl_set_error(interp, "Lk::prop: numeric prop expects integer");
       return LCL_RC_ERR;
     }
-    lv = lk_v_i32((lk_i32)i);
+    lv = lk_v_i32(i);
     break;
   }
   case UIP_ROWS:
   case UIP_ROW: {
-    lcl_int i;
-    if (lcl_value_to_int(argv[3], &i) != LCL_OK || i < 0) {
+    lk_i32 i;
+    if (!to_i32(argv[3], &i) || i < 0) {
       lcl_set_error(interp, key_val == UIP_ROWS
                                 ? "Lk::prop: rows expects an integer >= 0"
                                 : "Lk::prop: row expects an integer >= 0");
       return LCL_RC_ERR;
     }
-    lv = lk_v_i32((lk_i32)i);
+    lv = lk_v_i32(i);
     break;
   }
   case UIP_ROW_H:
   case UIP_STEP:
   case UIP_COLUMNS: {
-    lcl_int i;
-    if (lcl_value_to_int(argv[3], &i) != LCL_OK || i < 1) {
+    lk_i32 i;
+    if (!to_i32(argv[3], &i) || i < 1) {
       lcl_set_error(interp, key_val == UIP_STEP
                                 ? "Lk::prop: step expects an integer >= 1"
                             : key_val == UIP_ROW_H
@@ -1177,12 +1273,12 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
                                 : "Lk::prop: columns expects an integer >= 1");
       return LCL_RC_ERR;
     }
-    lv = lk_v_i32((lk_i32)i);
+    lv = lk_v_i32(i);
     break;
   }
   case UIP_GROW: {
-    lcl_int i;
-    if (lcl_value_to_int(argv[3], &i) != LCL_OK) {
+    lk_i32 i;
+    if (!to_i32(argv[3], &i)) {
       lcl_set_error(interp, "Lk::prop: grow expects an integer >= 0");
       return LCL_RC_ERR;
     }
@@ -1191,7 +1287,7 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
                             "has no negative weights)");
       return LCL_RC_ERR;
     }
-    lv = lk_v_i32((lk_i32)i);
+    lv = lk_v_i32(i);
     break;
   }
   case UIP_ALIGN:
@@ -1291,14 +1387,14 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
  * number becomes i32, anything else renders to a string. */
 static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
   const char *sv;
-  lcl_int iv;
+  lk_i32 iv;
 
   if (lcl_value_get_string(v, &sv) == LCL_OK) {
     return lk_v_cstr(t->intern, sv);
   }
 
-  if (lcl_value_to_int(v, &iv) == LCL_OK) {
-    return lk_v_i32((lk_i32)iv);
+  if (to_i32(v, &iv)) {
+    return lk_v_i32(iv);
   }
 
   return lk_v_cstr(t->intern, lcl_value_to_string(v));
@@ -1313,7 +1409,7 @@ static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
 static lcl_return_code c_lk_present(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   lk_tree *t;
-  lcl_int node_ix;
+  lk_ix node_ix;
   const char *ptype_str;
   lk_value pvs[LK_PRES_MAX_ARGS];
   lk_u8 count = 0;
@@ -1330,8 +1426,7 @@ static lcl_return_code c_lk_present(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &node_ix) != LCL_OK) {
-    lcl_set_error(interp, "Lk::present: node_ix must be an integer");
+  if (!arg_u32(interp, "Lk::present: node_ix", argv[1], &node_ix)) {
 
     return LCL_RC_ERR;
   }
@@ -1361,7 +1456,7 @@ static lcl_return_code c_lk_present(lcl_interp *interp, int argc,
     pvs[count++] = coerce_lk_value(t, argv[3]);
   }
 
-  lk_tree_add_presentation_sv(t, (lk_ix)node_ix, ptype_str, pvs, count);
+  lk_tree_add_presentation_sv(t, node_ix, ptype_str, pvs, count);
   *out = lcl_string_new("");
 
   return LCL_RC_OK;
@@ -1985,7 +2080,7 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
   const char *node_str;
-  lcl_int key;
+  lk_u16 key;
   lk_node_id nid;
   lk_value lv;
   lk_state *st;
@@ -2008,16 +2103,14 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &key) != LCL_OK) {
-    lcl_set_error(interp, "Lk::state_set: key must be an integer");
-
+  if (!arg_u16(interp, "Lk::state_set: key", argv[2], &key)) {
     return LCL_RC_ERR;
   }
 
   /* Keys below LKS_USER are internal widget state — scripts never
    * poke widget state (initial values are props, e.g. the dropdown's
    * `value`).  App-owned state starts at LKS_USER. */
-  if (key < (lcl_int)LKS_USER) {
+  if (key < LKS_USER) {
     lcl_set_error(interp,
                   "Lk::state_set: keys below 256 (LKS_USER) are internal "
                   "widget state");
@@ -2031,19 +2124,19 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
    * anything else renders (mirrors coerce_lk_value). */
   {
     const char *sv;
-    lcl_int iv;
+    lk_i32 iv;
 
     if (lcl_value_get_string(argv[3], &sv) == LCL_OK) {
       lv = lk_v_cstr(ui->intern, sv);
-    } else if (lcl_value_to_int(argv[3], &iv) == LCL_OK) {
-      lv = lk_v_i32((lk_i32)iv);
+    } else if (to_i32(argv[3], &iv)) {
+      lv = lk_v_i32(iv);
     } else {
       lv = lk_v_cstr(ui->intern, lcl_value_to_string(argv[3]));
     }
   }
 
   st = lk_ui_state(ui);
-  lk_state_set(st, nid, (lk_u16)key, lv);
+  lk_state_set(st, nid, key, lv);
 
   *out = lcl_string_new("");
 
@@ -2055,7 +2148,7 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
   const char *node_str;
-  lcl_int key;
+  lk_u16 key;
   lk_node_id nid;
   lk_value lv;
   lk_state *st;
@@ -2078,15 +2171,13 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &key) != LCL_OK) {
-    lcl_set_error(interp, "Lk::state_get: key must be an integer");
-
+  if (!arg_u16(interp, "Lk::state_get: key", argv[2], &key)) {
     return LCL_RC_ERR;
   }
 
   /* Same barrier as Lk::state_set: internal widget state is not
    * script-visible. */
-  if (key < (lcl_int)LKS_USER) {
+  if (key < LKS_USER) {
     lcl_set_error(interp,
                   "Lk::state_get: keys below 256 (LKS_USER) are internal "
                   "widget state");
@@ -2096,7 +2187,7 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
 
   nid = lk_intern_cid(ui->intern, node_str);
   st = lk_ui_state(ui);
-  lv = lk_state_get(st, nid, (lk_u16)key);
+  lv = lk_state_get(st, nid, key);
 
   switch (lv.tag) {
   case UIV_I32: *out = lcl_int_new((lcl_int)lv.as.i); break;
@@ -2301,8 +2392,8 @@ static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
   const char *text;
-  lcl_int font_id = 0;
-  lcl_int font_size = 0;
+  lk_u16 font_id = 0;
+  lk_u16 font_size = 0;
   const lk_text_backend *tb;
   lk_text_metrics m;
   lcl_value *list;
@@ -2323,15 +2414,13 @@ static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
 
   text = lcl_value_to_string(argv[1]);
 
-  if (argc >= 3 && (lcl_value_to_int(argv[2], &font_id) != LCL_OK ||
-                    font_id < 0 || font_id > 65535)) {
+  if (argc >= 3 && !to_u16(argv[2], &font_id)) {
     lcl_set_error(interp, "Lk::text_size: font_id must be an int 0..65535");
 
     return LCL_RC_ERR;
   }
 
-  if (argc >= 4 && (lcl_value_to_int(argv[3], &font_size) != LCL_OK ||
-                    font_size < 0 || font_size > 65535)) {
+  if (argc >= 4 && !to_u16(argv[3], &font_size)) {
     lcl_set_error(interp,
                   "Lk::text_size: font_size must be an int 0..65535");
 
@@ -2340,8 +2429,8 @@ static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
 
   tb = ui->text ? ui->text : lk_text_backend_stub();
   memset(&m, 0, sizeof(m));
-  tb->measure(tb->ud, lk_str_c(text ? text : ""), (lk_u16)font_id,
-              (lk_u16)font_size, &m);
+  tb->measure(tb->ud, lk_str_c(text ? text : ""), font_id, font_size,
+              &m);
 
   list = lcl_list_new();
   {
@@ -2706,7 +2795,7 @@ static lcl_return_code c_lk_time_ms(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
                                 lcl_value **out) {
   lk_tree *t;
-  lcl_int node_ix;
+  lk_ix node_ix;
   const char *tag_str;
 
   if (argc != 3) {
@@ -2721,8 +2810,7 @@ static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &node_ix) != LCL_OK) {
-    lcl_set_error(interp, "Lk::tag: node_ix must be an integer");
+  if (!arg_u32(interp, "Lk::tag: node_ix", argv[1], &node_ix)) {
 
     return LCL_RC_ERR;
   }
@@ -2733,7 +2821,7 @@ static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
-  lk_tree_add_tag_s(t, (lk_ix)node_ix, tag_str);
+  lk_tree_add_tag_s(t, node_ix, tag_str);
 
   *out = lcl_string_new("");
 
@@ -2744,10 +2832,10 @@ static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
 static int parse_color_list(lcl_value *list, lk_color *out) {
   size_t len;
   lcl_value *v;
-  lcl_int r;
-  lcl_int g;
-  lcl_int b;
-  lcl_int a;
+  lk_u8 r;
+  lk_u8 g;
+  lk_u8 b;
+  lk_u8 a;
 
   len = lcl_list_len(list);
 
@@ -2757,19 +2845,19 @@ static int parse_color_list(lcl_value *list, lk_color *out) {
 
   v = lcl_list_peek(list, 0);
 
-  if (!v || lcl_value_to_int(v, &r) != LCL_OK) {
+  if (!v || !to_u8(v, &r)) {
     return 0;
   }
 
   v = lcl_list_peek(list, 1);
 
-  if (!v || lcl_value_to_int(v, &g) != LCL_OK) {
+  if (!v || !to_u8(v, &g)) {
     return 0;
   }
 
   v = lcl_list_peek(list, 2);
 
-  if (!v || lcl_value_to_int(v, &b) != LCL_OK) {
+  if (!v || !to_u8(v, &b)) {
     return 0;
   }
 
@@ -2778,15 +2866,15 @@ static int parse_color_list(lcl_value *list, lk_color *out) {
   if (len == 4) {
     v = lcl_list_peek(list, 3);
 
-    if (!v || lcl_value_to_int(v, &a) != LCL_OK) {
+    if (!v || !to_u8(v, &a)) {
       return 0;
     }
   }
 
-  out->r = (lk_u8)r;
-  out->g = (lk_u8)g;
-  out->b = (lk_u8)b;
-  out->a = (lk_u8)a;
+  out->r = r;
+  out->g = g;
+  out->b = b;
+  out->a = a;
 
   return 1;
 }
@@ -2889,9 +2977,9 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "padding");
 
   if (v) {
-    lcl_int iv;
-    if (lcl_value_to_int(v, &iv) == LCL_OK) {
-      style.padding = (lk_i32)iv;
+    lk_i32 iv;
+    if (to_i32(v, &iv)) {
+      style.padding = iv;
       field_mask |= LK_SF_PADDING;
     }
   }
@@ -2900,9 +2988,9 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "gap");
 
   if (v) {
-    lcl_int iv;
-    if (lcl_value_to_int(v, &iv) == LCL_OK) {
-      style.gap = (lk_i32)iv;
+    lk_i32 iv;
+    if (to_i32(v, &iv)) {
+      style.gap = iv;
       field_mask |= LK_SF_GAP;
     }
   }
@@ -2911,15 +2999,15 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "font_id");
 
   if (v) {
-    lcl_int iv;
-    if (lcl_value_to_int(v, &iv) != LCL_OK || iv < 0) {
+    lk_u32 iv;
+    if (!to_u32(v, &iv)) {
       lcl_set_error(interp,
                     "Lk::theme_rule: font_id must be a non-negative int");
 
       return LCL_RC_ERR;
     }
 
-    style.font_id = (lk_u32)iv;
+    style.font_id = iv;
     field_mask |= LK_SF_FONT_ID;
   }
 
@@ -2927,15 +3015,15 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "font_size");
 
   if (v) {
-    lcl_int iv;
-    if (lcl_value_to_int(v, &iv) != LCL_OK || iv < 0) {
+    lk_i32 iv;
+    if (!to_i32(v, &iv) || iv < 0) {
       lcl_set_error(interp,
                     "Lk::theme_rule: font_size must be a non-negative int");
 
       return LCL_RC_ERR;
     }
 
-    style.font_size = (lk_i32)iv;
+    style.font_size = iv;
     field_mask |= LK_SF_FONT_SIZE;
   }
 
@@ -2943,9 +3031,9 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "border_width");
 
   if (v) {
-    lcl_int iv;
-    if (lcl_value_to_int(v, &iv) == LCL_OK) {
-      style.border_width = (lk_i32)iv;
+    lk_i32 iv;
+    if (to_i32(v, &iv)) {
+      style.border_width = iv;
       field_mask |= LK_SF_BORDER_WIDTH;
     }
   }
@@ -2954,9 +3042,9 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   v = lcl_dict_peek(dict, "border_radius");
 
   if (v) {
-    lcl_int iv;
-    if (lcl_value_to_int(v, &iv) == LCL_OK) {
-      style.border_radius = (lk_i32)iv;
+    lk_i32 iv;
+    if (to_i32(v, &iv)) {
+      style.border_radius = iv;
       field_mask |= LK_SF_BORDER_RADIUS;
     }
   }
@@ -3056,7 +3144,7 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_intern_str(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
-  lcl_int id;
+  lk_node_id id;
   const char *s;
 
   if (argc != 2) {
@@ -3071,13 +3159,11 @@ static lcl_return_code c_lk_intern_str(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::intern_str: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::intern_str: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
-  s = lk_intern_cstr(ui->intern, (lk_node_id)id);
+  s = lk_intern_cstr(ui->intern, id);
   *out = lcl_string_new(s ? s : "");
 
   return LCL_RC_OK;
@@ -3435,8 +3521,8 @@ static lcl_return_code image_wrap_register(lcl_interp *interp,
 static lcl_return_code c_lk_image_new(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  lcl_int w;
-  lcl_int h;
+  lk_u32 w;
+  lk_u32 h;
   lk_image *img;
 
   if (argc != 3) {
@@ -3451,14 +3537,13 @@ static lcl_return_code c_lk_image_new(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &w) != LCL_OK ||
-      lcl_value_to_int(argv[2], &h) != LCL_OK || w < 1 || h < 1) {
+  if (!to_u32(argv[1], &w) || !to_u32(argv[2], &h) || w < 1 || h < 1) {
     lcl_set_error(interp, "Lk::image_new: w and h must be integers >= 1");
 
     return LCL_RC_ERR;
   }
 
-  img = lk_image_new((lk_u32)w, (lk_u32)h, NULL, NULL, NULL);
+  img = lk_image_new(w, h, NULL, NULL, NULL);
 
   if (!img) {
     /* > 16384 on an axis, or OOM (lk_image_new's contract) */
@@ -3829,7 +3914,7 @@ static int canvas_color(lcl_interp *interp, const char *proc, lcl_value *v,
  * 0..255 (hard error otherwise). */
 static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
                          lcl_value **argv, int idx, lk_u8 *out) {
-  lcl_int v;
+  lk_u8 v;
   char err[96];
 
   *out = 1;
@@ -3838,14 +3923,14 @@ static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
     return 1;
   }
 
-  if (lcl_value_to_int(argv[idx], &v) != LCL_OK || v < 0 || v > 255) {
+  if (!to_u8(argv[idx], &v)) {
     sprintf(err, "%.40s: stroke must be an integer 0..255", proc);
     lcl_set_error(interp, err);
 
     return 0;
   }
 
-  *out = (lk_u8)v;
+  *out = v;
 
   return 1;
 }
@@ -3856,8 +3941,8 @@ static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
 static lcl_return_code c_lk_canvas_new(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  lcl_int w = 0;
-  lcl_int h = 0;
+  lk_u32 w = 0;
+  lk_u32 h = 0;
   lk_canvas *cv;
   struct lcl_lk_canvas *cw;
   lk_resource_ref ref;
@@ -3875,15 +3960,13 @@ static lcl_return_code c_lk_canvas_new(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (argc == 3 &&
-      (lcl_value_to_int(argv[1], &w) != LCL_OK ||
-       lcl_value_to_int(argv[2], &h) != LCL_OK || w < 0 || h < 0)) {
+  if (argc == 3 && (!to_u32(argv[1], &w) || !to_u32(argv[2], &h))) {
     lcl_set_error(interp, "Lk::canvas_new: w and h must be integers >= 0");
 
     return LCL_RC_ERR;
   }
 
-  cv = lk_canvas_new((lk_u32)w, (lk_u32)h, NULL, NULL, NULL);
+  cv = lk_canvas_new(w, h, NULL, NULL, NULL);
 
   if (!cv) {
     lcl_set_error(interp,
@@ -3964,8 +4047,8 @@ static lcl_return_code c_lk_canvas_set_size(lcl_interp *interp, int argc,
                                             lcl_value **argv,
                                             lcl_value **out) {
   struct lcl_lk_canvas *cw;
-  lcl_int w;
-  lcl_int h;
+  lk_u32 w;
+  lk_u32 h;
 
   if (argc != 3) {
     lcl_set_error(interp,
@@ -3980,9 +4063,8 @@ static lcl_return_code c_lk_canvas_set_size(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &w) != LCL_OK ||
-      lcl_value_to_int(argv[2], &h) != LCL_OK || w < 0 || h < 0 ||
-      !lk_canvas_set_size(cw->cv, (lk_u32)w, (lk_u32)h)) {
+  if (!to_u32(argv[1], &w) || !to_u32(argv[2], &h) ||
+      !lk_canvas_set_size(cw->cv, w, h)) {
     lcl_set_error(interp,
                   "Lk::canvas_set_size: w and h must be integers 0..16384");
 
@@ -4242,11 +4324,10 @@ static lcl_return_code c_lk_spans_count(lcl_interp *interp, int argc,
 static int spans_range_args(lcl_interp *interp, const char *proc,
                             lcl_value *a, lcl_value *b, lk_u32 *start,
                             lk_u32 *end) {
-  lcl_int s, e;
+  lk_u32 s, e;
   char err[96];
 
-  if (lcl_value_to_int(a, &s) != LCL_OK || lcl_value_to_int(b, &e) != LCL_OK ||
-      s < 0 || e < 0) {
+  if (!to_u32(a, &s) || !to_u32(b, &e)) {
     sprintf(err, "%.40s: start and end must be integers >= 0", proc);
     lcl_set_error(interp, err);
     return 0;
@@ -4258,8 +4339,8 @@ static int spans_range_args(lcl_interp *interp, const char *proc,
     return 0;
   }
 
-  *start = (lk_u32)s;
-  *end = (lk_u32)e;
+  *start = s;
+  *end = e;
 
   return 1;
 }
@@ -4471,7 +4552,7 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
                                                lcl_value **out) {
   lk_ui *ui = NULL;
   const char *id_str;
-  lcl_int x, y;
+  lk_i32 x, y;
   lk_u32 pos = 0;
 
   if (argc != 4) {
@@ -4492,14 +4573,13 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &x) != LCL_OK ||
-      lcl_value_to_int(argv[3], &y) != LCL_OK) {
+  if (!to_i32(argv[2], &x) || !to_i32(argv[3], &y)) {
     lcl_set_error(interp, "Lk::styled_text_pos_at: x and y must be integers");
     return LCL_RC_ERR;
   }
 
-  if (lk_styled_text_pos_at(ui, lk_intern_cid(ui->intern, id_str), (lk_i32)x,
-                            (lk_i32)y, &pos)) {
+  if (lk_styled_text_pos_at(ui, lk_intern_cid(ui->intern, id_str), x, y,
+                            &pos)) {
     *out = lcl_int_new((lcl_int)pos);
   } else {
     *out = lcl_int_new(-1);
@@ -4519,7 +4599,7 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_context_menu(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  lcl_int x, y;
+  lk_i32 x, y;
 
   if (argc != 3) {
     lcl_set_error(interp, "Lk::context_menu: expected 3 arguments (ui, x, y)");
@@ -4531,14 +4611,12 @@ static lcl_return_code c_lk_context_menu(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &x) != LCL_OK ||
-      lcl_value_to_int(argv[2], &y) != LCL_OK) {
+  if (!to_i32(argv[1], &x) || !to_i32(argv[2], &y)) {
     lcl_set_error(interp, "Lk::context_menu: x and y must be integers");
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new(
-      (lcl_int)lk_menu_open_context(ui, lk_ui_tree(ui), (lk_i32)x, (lk_i32)y));
+  *out = lcl_int_new((lcl_int)lk_menu_open_context(ui, lk_ui_tree(ui), x, y));
 
   return LCL_RC_OK;
 }
@@ -4698,7 +4776,7 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
   size_t n, i;
   lk_node_id owner = 0;
   int anchor = -1;
-  lcl_int x = 0, y = 0;
+  lk_i32 x = 0, y = 0;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::menu_open: expected 2 arguments (ui, spec)");
@@ -4752,14 +4830,14 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
 
   v = lcl_dict_peek(argv[1], "x");
 
-  if (v && lcl_value_to_int(v, &x) != LCL_OK) {
+  if (v && !to_i32(v, &x)) {
     lcl_set_error(interp, "Lk::menu_open: x must be an integer");
     return LCL_RC_ERR;
   }
 
   v = lcl_dict_peek(argv[1], "y");
 
-  if (v && lcl_value_to_int(v, &y) != LCL_OK) {
+  if (v && !to_i32(v, &y)) {
     lcl_set_error(interp, "Lk::menu_open: y must be an integer");
     return LCL_RC_ERR;
   }
@@ -4789,8 +4867,8 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
     }
   }
 
-  *out = lcl_int_new((lcl_int)lk_menu_open(ui, owner, (lk_u8)anchor, (lk_i32)x,
-                                        (lk_i32)y, buf, (lk_u32)n));
+  *out = lcl_int_new((lcl_int)lk_menu_open(ui, owner, (lk_u8)anchor, x,
+                                        y, buf, (lk_u32)n));
 
   return LCL_RC_OK;
 }
@@ -4873,7 +4951,7 @@ static lcl_return_code c_lk_menu_hover(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_menu_activate(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
-  lcl_int i;
+  lk_u32 i;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::menu_activate: expected 2 arguments (ui, index)");
@@ -4885,12 +4963,12 @@ static lcl_return_code c_lk_menu_activate(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &i) != LCL_OK || i < 0) {
+  if (!to_u32(argv[1], &i)) {
     lcl_set_error(interp, "Lk::menu_activate: index must be an integer >= 0");
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((lcl_int)lk_menu_activate(ui, (lk_u32)i));
+  *out = lcl_int_new((lcl_int)lk_menu_activate(ui, i));
 
   return LCL_RC_OK;
 }
@@ -4968,7 +5046,7 @@ static lcl_return_code c_lk_list_scroll_to(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
   const char *id_str;
-  lcl_int row;
+  lk_i32 row;
 
   if (argc != 3) {
     lcl_set_error(interp,
@@ -4987,13 +5065,13 @@ static lcl_return_code c_lk_list_scroll_to(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &row) != LCL_OK || row < 0) {
+  if (!to_i32(argv[2], &row) || row < 0) {
     lcl_set_error(interp, "Lk::list_scroll_to: row must be an integer >= 0");
     return LCL_RC_ERR;
   }
 
   *out = lcl_int_new((lcl_int)lk_list_scroll_to_row(
-      ui, lk_intern_cid(ui->intern, id_str), (lk_i32)row));
+      ui, lk_intern_cid(ui->intern, id_str), row));
 
   return LCL_RC_OK;
 }
@@ -5420,18 +5498,18 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   cfg.font_path = NULL;
 
   if (argc >= 2) {
-    lcl_int w;
+    lk_i32 w;
 
-    if (lcl_value_to_int(argv[1], &w) == LCL_OK) {
-      cfg.width = (int)w;
+    if (to_i32(argv[1], &w)) {
+      cfg.width = w;
     }
   }
 
   if (argc >= 3) {
-    lcl_int h;
+    lk_i32 h;
 
-    if (lcl_value_to_int(argv[2], &h) == LCL_OK) {
-      cfg.height = (int)h;
+    if (to_i32(argv[2], &h)) {
+      cfg.height = h;
     }
   }
 
@@ -5440,10 +5518,10 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   }
 
   if (argc >= 5) {
-    lcl_int sz;
+    lk_i32 sz;
 
-    if (lcl_value_to_int(argv[4], &sz) == LCL_OK) {
-      cfg.font_size = (int)sz;
+    if (to_i32(argv[4], &sz)) {
+      cfg.font_size = sz;
     }
   }
 
@@ -6510,7 +6588,7 @@ static lcl_return_code c_lk_doc_line_count(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  lcl_int pos;
+  lk_u32 pos;
 
   if (argc != 2) {
     lcl_set_error(interp,
@@ -6525,14 +6603,14 @@ static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+  if (!to_u32(argv[1], &pos)) {
     lcl_set_error(interp,
                   "Lk::doc_pos_to_line: pos must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((lcl_int)lk_doc_pos_to_line(dw->doc, (lk_u32)pos));
+  *out = lcl_int_new((lcl_int)lk_doc_pos_to_line(dw->doc, pos));
 
   return LCL_RC_OK;
 }
@@ -6544,7 +6622,7 @@ static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  lcl_int line;
+  lk_u32 line;
 
   if (argc != 2) {
     lcl_set_error(interp,
@@ -6559,20 +6637,20 @@ static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &line) != LCL_OK || line < 0) {
+  if (!to_u32(argv[1], &line)) {
     lcl_set_error(interp,
                   "Lk::doc_line_start: line must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  if ((lk_u32)line >= lk_doc_line_count(dw->doc)) {
+  if (line >= lk_doc_line_count(dw->doc)) {
     lcl_set_error(interp, "Lk::doc_line_start: line out of range");
 
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((lcl_int)lk_doc_line_start(dw->doc, (lk_u32)line));
+  *out = lcl_int_new((lcl_int)lk_doc_line_start(dw->doc, line));
 
   return LCL_RC_OK;
 }
@@ -6584,7 +6662,7 @@ static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  lcl_int line;
+  lk_u32 line;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::doc_line_end: expected 2 arguments (doc, line)");
@@ -6598,20 +6676,20 @@ static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &line) != LCL_OK || line < 0) {
+  if (!to_u32(argv[1], &line)) {
     lcl_set_error(interp,
                   "Lk::doc_line_end: line must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  if ((lk_u32)line >= lk_doc_line_count(dw->doc)) {
+  if (line >= lk_doc_line_count(dw->doc)) {
     lcl_set_error(interp, "Lk::doc_line_end: line out of range");
 
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((lcl_int)lk_doc_line_end(dw->doc, (lk_u32)line));
+  *out = lcl_int_new((lcl_int)lk_doc_line_end(dw->doc, line));
 
   return LCL_RC_OK;
 }
@@ -6633,7 +6711,7 @@ static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  lcl_int pos;
+  lk_u32 pos;
   lk_u32 at;
   lk_u32 col;
   char buf[256];
@@ -6650,24 +6728,24 @@ static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+  if (!to_u32(argv[1], &pos)) {
     lcl_set_error(interp,
                   "Lk::doc_char_col: pos must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  if ((lk_u32)pos > lk_doc_len(dw->doc)) {
+  if (pos > lk_doc_len(dw->doc)) {
     lcl_set_error(interp, "Lk::doc_char_col: pos out of range");
 
     return LCL_RC_ERR;
   }
 
-  at = lk_doc_line_start(dw->doc, lk_doc_pos_to_line(dw->doc, (lk_u32)pos));
+  at = lk_doc_line_start(dw->doc, lk_doc_pos_to_line(dw->doc, pos));
   col = 1;
 
-  while (at < (lk_u32)pos) {
-    lk_u32 want = (lk_u32)pos - at;
+  while (at < pos) {
+    lk_u32 want = pos - at;
     lk_u32 got;
     lk_u32 i;
 
@@ -6707,7 +6785,7 @@ static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
   const char *needle;
-  lcl_int from = 0;
+  lk_u32 from = 0;
   lk_u32 pos = 0;
 
   if (argc != 2 && argc != 3) {
@@ -6733,7 +6811,7 @@ static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
   }
 
   if (argc == 3) {
-    if (lcl_value_to_int(argv[2], &from) != LCL_OK || from < 0) {
+    if (!to_u32(argv[2], &from)) {
       lcl_set_error(interp,
                     "Lk::doc_find: from must be a non-negative integer");
 
@@ -6741,7 +6819,7 @@ static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
     }
   }
 
-  if (lk_doc_find(dw->doc, needle, (lk_u32)strlen(needle), (lk_u32)from,
+  if (lk_doc_find(dw->doc, needle, (lk_u32)strlen(needle), from,
                   &pos)) {
     *out = lcl_int_new((lcl_int)pos);
   } else {
@@ -6785,7 +6863,7 @@ static lcl_return_code c_lk_doc_revision(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  lcl_int pos;
+  lk_u32 pos;
   const char *text;
 
   if (argc != 3) {
@@ -6800,7 +6878,7 @@ static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+  if (!to_u32(argv[1], &pos)) {
     lcl_set_error(interp, "Lk::doc_insert: pos must be a non-negative integer");
 
     return LCL_RC_ERR;
@@ -6808,7 +6886,7 @@ static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
 
   text = lcl_value_to_string(argv[2]);
 
-  if (!lk_doc_insert(dw->doc, (lk_u32)pos, text, (lk_u32)strlen(text))) {
+  if (!lk_doc_insert(dw->doc, pos, text, (lk_u32)strlen(text))) {
     lcl_set_error(interp,
                   "Lk::doc_insert: rejected (pos out of range, empty text, "
                   "or mutation from inside a notification)");
@@ -6825,8 +6903,8 @@ static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_doc_delete(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
-  lcl_int pos;
-  lcl_int len;
+  lk_u32 pos;
+  lk_u32 len;
 
   if (argc != 3) {
     lcl_set_error(interp, "Lk::doc_delete: expected 3 arguments (doc, pos, len)");
@@ -6840,19 +6918,19 @@ static lcl_return_code c_lk_doc_delete(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+  if (!to_u32(argv[1], &pos)) {
     lcl_set_error(interp, "Lk::doc_delete: pos must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &len) != LCL_OK || len < 0) {
+  if (!to_u32(argv[2], &len)) {
     lcl_set_error(interp, "Lk::doc_delete: len must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  if (!lk_doc_delete(dw->doc, (lk_u32)pos, (lk_u32)len)) {
+  if (!lk_doc_delete(dw->doc, pos, len)) {
     lcl_set_error(interp,
                   "Lk::doc_delete: rejected (pos out of range, zero length, "
                   "or mutation from inside a notification)");
@@ -7032,7 +7110,7 @@ static lcl_return_code c_lk_doc_unsubscribe(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
   struct lcl_doc_sub **link;
-  lcl_int id;
+  lk_u32 id;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::doc_unsubscribe: expected 2 arguments (doc, id)");
@@ -7046,14 +7124,12 @@ static lcl_return_code c_lk_doc_unsubscribe(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::doc_unsubscribe: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::doc_unsubscribe: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
   for (link = &dw->subs; *link; link = &(*link)->next) {
-    if ((*link)->id == (lk_u32)id) {
+    if ((*link)->id == id) {
       struct lcl_doc_sub *sub = *link;
 
       *link = sub->next;
@@ -7415,7 +7491,7 @@ static lcl_return_code c_lk_editor_set_cursor(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
   struct lcl_lk_editor *ew;
-  lcl_int pos;
+  lk_u32 pos;
 
   if (argc != 2) {
     lcl_set_error(interp,
@@ -7430,14 +7506,14 @@ static lcl_return_code c_lk_editor_set_cursor(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+  if (!to_u32(argv[1], &pos)) {
     lcl_set_error(interp,
                   "Lk::editor_set_cursor: pos must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  lk_editor_set_cursor(ew->ed, (lk_u32)pos);
+  lk_editor_set_cursor(ew->ed, pos);
   *out = lcl_string_new("");
 
   return LCL_RC_OK;
@@ -7838,7 +7914,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
     break;
 
   case LK_ED_SET_CURSOR: {
-    lcl_int pos;
+    lk_u32 pos;
 
     if (extra < 1 || extra > 2) {
       lcl_set_error(interp,
@@ -7847,7 +7923,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
       return LCL_RC_ERR;
     }
 
-    if (lcl_value_to_int(argv[2], &pos) != LCL_OK || pos < 0) {
+    if (!to_u32(argv[2], &pos)) {
       lcl_set_error(
           interp,
           "Lk::editor_command: set_cursor pos must be a non-negative integer");
@@ -7855,7 +7931,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
       return LCL_RC_ERR;
     }
 
-    arg.set_cursor.pos = (lk_u32)pos;
+    arg.set_cursor.pos = pos;
 
     if (extra == 2) {
       if (strcmp(lcl_value_to_string(argv[3]), "extend") != 0) {
@@ -7872,9 +7948,9 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
   }
 
   case LK_ED_SCROLL_LINES: {
-    lcl_int lines;
+    lk_i32 lines;
 
-    if (extra != 1 || lcl_value_to_int(argv[2], &lines) != LCL_OK) {
+    if (extra != 1 || !to_i32(argv[2], &lines)) {
       lcl_set_error(
           interp,
           "Lk::editor_command: scroll_lines expects a signed line count");
@@ -7882,14 +7958,14 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
       return LCL_RC_ERR;
     }
 
-    arg.lines = (lk_i32)lines;
+    arg.lines = lines;
     break;
   }
 
   case LK_ED_ADD_CURSOR_AT: {
-    lcl_int pos;
+    lk_u32 pos;
 
-    if (extra != 1 || lcl_value_to_int(argv[2], &pos) != LCL_OK || pos < 0) {
+    if (extra != 1 || !to_u32(argv[2], &pos)) {
       lcl_set_error(interp,
                     "Lk::editor_command: add_cursor_at expects a "
                     "non-negative position");
@@ -7897,7 +7973,7 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
       return LCL_RC_ERR;
     }
 
-    arg.set_cursor.pos = (lk_u32)pos;
+    arg.set_cursor.pos = pos;
     break;
   }
 
@@ -7942,8 +8018,8 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
 static int span_from_dict(lcl_interp *interp, lcl_value *dict,
                           lk_edit_span *sp) {
   lcl_value *v;
-  lcl_int a;
-  lcl_int b;
+  lk_u32 a;
+  lk_u32 b;
 
   if (lcl_value_type_of(dict) != LCL_DICT) {
     lcl_set_error(interp,
@@ -7992,7 +8068,7 @@ static int span_from_dict(lcl_interp *interp, lcl_value *dict,
     return 0;
   }
 
-  if (lcl_value_to_int(v, &a) != LCL_OK || a < 0) {
+  if (!to_u32(v, &a)) {
     lcl_set_error(interp,
                   "Lk::editor_set_spans: span start must be a non-negative "
                   "integer");
@@ -8008,15 +8084,15 @@ static int span_from_dict(lcl_interp *interp, lcl_value *dict,
     return 0;
   }
 
-  if (lcl_value_to_int(v, &b) != LCL_OK || b <= a) {
+  if (!to_u32(v, &b) || b <= a) {
     lcl_set_error(interp,
                   "Lk::editor_set_spans: span end must be an integer > start");
 
     return 0;
   }
 
-  sp->start = (lk_u32)a;
-  sp->end = (lk_u32)b;
+  sp->start = a;
+  sp->end = b;
   sp->flags = 0;
 
   v = lcl_dict_peek(dict, "fg");
@@ -8257,8 +8333,8 @@ static lcl_return_code c_lk_annot_attach(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int start;
-  lcl_int end;
+  lk_u32 start;
+  lk_u32 end;
   const char *layer;
   lk_u32 id;
   const char **keys = NULL;
@@ -8280,13 +8356,13 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &start) != LCL_OK || start < 0) {
+  if (!to_u32(argv[1], &start)) {
     lcl_set_error(interp, "Lk::annot_add: start must be a non-negative integer");
 
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &end) != LCL_OK || end <= start) {
+  if (!to_u32(argv[2], &end) || end <= start) {
     lcl_set_error(interp, "Lk::annot_add: end must be an integer > start");
 
     return LCL_RC_ERR;
@@ -8347,7 +8423,7 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
     }
   }
 
-  id = lk_annot_add(aw->store, (lk_u32)start, (lk_u32)end, layer, keys, values,
+  id = lk_annot_add(aw->store, start, end, layer, keys, values,
                     meta_count);
 
   free((void *)keys);
@@ -8372,7 +8448,7 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int id;
+  lk_u32 id;
 
   if (argc != 2) {
     lcl_set_error(interp, "Lk::annot_remove: expected 2 arguments (store, id)");
@@ -8386,13 +8462,11 @@ static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::annot_remove: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::annot_remove: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
-  *out = lcl_int_new((lcl_int)lk_annot_remove(aw->store, (lk_u32)id));
+  *out = lcl_int_new((lcl_int)lk_annot_remove(aw->store, id));
 
   return LCL_RC_OK;
 }
@@ -8402,7 +8476,7 @@ static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int id;
+  lk_u32 id;
   lk_u32 start;
   lk_u32 end;
   lcl_value *list;
@@ -8420,13 +8494,11 @@ static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::annot_span: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::annot_span: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
-  if (!lk_annot_get_span(aw->store, (lk_u32)id, &start, &end)) {
+  if (!lk_annot_get_span(aw->store, id, &start, &end)) {
     lcl_set_error(interp, "Lk::annot_span: no such annotation");
 
     return LCL_RC_ERR;
@@ -8452,7 +8524,7 @@ static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int id;
+  lk_u32 id;
   const char *val;
 
   if (argc != 3) {
@@ -8468,13 +8540,11 @@ static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::annot_meta: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::annot_meta: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
-  if (!lk_annot_get(aw->store, (lk_u32)id)) {
+  if (!lk_annot_get(aw->store, id)) {
     lcl_set_error(interp, "Lk::annot_meta: no such annotation");
 
     return LCL_RC_ERR;
@@ -8487,7 +8557,7 @@ static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
       return LCL_RC_ERR;
     }
 
-    val = lk_annot_get_meta(aw->store, (lk_u32)id, key);
+    val = lk_annot_get_meta(aw->store, id, key);
   }
 
   *out = lcl_string_new(val ? val : "");
@@ -8500,7 +8570,7 @@ static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int id;
+  lk_u32 id;
   const lk_annot_record *rec;
 
   if (argc != 2) {
@@ -8516,13 +8586,11 @@ static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::annot_layer: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::annot_layer: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
-  rec = lk_annot_get(aw->store, (lk_u32)id);
+  rec = lk_annot_get(aw->store, id);
 
   if (!rec) {
     lcl_set_error(interp, "Lk::annot_layer: no such annotation");
@@ -8541,7 +8609,7 @@ static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_meta_all(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int id;
+  lk_u32 id;
   const lk_annot_record *rec;
   lcl_value *d;
   lk_u32 i;
@@ -8559,13 +8627,11 @@ static lcl_return_code c_lk_annot_meta_all(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &id) != LCL_OK) {
-    lcl_set_error(interp, "Lk::annot_meta_all: id must be an integer");
-
+  if (!arg_u32(interp, "Lk::annot_meta_all: id", argv[1], &id)) {
     return LCL_RC_ERR;
   }
 
-  rec = lk_annot_get(aw->store, (lk_u32)id);
+  rec = lk_annot_get(aw->store, id);
 
   if (!rec) {
     lcl_set_error(interp, "Lk::annot_meta_all: no such annotation");
@@ -8606,8 +8672,8 @@ static lcl_value *annot_query_to_list(const lk_annot_query *q) {
 static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int start;
-  lcl_int end;
+  lk_u32 start;
+  lk_u32 end;
   const char *layer = NULL;
   lk_annot_query q;
 
@@ -8625,8 +8691,7 @@ static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &start) != LCL_OK ||
-      lcl_value_to_int(argv[2], &end) != LCL_OK || start < 0 || end < start) {
+  if (!to_u32(argv[1], &start) || !to_u32(argv[2], &end) || end < start) {
     lcl_set_error(interp, "Lk::annot_in_range: bad range");
 
     return LCL_RC_ERR;
@@ -8641,7 +8706,7 @@ static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
   }
 
   lk_annot_query_init(&q);
-  lk_annot_in_range(aw->store, (lk_u32)start, (lk_u32)end, layer, &q);
+  lk_annot_in_range(aw->store, start, end, layer, &q);
   *out = annot_query_to_list(&q);
   lk_annot_query_free(&q);
 
@@ -8652,7 +8717,7 @@ static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_annot_at(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int pos;
+  lk_u32 pos;
   const char *layer = NULL;
   lk_annot_query q;
 
@@ -8669,7 +8734,7 @@ static lcl_return_code c_lk_annot_at(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &pos) != LCL_OK || pos < 0) {
+  if (!to_u32(argv[1], &pos)) {
     lcl_set_error(interp, "Lk::annot_at: pos must be a non-negative integer");
 
     return LCL_RC_ERR;
@@ -8684,7 +8749,7 @@ static lcl_return_code c_lk_annot_at(lcl_interp *interp, int argc,
   }
 
   lk_annot_query_init(&q);
-  lk_annot_at(aw->store, (lk_u32)pos, layer, &q);
+  lk_annot_at(aw->store, pos, layer, &q);
   *out = annot_query_to_list(&q);
   lk_annot_query_free(&q);
 
@@ -8768,7 +8833,7 @@ static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
                                                  lcl_value **argv,
                                                  lcl_value **out) {
   struct lcl_lk_annot *aw;
-  lcl_int prio;
+  lk_i32 prio;
 
   if (argc != 3) {
     lcl_set_error(interp,
@@ -8784,9 +8849,7 @@ static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &prio) != LCL_OK) {
-    lcl_set_error(interp,
-                  "Lk::annot_layer_priority: priority must be an integer");
+  if (!arg_i32(interp, "Lk::annot_layer_priority: priority", argv[2], &prio)) {
 
     return LCL_RC_ERR;
   }
@@ -8799,7 +8862,7 @@ static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
       return LCL_RC_ERR;
     }
 
-    lk_annot_layer_set_priority(aw->store, layer, (lk_i32)prio);
+    lk_annot_layer_set_priority(aw->store, layer, prio);
   }
 
   *out = lcl_string_new("");
@@ -8910,7 +8973,7 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
   struct lcl_lk_annot *aw;
-  lcl_int id;
+  lk_u32 id;
   const char *ptype_str;
   struct lcl_pres_box *box;
   lk_resource_ref ref;
@@ -8944,7 +9007,7 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[2], &id) != LCL_OK || id <= 0) {
+  if (!to_u32(argv[2], &id) || id == 0) {
     lcl_set_error(interp, "Lk::annot_present: id must be a positive integer");
 
     return LCL_RC_ERR;
@@ -8962,7 +9025,7 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (!lk_annot_get(aw->store, (lk_u32)id)) {
+  if (!lk_annot_get(aw->store, id)) {
     lcl_set_error(interp, "Lk::annot_present: no such annotation");
 
     return LCL_RC_ERR;
@@ -8998,7 +9061,7 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
 
   type_id = lk_intern_cid(ui->intern, ptype_str);
 
-  if (!lk_annot_set_present(aw->store, (lk_u32)id, type_id,
+  if (!lk_annot_set_present(aw->store, id, type_id,
                             lk_v_resource(ref))) {
     lk_resource_release(lk_ui_resources(ui), ref);
     lcl_ref_dec(box->val);
@@ -9020,8 +9083,8 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
 static lcl_return_code c_lk_editor_pos_at(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
-  lcl_int x;
-  lcl_int y;
+  lk_i32 x;
+  lk_i32 y;
   lk_u32 pos = 0;
 
   if (argc != 3) {
@@ -9037,14 +9100,13 @@ static lcl_return_code c_lk_editor_pos_at(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  if (lcl_value_to_int(argv[1], &x) != LCL_OK ||
-      lcl_value_to_int(argv[2], &y) != LCL_OK) {
+  if (!to_i32(argv[1], &x) || !to_i32(argv[2], &y)) {
     lcl_set_error(interp, "Lk::editor_pos_at: x and y must be integers");
 
     return LCL_RC_ERR;
   }
 
-  if (lk_editor_pos_at(ew->ed, (lk_i32)x, (lk_i32)y, &pos)) {
+  if (lk_editor_pos_at(ew->ed, x, y, &pos)) {
     *out = lcl_int_new((lcl_int)pos);
   } else {
     *out = lcl_int_new(-1);
