@@ -92,6 +92,31 @@ static void prime_base(lk_ui *ui) {
 }
 
 /* ================================================================
+ * Tests: integer width contract
+ * ================================================================ */
+
+/* lk_i64/lk_u64 are exactly 64 bits on every host, independent of
+ * `long` (32 bits on wasm32 and Win64).  The core relies on them for
+ * headroom in products of two 32-bit quantities. */
+static void test_int_width_contract(void) {
+  lk_u32 big = 0xFFFFFFFFu;
+  lk_i32 imax = 0x7FFFFFFF;
+  lk_u64 prod = (lk_u64)big * (lk_u64)big;
+  lk_i64 neg = -(lk_i64)imax * (lk_i64)imax; /* ~ -4.6e18, fits */
+
+  BEGIN_TEST("types: lk_i64/lk_u64 are 64-bit, lk_i32/lk_u32 32-bit");
+  CHECK(sizeof(lk_i32) == 4);
+  CHECK(sizeof(lk_u32) == 4);
+  CHECK(sizeof(lk_i64) == 8);
+  CHECK(sizeof(lk_u64) == 8);
+  CHECK((lk_u32)(prod >> 32) == 0xFFFFFFFEu);
+  CHECK((lk_u32)prod == 1u);
+  CHECK(neg < 0);
+  CHECK(-neg / imax == imax);
+  END_TEST();
+}
+
+/* ================================================================
  * Tests: basic lifecycle
  * ================================================================ */
 
@@ -12775,6 +12800,9 @@ static void test_focus_changed_translator(void) {
 
 int main(void) {
   printf("lk diff tests:\n");
+
+  /* integer width contract */
+  test_int_width_contract();
 
   /* basic lifecycle */
   test_first_frame_all_added();

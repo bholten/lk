@@ -1357,24 +1357,24 @@ static void ed_bottom_anchor(lk_editor *e, const lk_text_backend *tb,
  * 6): max(1, ceil(len * avg_px_per_byte / wrap_width)), the average
  * running over measured lines with the space advance as seed. */
 static lk_u32 ed_est_rows(const lk_editor *e, lk_u32 line_len) {
-  unsigned long num;
-  unsigned long den;
-  unsigned long est;
+  lk_u64 num;
+  lk_u64 den;
+  lk_u64 est;
 
   if (!ed_wrapping(e) || line_len == 0) {
     return 1;
   }
 
   if (e->est_bytes > 0) {
-    num = (unsigned long)e->est_px;
-    den = (unsigned long)e->est_bytes;
+    num = (lk_u64)e->est_px;
+    den = (lk_u64)e->est_bytes;
   } else {
-    num = (unsigned long)ed_advance(e);
+    num = (lk_u64)ed_advance(e);
     den = 1;
   }
 
-  den *= (unsigned long)e->wrap_w;
-  est = ((unsigned long)line_len * num + den - 1) / den;
+  den *= (lk_u64)e->wrap_w;
+  est = ((lk_u64)line_len * num + den - 1) / den;
 
   return est ? (lk_u32)est : 1;
 }
@@ -3841,21 +3841,21 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   {
     lk_u32 li;
     lk_u32 sb_total = 0;
-    unsigned long sb_rows_before = 0;
-    unsigned long sb_top;
+    lk_u64 sb_rows_before = 0;
+    lk_u64 sb_top;
 
     for (li = 0; li < lcount; li++) {
       lk_u32 rows_n = ed_rows_or_est(e, li);
 
       if (li < al) {
-        sb_rows_before += (unsigned long)rows_n;
+        sb_rows_before += (lk_u64)rows_n;
       }
 
       sb_total += rows_n;
     }
 
-    sb_top = (sb_rows_before + (unsigned long)ar) * (unsigned long)line_h +
-             (unsigned long)e->vp.y_offset;
+    sb_top = (sb_rows_before + (lk_u64)ar) * (lk_u64)line_h +
+             (lk_u64)e->vp.y_offset;
     e->geom.sb_total_rows = sb_total;
     e->geom.sb_top_px = (lk_u32)sb_top;
   }
@@ -4358,19 +4358,19 @@ static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
                              lk_i32 *thumb_h) {
   lk_i32 line_h = e->geom.line_h;
   lk_i32 th = e->geom.rect.h;
-  unsigned long total_px =
-      (unsigned long)e->geom.sb_total_rows * (unsigned long)line_h;
-  unsigned long top_px;
-  unsigned long max_top;
+  lk_u64 total_px =
+      (lk_u64)e->geom.sb_total_rows * (lk_u64)line_h;
+  lk_u64 top_px;
+  lk_u64 max_top;
   lk_i32 h;
 
-  if (th <= 0 || line_h <= 0 || total_px <= (unsigned long)th) {
+  if (th <= 0 || line_h <= 0 || total_px <= (lk_u64)th) {
     return 0;
   }
 
-  top_px = (unsigned long)e->geom.sb_top_px;
-  max_top = total_px - (unsigned long)th;
-  h = (lk_i32)(((unsigned long)th * (unsigned long)th) / total_px);
+  top_px = (lk_u64)e->geom.sb_top_px;
+  max_top = total_px - (lk_u64)th;
+  h = (lk_i32)(((lk_u64)th * (lk_u64)th) / total_px);
 
   if (h < ED_SCROLL_THUMB_MIN) {
     h = ED_SCROLL_THUMB_MIN;
@@ -4390,7 +4390,7 @@ static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
   *track_h = th;
   *thumb_h = h;
   *thumb_y = e->geom.rect.y +
-             (lk_i32)((top_px * (unsigned long)(th - h)) / max_top);
+             (lk_i32)((top_px * (lk_u64)(th - h)) / max_top);
 
   return 1;
 }
@@ -4495,9 +4495,9 @@ void lk_editor_scrollbar_move(lk_editor *e, lk_ui *ui, lk_i32 y) {
   lk_i32 thumb_h;
   lk_i32 range;
   lk_i32 rel;
-  unsigned long total_px;
-  unsigned long max_top;
-  unsigned long top_px;
+  lk_u64 total_px;
+  lk_u64 max_top;
+  lk_u64 top_px;
 
   if (!e || !e->sb_drag ||
       !ed_scrollbar_geom(e, &track_y, &track_h, &thumb_y, &thumb_h)) {
@@ -4522,10 +4522,10 @@ void lk_editor_scrollbar_move(lk_editor *e, lk_ui *ui, lk_i32 y) {
 
   /* Thumb offset -> extent pixel -> absolute visual row (the inverse
    * of the render mapping); row granularity is the thumb's precision. */
-  total_px = (unsigned long)e->geom.sb_total_rows * (unsigned long)e->geom.line_h;
-  max_top = total_px - (unsigned long)track_h;
-  top_px = ((unsigned long)rel * max_top) / (unsigned long)range;
-  lk_editor_scroll_to_row(e, ui, (lk_u32)(top_px / (unsigned long)e->geom.line_h));
+  total_px = (lk_u64)e->geom.sb_total_rows * (lk_u64)e->geom.line_h;
+  max_top = total_px - (lk_u64)track_h;
+  top_px = ((lk_u64)rel * max_top) / (lk_u64)range;
+  lk_editor_scroll_to_row(e, ui, (lk_u32)(top_px / (lk_u64)e->geom.line_h));
 }
 
 int lk_editor_scrollbar_dragging(const lk_editor *e) {

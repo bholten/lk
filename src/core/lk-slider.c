@@ -144,7 +144,7 @@ static lk_i32 thumb_x(const lk_rect *track, lk_i32 v, lk_i32 mn, lk_i32 mx) {
     return track->x;
   }
 
-  return track->x + (lk_i32)(((long)(v - mn) * travel) / (mx - mn));
+  return track->x + (lk_i32)(((lk_i64)(v - mn) * travel) / (mx - mn));
 }
 
 /* Value for a pointer x within a track (thumb center under cursor). */
@@ -152,7 +152,7 @@ static lk_i32 value_at_x(const lk_rect *track, lk_i32 x, lk_i32 mn, lk_i32 mx,
                          lk_i32 step) {
   lk_i32 travel = track->w - THUMB_W;
   lk_i32 rel = x - track->x - THUMB_W / 2;
-  long v;
+  lk_i64 v;
 
   if (travel <= 0 || mx <= mn) {
     return mn;
@@ -167,7 +167,7 @@ static lk_i32 value_at_x(const lk_rect *track, lk_i32 x, lk_i32 mn, lk_i32 mx,
   }
 
   /* round to nearest */
-  v = ((long)rel * (mx - mn) + travel / 2) / travel + mn;
+  v = ((lk_i64)rel * (mx - mn) + travel / 2) / travel + mn;
 
   return snap((lk_i32)v, mn, mx, step);
 }

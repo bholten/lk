@@ -8,6 +8,7 @@
 #define LK_VERSION_PATCH 0
 #define LK_VERSION_STRING "0.1.0"
 
+#include <limits.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -31,6 +32,38 @@ typedef unsigned char lk_u8;
 typedef unsigned short lk_u16;
 typedef unsigned int lk_u32;
 typedef int lk_i32;
+
+/*
+ * 64-bit intermediates.  C89 guarantees `long` only 32 bits, and the
+ * hosts disagree: LP64 (Linux, macOS, the BSDs) makes it 64, ILP32 and
+ * LLP64 (wasm32, Win64) 32.  Core never stores 64-bit quantities, but
+ * a few products of two 32-bit values (scrollbar geometry, slider
+ * mapping, wrap-extent estimates) need 64 bits of headroom before
+ * they are divided back down.  lk_i64/lk_u64 are exactly 64 bits on
+ * every host; `long long` is fenced with __extension__ so a C89
+ * -pedantic build stays quiet where it is needed.  Core has no other
+ * dependency for this on purpose: the Lcl binding has lcl_int for the
+ * language integer, core has this for arithmetic, and neither includes
+ * the other.
+ */
+
+#if defined(__GNUC__)
+#define LK_EXTENSION __extension__
+#else
+#define LK_EXTENSION
+#endif
+
+#if LONG_MAX > 0x7FFFFFFFL
+typedef long lk_i64;
+typedef unsigned long lk_u64;
+#else
+LK_EXTENSION typedef long long lk_i64;
+LK_EXTENSION typedef unsigned long long lk_u64;
+#endif
+
+/* Exactly 64 bits, or the build stops here. */
+typedef char lk_i64_must_be_8_bytes[sizeof(lk_i64) == 8 ? 1 : -1];
+typedef char lk_u64_must_be_8_bytes[sizeof(lk_u64) == 8 ? 1 : -1];
 
 /**
  ** String view (no ownership)

@@ -579,6 +579,48 @@ static void test_slider_effective(void) {
   END_TEST();
 }
 
+/* Wide ranges: the pointer-to-value mapping multiplies (rel * range),
+ * which needs 64 bits of headroom -- lk_i64, not `long`, so the same
+ * answer comes out on wasm32.  travel = 390; value(x) = round((x - 5)
+ * * 2e9 / 390) - 1e9. */
+static void test_slider_wide_range(void) {
+  lk_ui *ui = make_slider_ui(-1000000000, 1000000000, 1, -9999, 0);
+  lk_rect *r;
+  lk_event ev;
+
+  BEGIN_TEST("slider: wide range maps without 32-bit overflow");
+
+  r = layout_ui(ui, 400, 300);
+  CHECK(r != NULL);
+
+  if (r) {
+    lk_ix sl = find(ui, "sl");
+
+    /* x=200: rel=195 -> (195*2e9 + 195)/390 - 1e9 = 0 */
+    click(ui, sl, 200, 10, LK_POINTER_BUTTON_PRIMARY, &ev);
+    CHECK_EQ(state_i32(ui, "sl", LKS_SLIDER_VALUE, 1), 0);
+
+    /* x=395: rel=390 -> full travel = max */
+    memset(&ev, 0, sizeof(ev));
+    ev.type = LK_EVENT_POINTER_MOVE;
+    ev.target = sl;
+    ev.data.pointer.x = 395;
+    ev.data.pointer.y = 10;
+    lk_event_route(ui, &ev);
+    CHECK_EQ(state_i32(ui, "sl", LKS_SLIDER_VALUE, 1), 1000000000);
+
+    /* x=5: rel=0 -> min */
+    ev.data.pointer.x = 5;
+    lk_event_route(ui, &ev);
+    CHECK_EQ(state_i32(ui, "sl", LKS_SLIDER_VALUE, 1), -1000000000);
+
+    free(r);
+  }
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static void test_slider_drag_and_keys(void) {
   /* Slider fills the 400x300 window (no styles: track = whole rect,
    * travel = 400 - 10 = 390).  value(x) = round((x - 5) * 100 / 390). */
@@ -1353,6 +1395,7 @@ void lk_forms_run_tests(void) {
   test_radio_controlled();
   test_slider_effective();
   test_slider_drag_and_keys();
+  test_slider_wide_range();
   test_slider_controlled_and_step();
   test_tabs_layout();
   test_tabs_measure_max_page();
