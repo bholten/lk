@@ -1915,6 +1915,22 @@ namespace Lk {
     ;;; around the poll.
     proc window_run {win frame_proc} {}
 
+    ;;; One iteration of that loop: build a frame with `frame_proc`,
+    ;;; lay out, poll and route events, render, present.  Returns 1
+    ;;; while the window should keep going and 0 once it has stopped
+    ;;; (close request, or `Lk::window_stop` -- that frame is still
+    ;;; rendered).  Never blocks beyond the frame's own work, so the
+    ;;; caller paces it:
+    ;;;
+    ;;;     while {[Lk::window_step $win $view]} {
+    ;;;         poll_network  ;; work between frames
+    ;;;     }
+    ;;;
+    ;;; `Lk::window_run` is this in a loop with vsync (or a short
+    ;;; sleep) as the pacing.  A host that cannot block -- a browser
+    ;;; main thread -- drives this from its own frame callback.
+    proc window_step {win frame_proc} {}
+
     ;;; Return the window's ui context (borrowed — do not destroy it;
     ;;; `Lk::window_destroy` owns it).
     proc window_ui {win} {}

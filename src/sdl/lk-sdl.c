@@ -1232,6 +1232,9 @@ lk_window *lk_window_create(const lk_window_cfg *cfg) {
    * focus (see lk_window_run) so IME/on-screen keyboards only engage
    * when a field is actually focused. */
 
+  /* Runnable from creation: a host that drives lk_window_step itself
+   * (no lk_window_run) needs nothing else; lk_window_stop ends it. */
+  win->running = 1;
   win->ui = lk_ui_create(NULL);
 
   /* The ui's text backend from the start (the run loop re-installs it
@@ -1513,6 +1516,506 @@ static int sdl_to_lk_event(lk_window *win, const SDL_Event *sdl,
   }
 }
 
+int lk_window_step(lk_window *win, lk_frame_fn frame, void *ud) {
+  SDL_Event sdl_ev;
+  lk_tree *tree;
+  const lk_tree *cur;
+  lk_layout_cfg lcfg;
+  lk_u32 i;
+  int have_rects;
+
+  if (!win || !frame || !win->running) {
+    return 0;
+  }
+
+  win->frame_serial++;
+
+  /* 0. Clear per-frame command queue; stamp the frame time */
+  lk_ui_clear_commands(win->ui);
+  lk_ui_set_time_ms(win->ui, (lk_u32)SDL_GetTicks());
+
+  /* 1. Build frame */
+  tree = lk_ui_begin_frame(win->ui);
+  frame(tree, ud);
+  lk_ui_end_frame(win->ui);
+  cur = lk_ui_tree(win->ui);
+
+  /* Drain synthetic events from between-frame mutations (end_frame
+   * focus GC, host API calls made from the frame callback). */
+  lk_ui_flush_events(win->ui, cur);
+
+  if (!cur || cur->root == 0) {
+    /* Poll events even with empty tree to handle quit (and deliver
+     * dialog results — this loop otherwise drops user events). */
+    while (SDL_PollEvent(&sdl_ev)) {
+      if (sdl_ev.type == SDL_EVENT_QUIT) {
+        win->running = 0;
+      } else if (g_dialog_event_type != 0 &&
+                 sdl_ev.type == g_dialog_event_type) {
+        sdl_dialog_deliver(&sdl_ev);
+      }
+    }
+    SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
+    SDL_RenderClear(win->sdl_ren);
+    SDL_RenderPresent(win->sdl_ren);
+
+    return win->running;
+  }
+
+  /* 2. Resolve styles */
+  lk_ui_resolve_styles(win->ui);
+
+  /* 3. Layout -- into the ui-owned rects array, so lk_node_rect
+   * (and Lk::node_rect) can answer for this frame */
+  win->rects = lk_ui_rects(win->ui);
+
+  have_rects = 0;
+  if (win->rects) {
+    const lk_style *styles = lk_ui_styles(win->ui);
+    memset(&lcfg, 0, sizeof(lcfg));
+
+    lcfg.text =
+        sdl_text_have_faces(win) ? &win->text_backend : lk_text_backend_stub();
+    /* Same backend for widget event handlers (click-to-position). */
+    lk_ui_set_text_backend(win->ui, lcfg.text);
+
+    lcfg.viewport_w = win->width;
+    lcfg.viewport_h = win->height;
+    lcfg.styles = styles;
+    lcfg.state = lk_ui_state(win->ui);
+    /* Per-frame geometry scratch: the ui-owned array, so widget
+     * event handlers see exactly what this layout computed. */
+    lcfg.geom = lk_ui_geom(win->ui);
+
+    if (lk_layout(cur, &lcfg, win->rects)) {
+      have_rects = 1;
+    }
+  }
+
+  /* 3.5. Engage SDL text input only while a text-entry widget is
+   * focused, and tell the IME where the field is so composition
+   * windows appear next to it. */
+  {
+    lk_ix f = lk_focus_current(win->ui, cur);
+    int want = (f != 0 && (cur->nodes[f].kind == (lk_u16)UIK_TEXT_INPUT ||
+                           cur->nodes[f].kind == (lk_u16)UIK_EDITOR));
+
+    if (want && !win->text_input_active) {
+      SDL_StartTextInput(win->sdl_win);
+      win->text_input_active = 1;
+    } else if (!want && win->text_input_active) {
+      SDL_StopTextInput(win->sdl_win);
+      win->text_input_active = 0;
+    }
+
+    if (want && have_rects) {
+      SDL_Rect area;
+      area.x = (int)win->rects[f].x;
+      area.y = (int)win->rects[f].y;
+      area.w = (int)win->rects[f].w;
+      area.h = (int)win->rects[f].h;
+      SDL_SetTextInputArea(win->sdl_win, &area, 0);
+    }
+  }
+
+  /* 4. Poll events (after layout so we have rects for hit-testing) */
+  while (SDL_PollEvent(&sdl_ev)) {
+    lk_event lk_ev;
+
+    if (sdl_ev.type == SDL_EVENT_QUIT) {
+      win->running = 0;
+      break;
+    }
+
+    /* Dialog completions: deliver BEFORE sdl_to_lk_event, which
+     * continues past unknown event types. */
+    if (g_dialog_event_type != 0 && sdl_ev.type == g_dialog_event_type) {
+      sdl_dialog_deliver(&sdl_ev);
+      continue;
+    }
+
+    if (!sdl_to_lk_event(win, &sdl_ev, &lk_ev)) {
+      continue;
+    }
+
+    /* Track mouse position */
+    if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
+        lk_ev.type == LK_EVENT_POINTER_DOWN ||
+        lk_ev.type == LK_EVENT_POINTER_UP) {
+      win->mouse_x = lk_ev.data.pointer.x;
+      win->mouse_y = lk_ev.data.pointer.y;
+    }
+
+    /* Set target */
+    if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
+        lk_ev.type == LK_EVENT_POINTER_DOWN ||
+        lk_ev.type == LK_EVENT_POINTER_UP) {
+      int captured = 0;
+
+      /* Pointer capture: while a node holds the capture (e.g. a
+       * split divider mid-drag), MOVE/UP events target it directly
+       * (bypassing hit-test) and hover updates are suppressed.
+       * Capture referencing a node that no longer resolves in the
+       * current tree is dropped. */
+      if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
+          lk_ev.type == LK_EVENT_POINTER_UP) {
+        lk_node_id cap = lk_capture_current(win->ui);
+
+        if (cap != 0) {
+          lk_ix cix = lk_tree_find_by_id(cur, cap);
+
+          if (cix != 0) {
+            lk_ev.target = cix;
+            captured = 1;
+          } else {
+            lk_capture_clear(win->ui);
+          }
+        }
+      }
+
+      if (!captured && have_rects) {
+        /* Overlay hit-test first (popups draw on top of everything) */
+        lk_ev.target =
+            lk_hit_test_overlay(win->ui, win->rects, &lcfg,
+                                lk_ev.data.pointer.x, lk_ev.data.pointer.y);
+
+        if (lk_ev.target == 0) {
+          lk_ev.target = lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
+                                     lk_ev.data.pointer.y);
+        }
+
+        /* Pointer-down outside any open overlay closes it.
+         * Call before routing so the click still fires on whatever
+         * the user clicked.  A modal (focus-trapping, non-dismissing)
+         * overlay consumes the click instead — skip routing. */
+        if (lk_ev.type == LK_EVENT_POINTER_DOWN) {
+          if (lk_overlay_dismiss_outside(
+                  win->ui, win->rects, &lcfg, lk_ev.data.pointer.x,
+                  lk_ev.data.pointer.y) == LK_DISMISS_BLOCKED) {
+            continue;
+          }
+        }
+      }
+
+      /* Update hover state (suppressed while a capture is active) */
+      if (!captured) {
+        if (lk_ev.target != 0) {
+          lk_hover_set(win->ui, cur->nodes[lk_ev.target].id);
+        } else {
+          lk_hover_clear(win->ui);
+        }
+      }
+    } else if (lk_ev.type == LK_EVENT_WHEEL) {
+      if (have_rects) {
+        /* Overlay-first, like pointer events: wheel over an open
+         * dropdown popup must scroll the popup, not the page
+         * underneath it. */
+        lk_ev.target = lk_hit_test_overlay(win->ui, win->rects, &lcfg,
+                                           win->mouse_x, win->mouse_y);
+
+        if (lk_ev.target == 0) {
+          lk_ev.target =
+              lk_hit_test(cur, win->rects, win->mouse_x, win->mouse_y);
+        }
+      }
+    } else if (lk_ev.type == LK_EVENT_KEY_DOWN ||
+               lk_ev.type == LK_EVENT_KEY_UP || lk_ev.type == LK_EVENT_TEXT) {
+      lk_ev.target = lk_focus_current(win->ui, cur);
+      if (lk_ev.target == 0) {
+        lk_ev.target = cur->root;
+      }
+    } else if (lk_ev.type == LK_EVENT_WINDOW_RESIZE) {
+      win->width = lk_ev.data.window.w;
+      win->height = lk_ev.data.window.h;
+      lk_ev.target = cur->root;
+    }
+
+    /* Route through tree */
+    if (lk_ev.target != 0) {
+      lk_event_route(win->ui, &lk_ev);
+    }
+
+    /* Built-in behaviors (only if not already handled) */
+    if (!lk_ev.handled) {
+      if (lk_ev.type == LK_EVENT_KEY_DOWN &&
+          lk_ev.data.key.keycode == LKK_TAB) {
+        if (lk_ev.mods & (lk_u8)LK_MOD_SHIFT) {
+          lk_focus_prev(win->ui, cur);
+        } else {
+          lk_focus_next(win->ui, cur);
+        }
+      }
+
+      if (lk_ev.type == LK_EVENT_POINTER_DOWN && lk_ev.target != 0) {
+        lk_node_id clicked_id = cur->nodes[lk_ev.target].id;
+        lk_focus_set(win->ui, cur, clicked_id);
+      }
+    }
+  }
+
+  /* Drain synthetic events from the built-in behaviors above
+   * (click-to-focus, tab cycling run outside lk_event_route). */
+  lk_ui_flush_events(win->ui, cur);
+
+  if (!win->running) {
+    return 0;
+  }
+
+  if (!have_rects) {
+    /* Layout could not run (allocation failure): present a cleared
+     * frame so every step still ends in one present. */
+    SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
+    SDL_RenderClear(win->sdl_ren);
+    SDL_RenderPresent(win->sdl_ren);
+
+    return 1;
+  }
+
+  /* 4.5. Events mutate state after layout ran — editor documents
+   * (which invalidate their geometry), scroll offsets, split
+   * ratios.  Re-lay out so this frame renders what the events did
+   * instead of a one-frame-stale (or, for the editor, blanked)
+   * view.  Hit-testing above deliberately used the pre-event
+   * rects. */
+  lk_layout(cur, &lcfg, win->rects);
+
+  /* 5. Render */
+  lk_render_build(cur, win->rects, lk_ui_styles(win->ui), lk_ui_state(win->ui),
+                  lcfg.geom, &win->rl);
+
+  /* 5b. Overlays (the ui's overlay stack: dropdown popups, subtree
+   * overlays) draw on top of the main tree.  See docs/overlays.md. */
+  lk_render_build_overlays(win->ui, win->rects, &lcfg, &win->rl);
+
+  SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
+  SDL_RenderClear(win->sdl_ren);
+
+  {
+    /* Clip stack: CLIP_END must restore the *enclosing* clip, not
+     * clear clipping entirely (nested clippers: window > scroll). */
+    SDL_Rect clip_stack[32];
+    int clip_sp = 0;
+
+    for (i = 0; i < win->rl.count; i++) {
+      const lk_render_cmd *cmd = &win->rl.cmds[i];
+      SDL_FRect fr;
+
+      fr.x = (float)cmd->rect.x;
+      fr.y = (float)cmd->rect.y;
+      fr.w = (float)cmd->rect.w;
+      fr.h = (float)cmd->rect.h;
+
+      switch (cmd->op) {
+      case LK_ROP_FILL_RECT:
+        SDL_SetRenderDrawColor(win->sdl_ren, cmd->color.r, cmd->color.g,
+                               cmd->color.b, cmd->color.a);
+        SDL_RenderFillRect(win->sdl_ren, &fr);
+        break;
+
+      case LK_ROP_DRAW_TEXT:
+        if (cmd->str_id != 0) {
+          lk_str text = lk_intern_str(cur->intern, cmd->str_id);
+
+          if (text.ptr && text.len > 0) {
+            TTF_Font *font =
+                sdl_text_instance(win, cmd->font_id, cmd->font_size);
+            TTF_Text *scratch = font ? sdl_text_scratch(win, font, text) : NULL;
+
+            if (scratch) {
+              TTF_SetTextColor(scratch, cmd->color.r, cmd->color.g,
+                               cmd->color.b, cmd->color.a);
+              /* The engine draws at the text's natural size —
+               * stretching to the command rect would distort glyphs.
+               * Overflow is handled by the active clip. */
+              TTF_DrawRendererText(scratch, fr.x, fr.y);
+            }
+          }
+        }
+
+        break;
+
+      case LK_ROP_DRAW_RUN:
+        /* Like DRAW_TEXT, but the bytes live in the render list's
+         * own arena.  Empty runs are skipped entirely — the
+         * documented TTF_SetTextString len-0 gotcha. */
+        if (cmd->run_len > 0 && win->rl.bytes) {
+          lk_str run;
+          TTF_Font *font;
+          TTF_Text *scratch;
+
+          run.ptr = win->rl.bytes + cmd->run_off;
+          run.len = cmd->run_len;
+
+          font = sdl_text_instance(win, cmd->font_id, cmd->font_size);
+          scratch = font ? sdl_text_scratch(win, font, run) : NULL;
+
+          if (scratch) {
+            TTF_SetTextColor(scratch, cmd->color.r, cmd->color.g, cmd->color.b,
+                             cmd->color.a);
+            TTF_DrawRendererText(scratch, fr.x, fr.y);
+          }
+        }
+
+        break;
+
+      case LK_ROP_DRAW_IMAGE: {
+        SDL_Texture *tex = sdl_img_texture(win, cmd);
+
+        if (tex) {
+          SDL_SetTextureScaleMode(tex, cmd->img_filter == LK_FILTER_NEAREST
+                                           ? SDL_SCALEMODE_NEAREST
+                                           : SDL_SCALEMODE_LINEAR);
+          SDL_SetTextureColorMod(tex, cmd->color.r, cmd->color.g, cmd->color.b);
+          SDL_SetTextureAlphaMod(tex, cmd->color.a);
+          SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
+        }
+
+        break;
+      }
+
+      case LK_ROP_DRAW_LINES:
+        /* Packed lk_i32 xy pairs in the list arena, window coords.
+         * Hairlines go straight to SDL_RenderLines; wider strokes
+         * are one quad per segment through SDL_RenderGeometry (butt
+         * caps, no joins — fine at the 2-3 px a plot uses).  Core
+         * SDL3 renderer API only: no extension libraries, and both
+         * calls exist in every backend incl. GLES2 (Emscripten). */
+        if (cmd->run_len >= 16 && win->rl.bytes) {
+          const lk_i32 *xy = (const lk_i32 *)(win->rl.bytes + cmd->run_off);
+          int n = (int)(cmd->run_len / 8);
+
+          SDL_SetRenderDrawColor(win->sdl_ren, cmd->color.r, cmd->color.g,
+                                 cmd->color.b, cmd->color.a);
+
+          if (cmd->stroke <= 1) {
+            SDL_FPoint pts[64];
+            int k = 0;
+            int j;
+
+            /* Stream through a stack window; consecutive windows
+             * share their boundary point so the polyline stays
+             * connected. */
+            for (j = 0; j < n; j++) {
+              pts[k].x = (float)xy[j * 2] + 0.5f;
+              pts[k].y = (float)xy[j * 2 + 1] + 0.5f;
+              k++;
+
+              if (k == 64 || j + 1 == n) {
+                if (k >= 2) {
+                  SDL_RenderLines(win->sdl_ren, pts, k);
+                }
+
+                pts[0] = pts[k - 1];
+                k = 1;
+              }
+            }
+          } else {
+            SDL_FColor col;
+            float hw = (float)cmd->stroke * 0.5f;
+            int j;
+
+            col.r = (float)cmd->color.r / 255.0f;
+            col.g = (float)cmd->color.g / 255.0f;
+            col.b = (float)cmd->color.b / 255.0f;
+            col.a = (float)cmd->color.a / 255.0f;
+
+            for (j = 0; j + 1 < n; j++) {
+              float x0 = (float)xy[j * 2] + 0.5f;
+              float y0 = (float)xy[j * 2 + 1] + 0.5f;
+              float x1 = (float)xy[j * 2 + 2] + 0.5f;
+              float y1 = (float)xy[j * 2 + 3] + 0.5f;
+              float dx = x1 - x0;
+              float dy = y1 - y0;
+              float len = SDL_sqrtf(dx * dx + dy * dy);
+              float nx;
+              float ny;
+              SDL_Vertex v[4];
+              int idx[6] = {0, 1, 2, 0, 2, 3};
+              int q;
+
+              if (len <= 0.0f) {
+                continue;
+              }
+
+              nx = -dy / len * hw;
+              ny = dx / len * hw;
+
+              v[0].position.x = x0 + nx;
+              v[0].position.y = y0 + ny;
+              v[1].position.x = x1 + nx;
+              v[1].position.y = y1 + ny;
+              v[2].position.x = x1 - nx;
+              v[2].position.y = y1 - ny;
+              v[3].position.x = x0 - nx;
+              v[3].position.y = y0 - ny;
+
+              for (q = 0; q < 4; q++) {
+                v[q].color = col;
+                v[q].tex_coord.x = 0.0f;
+                v[q].tex_coord.y = 0.0f;
+              }
+
+              SDL_RenderGeometry(win->sdl_ren, NULL, v, 4, idx, 6);
+            }
+          }
+        }
+
+        break;
+
+      case LK_ROP_CLIP_BEGIN: {
+        SDL_Rect cr;
+        cr.x = (int)cmd->rect.x;
+        cr.y = (int)cmd->rect.y;
+        cr.w = (int)cmd->rect.w;
+        cr.h = (int)cmd->rect.h;
+
+        /* Nested clips intersect with the enclosing clip */
+        if (clip_sp > 0) {
+          SDL_Rect merged;
+
+          if (!SDL_GetRectIntersection(&clip_stack[clip_sp - 1], &cr,
+                                       &merged)) {
+            merged.x = cr.x;
+            merged.y = cr.y;
+            merged.w = 0;
+            merged.h = 0;
+          }
+
+          cr = merged;
+        }
+
+        if (clip_sp < (int)(sizeof(clip_stack) / sizeof(clip_stack[0]))) {
+          clip_stack[clip_sp++] = cr;
+        }
+
+        SDL_SetRenderClipRect(win->sdl_ren, &cr);
+        break;
+      }
+
+      case LK_ROP_CLIP_END:
+        if (clip_sp > 0) {
+          clip_sp--;
+        }
+
+        if (clip_sp > 0) {
+          SDL_SetRenderClipRect(win->sdl_ren, &clip_stack[clip_sp - 1]);
+        } else {
+          SDL_SetRenderClipRect(win->sdl_ren, NULL);
+        }
+
+        break;
+
+      default: break;
+      }
+    }
+  }
+
+  sdl_service_screenshot(win);
+  SDL_RenderPresent(win->sdl_ren);
+
+  return win->running;
+}
+
 void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
   if (!win || !frame) {
     return;
@@ -1520,498 +2023,11 @@ void lk_window_run(lk_window *win, lk_frame_fn frame, void *ud) {
 
   win->running = 1;
 
-  while (win->running) {
-    SDL_Event sdl_ev;
-    lk_tree *tree;
-    const lk_tree *cur;
-    lk_layout_cfg lcfg;
-    lk_u32 i;
-    int have_rects;
-
-    win->frame_serial++;
-
-    /* 0. Clear per-frame command queue; stamp the frame time */
-    lk_ui_clear_commands(win->ui);
-    lk_ui_set_time_ms(win->ui, (lk_u32)SDL_GetTicks());
-
-    /* 1. Build frame */
-    tree = lk_ui_begin_frame(win->ui);
-    frame(tree, ud);
-    lk_ui_end_frame(win->ui);
-    cur = lk_ui_tree(win->ui);
-
-    /* Drain synthetic events from between-frame mutations (end_frame
-     * focus GC, host API calls made from the frame callback). */
-    lk_ui_flush_events(win->ui, cur);
-
-    if (!cur || cur->root == 0) {
-      /* Poll events even with empty tree to handle quit (and deliver
-       * dialog results — this loop otherwise drops user events). */
-      while (SDL_PollEvent(&sdl_ev)) {
-        if (sdl_ev.type == SDL_EVENT_QUIT) {
-          win->running = 0;
-        } else if (g_dialog_event_type != 0 &&
-                   sdl_ev.type == g_dialog_event_type) {
-          sdl_dialog_deliver(&sdl_ev);
-        }
-      }
-      SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
-      SDL_RenderClear(win->sdl_ren);
-      SDL_RenderPresent(win->sdl_ren);
-      SDL_Delay(16);
-      continue;
-    }
-
-    /* 2. Resolve styles */
-    lk_ui_resolve_styles(win->ui);
-
-    /* 3. Layout -- into the ui-owned rects array, so lk_node_rect
-     * (and Lk::node_rect) can answer for this frame */
-    win->rects = lk_ui_rects(win->ui);
-
-    have_rects = 0;
-    if (win->rects) {
-      const lk_style *styles = lk_ui_styles(win->ui);
-      memset(&lcfg, 0, sizeof(lcfg));
-
-      lcfg.text = sdl_text_have_faces(win) ? &win->text_backend
-                                           : lk_text_backend_stub();
-      /* Same backend for widget event handlers (click-to-position). */
-      lk_ui_set_text_backend(win->ui, lcfg.text);
-
-      lcfg.viewport_w = win->width;
-      lcfg.viewport_h = win->height;
-      lcfg.styles = styles;
-      lcfg.state = lk_ui_state(win->ui);
-      /* Per-frame geometry scratch: the ui-owned array, so widget
-       * event handlers see exactly what this layout computed. */
-      lcfg.geom = lk_ui_geom(win->ui);
-
-      if (lk_layout(cur, &lcfg, win->rects)) {
-        have_rects = 1;
-      }
-    }
-
-    /* 3.5. Engage SDL text input only while a text-entry widget is
-     * focused, and tell the IME where the field is so composition
-     * windows appear next to it. */
-    {
-      lk_ix f = lk_focus_current(win->ui, cur);
-      int want = (f != 0 && (cur->nodes[f].kind == (lk_u16)UIK_TEXT_INPUT ||
-                             cur->nodes[f].kind == (lk_u16)UIK_EDITOR));
-
-      if (want && !win->text_input_active) {
-        SDL_StartTextInput(win->sdl_win);
-        win->text_input_active = 1;
-      } else if (!want && win->text_input_active) {
-        SDL_StopTextInput(win->sdl_win);
-        win->text_input_active = 0;
-      }
-
-      if (want && have_rects) {
-        SDL_Rect area;
-        area.x = (int)win->rects[f].x;
-        area.y = (int)win->rects[f].y;
-        area.w = (int)win->rects[f].w;
-        area.h = (int)win->rects[f].h;
-        SDL_SetTextInputArea(win->sdl_win, &area, 0);
-      }
-    }
-
-    /* 4. Poll events (after layout so we have rects for hit-testing) */
-    while (SDL_PollEvent(&sdl_ev)) {
-      lk_event lk_ev;
-
-      if (sdl_ev.type == SDL_EVENT_QUIT) {
-        win->running = 0;
-        break;
-      }
-
-      /* Dialog completions: deliver BEFORE sdl_to_lk_event, which
-       * continues past unknown event types. */
-      if (g_dialog_event_type != 0 && sdl_ev.type == g_dialog_event_type) {
-        sdl_dialog_deliver(&sdl_ev);
-        continue;
-      }
-
-      if (!sdl_to_lk_event(win, &sdl_ev, &lk_ev)) {
-        continue;
-      }
-
-      /* Track mouse position */
-      if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
-          lk_ev.type == LK_EVENT_POINTER_DOWN ||
-          lk_ev.type == LK_EVENT_POINTER_UP) {
-        win->mouse_x = lk_ev.data.pointer.x;
-        win->mouse_y = lk_ev.data.pointer.y;
-      }
-
-      /* Set target */
-      if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
-          lk_ev.type == LK_EVENT_POINTER_DOWN ||
-          lk_ev.type == LK_EVENT_POINTER_UP) {
-        int captured = 0;
-
-        /* Pointer capture: while a node holds the capture (e.g. a
-         * split divider mid-drag), MOVE/UP events target it directly
-         * (bypassing hit-test) and hover updates are suppressed.
-         * Capture referencing a node that no longer resolves in the
-         * current tree is dropped. */
-        if (lk_ev.type == LK_EVENT_POINTER_MOVE ||
-            lk_ev.type == LK_EVENT_POINTER_UP) {
-          lk_node_id cap = lk_capture_current(win->ui);
-
-          if (cap != 0) {
-            lk_ix cix = lk_tree_find_by_id(cur, cap);
-
-            if (cix != 0) {
-              lk_ev.target = cix;
-              captured = 1;
-            } else {
-              lk_capture_clear(win->ui);
-            }
-          }
-        }
-
-        if (!captured && have_rects) {
-          /* Overlay hit-test first (popups draw on top of everything) */
-          lk_ev.target =
-              lk_hit_test_overlay(win->ui, win->rects, &lcfg,
-                                  lk_ev.data.pointer.x, lk_ev.data.pointer.y);
-
-          if (lk_ev.target == 0) {
-            lk_ev.target = lk_hit_test(cur, win->rects, lk_ev.data.pointer.x,
-                                       lk_ev.data.pointer.y);
-          }
-
-          /* Pointer-down outside any open overlay closes it.
-           * Call before routing so the click still fires on whatever
-           * the user clicked.  A modal (focus-trapping, non-dismissing)
-           * overlay consumes the click instead — skip routing. */
-          if (lk_ev.type == LK_EVENT_POINTER_DOWN) {
-            if (lk_overlay_dismiss_outside(
-                    win->ui, win->rects, &lcfg, lk_ev.data.pointer.x,
-                    lk_ev.data.pointer.y) == LK_DISMISS_BLOCKED) {
-              continue;
-            }
-          }
-        }
-
-        /* Update hover state (suppressed while a capture is active) */
-        if (!captured) {
-          if (lk_ev.target != 0) {
-            lk_hover_set(win->ui, cur->nodes[lk_ev.target].id);
-          } else {
-            lk_hover_clear(win->ui);
-          }
-        }
-      } else if (lk_ev.type == LK_EVENT_WHEEL) {
-        if (have_rects) {
-          /* Overlay-first, like pointer events: wheel over an open
-           * dropdown popup must scroll the popup, not the page
-           * underneath it. */
-          lk_ev.target = lk_hit_test_overlay(win->ui, win->rects, &lcfg,
-                                             win->mouse_x, win->mouse_y);
-
-          if (lk_ev.target == 0) {
-            lk_ev.target =
-                lk_hit_test(cur, win->rects, win->mouse_x, win->mouse_y);
-          }
-        }
-      } else if (lk_ev.type == LK_EVENT_KEY_DOWN ||
-                 lk_ev.type == LK_EVENT_KEY_UP || lk_ev.type == LK_EVENT_TEXT) {
-        lk_ev.target = lk_focus_current(win->ui, cur);
-        if (lk_ev.target == 0) {
-          lk_ev.target = cur->root;
-        }
-      } else if (lk_ev.type == LK_EVENT_WINDOW_RESIZE) {
-        win->width = lk_ev.data.window.w;
-        win->height = lk_ev.data.window.h;
-        lk_ev.target = cur->root;
-      }
-
-      /* Route through tree */
-      if (lk_ev.target != 0) {
-        lk_event_route(win->ui, &lk_ev);
-      }
-
-      /* Built-in behaviors (only if not already handled) */
-      if (!lk_ev.handled) {
-        if (lk_ev.type == LK_EVENT_KEY_DOWN &&
-            lk_ev.data.key.keycode == LKK_TAB) {
-          if (lk_ev.mods & (lk_u8)LK_MOD_SHIFT) {
-            lk_focus_prev(win->ui, cur);
-          } else {
-            lk_focus_next(win->ui, cur);
-          }
-        }
-
-        if (lk_ev.type == LK_EVENT_POINTER_DOWN && lk_ev.target != 0) {
-          lk_node_id clicked_id = cur->nodes[lk_ev.target].id;
-          lk_focus_set(win->ui, cur, clicked_id);
-        }
-      }
-    }
-
-    /* Drain synthetic events from the built-in behaviors above
-     * (click-to-focus, tab cycling run outside lk_event_route). */
-    lk_ui_flush_events(win->ui, cur);
-
-    if (!win->running) {
-      break;
-    }
-
-    if (!have_rects) {
-      SDL_Delay(16);
-      continue;
-    }
-
-    /* 4.5. Events mutate state after layout ran — editor documents
-     * (which invalidate their geometry), scroll offsets, split
-     * ratios.  Re-lay out so this frame renders what the events did
-     * instead of a one-frame-stale (or, for the editor, blanked)
-     * view.  Hit-testing above deliberately used the pre-event
-     * rects. */
-    lk_layout(cur, &lcfg, win->rects);
-
-    /* 5. Render */
-    lk_render_build(cur, win->rects, lk_ui_styles(win->ui),
-                    lk_ui_state(win->ui), lcfg.geom, &win->rl);
-
-    /* 5b. Overlays (the ui's overlay stack: dropdown popups, subtree
-     * overlays) draw on top of the main tree.  See docs/overlays.md. */
-    lk_render_build_overlays(win->ui, win->rects, &lcfg, &win->rl);
-
-    SDL_SetRenderDrawColor(win->sdl_ren, 0, 0, 0, 255);
-    SDL_RenderClear(win->sdl_ren);
-
-    {
-      /* Clip stack: CLIP_END must restore the *enclosing* clip, not
-       * clear clipping entirely (nested clippers: window > scroll). */
-      SDL_Rect clip_stack[32];
-      int clip_sp = 0;
-
-      for (i = 0; i < win->rl.count; i++) {
-        const lk_render_cmd *cmd = &win->rl.cmds[i];
-        SDL_FRect fr;
-
-        fr.x = (float)cmd->rect.x;
-        fr.y = (float)cmd->rect.y;
-        fr.w = (float)cmd->rect.w;
-        fr.h = (float)cmd->rect.h;
-
-        switch (cmd->op) {
-        case LK_ROP_FILL_RECT:
-          SDL_SetRenderDrawColor(win->sdl_ren, cmd->color.r, cmd->color.g,
-                                 cmd->color.b, cmd->color.a);
-          SDL_RenderFillRect(win->sdl_ren, &fr);
-          break;
-
-        case LK_ROP_DRAW_TEXT:
-          if (cmd->str_id != 0) {
-            lk_str text = lk_intern_str(cur->intern, cmd->str_id);
-
-            if (text.ptr && text.len > 0) {
-              TTF_Font *font =
-                  sdl_text_instance(win, cmd->font_id, cmd->font_size);
-              TTF_Text *scratch =
-                  font ? sdl_text_scratch(win, font, text) : NULL;
-
-              if (scratch) {
-                TTF_SetTextColor(scratch, cmd->color.r, cmd->color.g,
-                                 cmd->color.b, cmd->color.a);
-                /* The engine draws at the text's natural size —
-                 * stretching to the command rect would distort glyphs.
-                 * Overflow is handled by the active clip. */
-                TTF_DrawRendererText(scratch, fr.x, fr.y);
-              }
-            }
-          }
-
-          break;
-
-        case LK_ROP_DRAW_RUN:
-          /* Like DRAW_TEXT, but the bytes live in the render list's
-           * own arena.  Empty runs are skipped entirely — the
-           * documented TTF_SetTextString len-0 gotcha. */
-          if (cmd->run_len > 0 && win->rl.bytes) {
-            lk_str run;
-            TTF_Font *font;
-            TTF_Text *scratch;
-
-            run.ptr = win->rl.bytes + cmd->run_off;
-            run.len = cmd->run_len;
-
-            font = sdl_text_instance(win, cmd->font_id, cmd->font_size);
-            scratch = font ? sdl_text_scratch(win, font, run) : NULL;
-
-            if (scratch) {
-              TTF_SetTextColor(scratch, cmd->color.r, cmd->color.g,
-                               cmd->color.b, cmd->color.a);
-              TTF_DrawRendererText(scratch, fr.x, fr.y);
-            }
-          }
-
-          break;
-
-        case LK_ROP_DRAW_IMAGE: {
-          SDL_Texture *tex = sdl_img_texture(win, cmd);
-
-          if (tex) {
-            SDL_SetTextureScaleMode(tex, cmd->img_filter == LK_FILTER_NEAREST
-                                             ? SDL_SCALEMODE_NEAREST
-                                             : SDL_SCALEMODE_LINEAR);
-            SDL_SetTextureColorMod(tex, cmd->color.r, cmd->color.g,
-                                   cmd->color.b);
-            SDL_SetTextureAlphaMod(tex, cmd->color.a);
-            SDL_RenderTexture(win->sdl_ren, tex, NULL, &fr);
-          }
-
-          break;
-        }
-
-        case LK_ROP_DRAW_LINES:
-          /* Packed lk_i32 xy pairs in the list arena, window coords.
-           * Hairlines go straight to SDL_RenderLines; wider strokes
-           * are one quad per segment through SDL_RenderGeometry (butt
-           * caps, no joins — fine at the 2-3 px a plot uses).  Core
-           * SDL3 renderer API only: no extension libraries, and both
-           * calls exist in every backend incl. GLES2 (Emscripten). */
-          if (cmd->run_len >= 16 && win->rl.bytes) {
-            const lk_i32 *xy = (const lk_i32 *)(win->rl.bytes + cmd->run_off);
-            int n = (int)(cmd->run_len / 8);
-
-            SDL_SetRenderDrawColor(win->sdl_ren, cmd->color.r, cmd->color.g,
-                                   cmd->color.b, cmd->color.a);
-
-            if (cmd->stroke <= 1) {
-              SDL_FPoint pts[64];
-              int k = 0;
-              int j;
-
-              /* Stream through a stack window; consecutive windows
-               * share their boundary point so the polyline stays
-               * connected. */
-              for (j = 0; j < n; j++) {
-                pts[k].x = (float)xy[j * 2] + 0.5f;
-                pts[k].y = (float)xy[j * 2 + 1] + 0.5f;
-                k++;
-
-                if (k == 64 || j + 1 == n) {
-                  if (k >= 2) {
-                    SDL_RenderLines(win->sdl_ren, pts, k);
-                  }
-
-                  pts[0] = pts[k - 1];
-                  k = 1;
-                }
-              }
-            } else {
-              SDL_FColor col;
-              float hw = (float)cmd->stroke * 0.5f;
-              int j;
-
-              col.r = (float)cmd->color.r / 255.0f;
-              col.g = (float)cmd->color.g / 255.0f;
-              col.b = (float)cmd->color.b / 255.0f;
-              col.a = (float)cmd->color.a / 255.0f;
-
-              for (j = 0; j + 1 < n; j++) {
-                float x0 = (float)xy[j * 2] + 0.5f;
-                float y0 = (float)xy[j * 2 + 1] + 0.5f;
-                float x1 = (float)xy[j * 2 + 2] + 0.5f;
-                float y1 = (float)xy[j * 2 + 3] + 0.5f;
-                float dx = x1 - x0;
-                float dy = y1 - y0;
-                float len = SDL_sqrtf(dx * dx + dy * dy);
-                float nx;
-                float ny;
-                SDL_Vertex v[4];
-                int idx[6] = {0, 1, 2, 0, 2, 3};
-                int q;
-
-                if (len <= 0.0f) {
-                  continue;
-                }
-
-                nx = -dy / len * hw;
-                ny = dx / len * hw;
-
-                v[0].position.x = x0 + nx;
-                v[0].position.y = y0 + ny;
-                v[1].position.x = x1 + nx;
-                v[1].position.y = y1 + ny;
-                v[2].position.x = x1 - nx;
-                v[2].position.y = y1 - ny;
-                v[3].position.x = x0 - nx;
-                v[3].position.y = y0 - ny;
-
-                for (q = 0; q < 4; q++) {
-                  v[q].color = col;
-                  v[q].tex_coord.x = 0.0f;
-                  v[q].tex_coord.y = 0.0f;
-                }
-
-                SDL_RenderGeometry(win->sdl_ren, NULL, v, 4, idx, 6);
-              }
-            }
-          }
-
-          break;
-
-        case LK_ROP_CLIP_BEGIN: {
-          SDL_Rect cr;
-          cr.x = (int)cmd->rect.x;
-          cr.y = (int)cmd->rect.y;
-          cr.w = (int)cmd->rect.w;
-          cr.h = (int)cmd->rect.h;
-
-          /* Nested clips intersect with the enclosing clip */
-          if (clip_sp > 0) {
-            SDL_Rect merged;
-
-            if (!SDL_GetRectIntersection(&clip_stack[clip_sp - 1], &cr,
-                                         &merged)) {
-              merged.x = cr.x;
-              merged.y = cr.y;
-              merged.w = 0;
-              merged.h = 0;
-            }
-
-            cr = merged;
-          }
-
-          if (clip_sp < (int)(sizeof(clip_stack) / sizeof(clip_stack[0]))) {
-            clip_stack[clip_sp++] = cr;
-          }
-
-          SDL_SetRenderClipRect(win->sdl_ren, &cr);
-          break;
-        }
-
-        case LK_ROP_CLIP_END:
-          if (clip_sp > 0) {
-            clip_sp--;
-          }
-
-          if (clip_sp > 0) {
-            SDL_SetRenderClipRect(win->sdl_ren, &clip_stack[clip_sp - 1]);
-          } else {
-            SDL_SetRenderClipRect(win->sdl_ren, NULL);
-          }
-
-          break;
-
-        default: break;
-        }
-      }
-    }
-
-    sdl_service_screenshot(win);
-    SDL_RenderPresent(win->sdl_ren);
-
-    /* With vsync, RenderPresent paces the loop; only sleep manually
-     * when vsync is unavailable. */
+  /* Every step ends in one RenderPresent.  With vsync that paces the
+   * loop; without it, sleep so an idle app does not spin.  A host
+   * that cannot block (a browser's main thread) skips this wrapper
+   * and calls lk_window_step from its own frame callback. */
+  while (lk_window_step(win, frame, ud)) {
     if (!win->vsync) {
       SDL_Delay(16);
     }
