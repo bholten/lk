@@ -113,9 +113,8 @@ lk_u32 lk_overlay_count(const lk_ui *ui) {
 
 /* ---- Anchor resolution ---- */
 
-lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect,
-                          lk_i32 vw, lk_i32 vh, lk_i32 content_w,
-                          lk_i32 content_h) {
+lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect, lk_i32 vw,
+                          lk_i32 vh, lk_i32 content_w, lk_i32 content_h) {
   lk_rect r;
   lk_i32 w = content_w;
   lk_i32 h = content_h;
@@ -202,9 +201,8 @@ static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
  * out_rect (final overlay rect).  Returns 1 on success. */
 static int overlay_content_geometry(const lk_tree *t, const lk_overlay *ov,
                                     const lk_rect *rects,
-                                    const lk_layout_cfg *cfg,
-                                    lk_rect *scratch, lk_ix *out_content,
-                                    lk_rect *out_rect) {
+                                    const lk_layout_cfg *cfg, lk_rect *scratch,
+                                    lk_ix *out_content, lk_rect *out_rect) {
   lk_ix cix;
   lk_ix oix;
   lk_rect owner_rect;
@@ -333,8 +331,8 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
      * already-real click blocking visible.  Needs an alpha-blending
      * consumer to actually dim (the SDL backend enables
      * SDL_BLENDMODE_BLEND). */
-    if (ov->traps_focus && !ov->dismiss_on_outside &&
-        cfg->viewport_w > 0 && cfg->viewport_h > 0) {
+    if (ov->traps_focus && !ov->dismiss_on_outside && cfg->viewport_w > 0 &&
+        cfg->viewport_h > 0) {
       lk_render_cmd scmd;
 
       memset(&scmd, 0, sizeof(scmd));
@@ -360,8 +358,7 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
         continue;
       }
 
-      if (overlay_content_geometry(t, ov, rects, cfg, scratch, &cix,
-                                   &orect)) {
+      if (overlay_content_geometry(t, ov, rects, cfg, scratch, &cix, &orect)) {
         lk_render_build_from(t, cix, scratch, cfg->styles, cfg->state,
                              cfg->geom, out);
       }
@@ -426,8 +423,7 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
         continue;
       }
 
-      if (overlay_content_geometry(t, ov, rects, cfg, scratch, &cix,
-                                   &orect) &&
+      if (overlay_content_geometry(t, ov, rects, cfg, scratch, &cix, &orect) &&
           point_in(&orect, x, y)) {
         lk_ix hit = subtree_hit(t, cix, scratch, x, y);
 
@@ -440,8 +436,8 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
       lk_ix n = lk_tree_find_by_id(t, ov->owner_id);
 
       if (n != 0) {
-        lk_ix hit = lk_dropdown_hit_popup(t, n, rects, cfg->styles,
-                                          cfg->state, cfg, x, y);
+        lk_ix hit = lk_dropdown_hit_popup(t, n, rects, cfg->styles, cfg->state,
+                                          cfg, x, y);
 
         if (hit != 0) {
           return hit;

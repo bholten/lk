@@ -93,7 +93,8 @@ static void idmap_insert_raw(lk_u32 *keys, lk_u32 *values, lk_u32 cap,
 
 static int idmap_grow(lk_annot_store *s, lk_annot_idmap *m) {
   lk_u32 new_cap = m->cap * 2;
-  lk_u32 *new_keys = (lk_u32 *)annot_zalloc(s, new_cap * (lk_u32)sizeof(lk_u32));
+  lk_u32 *new_keys =
+      (lk_u32 *)annot_zalloc(s, new_cap * (lk_u32)sizeof(lk_u32));
   lk_u32 *new_values =
       (lk_u32 *)annot_zalloc(s, new_cap * (lk_u32)sizeof(lk_u32));
   lk_u32 i;
@@ -112,8 +113,7 @@ static int idmap_grow(lk_annot_store *s, lk_annot_idmap *m) {
 
   for (i = 0; i < m->cap; i++) {
     if (m->keys[i] != 0) {
-      idmap_insert_raw(new_keys, new_values, new_cap, m->keys[i],
-                       m->values[i]);
+      idmap_insert_raw(new_keys, new_values, new_cap, m->keys[i], m->values[i]);
     }
   }
 
@@ -239,8 +239,7 @@ static char *annot_strdup(lk_annot_store *s, const char *str) {
   return dup;
 }
 
-static const lk_anchor *find_anchor_const(const lk_annot_store *s,
-                                          lk_u32 id) {
+static const lk_anchor *find_anchor_const(const lk_annot_store *s, lk_u32 id) {
   lk_u32 idx;
 
   if (idmap_get(&s->anchor_map, id, &idx)) {
@@ -538,8 +537,7 @@ static void annot_on_doc(void *ud, const lk_document *d,
 /* ---- Lifecycle ---- */
 
 lk_annot_store *lk_annot_store_new(void *(*alloc)(void *, lk_u32),
-                                   void (*dealloc)(void *, void *),
-                                   void *ud) {
+                                   void (*dealloc)(void *, void *), void *ud) {
   lk_annot_store *s;
 
   if (!alloc || !dealloc) {
@@ -559,8 +557,8 @@ lk_annot_store *lk_annot_store_new(void *(*alloc)(void *, lk_u32),
   s->dealloc = dealloc;
   s->ud = ud;
 
-  s->anchors = (lk_anchor *)alloc(
-      ud, ANNOT_INITIAL_ANCHOR_CAP * (lk_u32)sizeof(lk_anchor));
+  s->anchors = (lk_anchor *)alloc(ud, ANNOT_INITIAL_ANCHOR_CAP *
+                                          (lk_u32)sizeof(lk_anchor));
   s->anchor_cap = ANNOT_INITIAL_ANCHOR_CAP;
   s->next_anchor_id = 1; /* 0 reserved as invalid */
 
@@ -570,8 +568,8 @@ lk_annot_store *lk_annot_store_new(void *(*alloc)(void *, lk_u32),
   s->next_record_id = 1;
   s->change_seq = 0;
 
-  s->layers = (lk_annot_layer *)alloc(
-      ud, ANNOT_INITIAL_LAYER_CAP * (lk_u32)sizeof(lk_annot_layer));
+  s->layers = (lk_annot_layer *)alloc(ud, ANNOT_INITIAL_LAYER_CAP *
+                                              (lk_u32)sizeof(lk_annot_layer));
   s->layer_cap = ANNOT_INITIAL_LAYER_CAP;
 
   if (!s->anchors || !s->records || !s->layers ||
@@ -721,8 +719,8 @@ const char *lk_annot_layer_name(const lk_annot_store *s, lk_u32 index) {
 /* ---- Annotation CRUD ---- */
 
 lk_u32 lk_annot_add(lk_annot_store *s, lk_u32 start, lk_u32 end,
-                    const char *layer, const char **keys,
-                    const char **values, lk_u32 meta_count) {
+                    const char *layer, const char **keys, const char **values,
+                    lk_u32 meta_count) {
   lk_u32 start_anchor;
   lk_u32 end_anchor;
   char **new_keys = NULL;
@@ -767,8 +765,7 @@ lk_u32 lk_annot_add(lk_annot_store *s, lk_u32 start, lk_u32 end,
 
   if (meta_count > 0) {
     new_keys = (char **)annot_zalloc(s, meta_count * (lk_u32)sizeof(char *));
-    new_values =
-        (char **)annot_zalloc(s, meta_count * (lk_u32)sizeof(char *));
+    new_values = (char **)annot_zalloc(s, meta_count * (lk_u32)sizeof(char *));
 
     if (!new_keys || !new_values) {
       goto cleanup_meta;
@@ -1100,9 +1097,8 @@ static lk_i32 record_layer_priority(const lk_annot_store *s,
 /* Precedence: layer priority DESC -> smaller range -> record id ASC
  * (the insertion serial).  Returns nonzero when a should precede b. */
 static int pres_precedes(const lk_annot_store *s, const lk_annot_record *a,
-                         lk_u32 a_start, lk_u32 a_end,
-                         const lk_annot_record *b, lk_u32 b_start,
-                         lk_u32 b_end) {
+                         lk_u32 a_start, lk_u32 a_end, const lk_annot_record *b,
+                         lk_u32 b_start, lk_u32 b_end) {
   lk_i32 pa = record_layer_priority(s, a);
   lk_i32 pb = record_layer_priority(s, b);
   lk_u32 la, lb;
@@ -1202,8 +1198,8 @@ lk_u32 lk_annot_presentations_at(const lk_annot_store *s, lk_u32 pos,
   return count;
 }
 
-static lk_u32 annot_source_query(void *ud, lk_u32 pos,
-                                 lk_presentation_hit *out, lk_u32 cap) {
+static lk_u32 annot_source_query(void *ud, lk_u32 pos, lk_presentation_hit *out,
+                                 lk_u32 cap) {
   return lk_annot_presentations_at((const lk_annot_store *)ud, pos, out, cap);
 }
 
@@ -1296,8 +1292,7 @@ void lk_annot_set_layer_valid(lk_annot_store *s, const char *name) {
   }
 }
 
-lk_layer_state lk_annot_layer_state(const lk_annot_store *s,
-                                    const char *name) {
+lk_layer_state lk_annot_layer_state(const lk_annot_store *s, const char *name) {
   const lk_annot_layer *l;
 
   if (!s || !name) {

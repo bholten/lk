@@ -156,8 +156,8 @@ static int menu_reserve(lk_ui *ui, struct lk_menu_state *m, lk_u32 n) {
   return 1;
 }
 
-int lk_menu_open(lk_ui *ui, lk_node_id owner, lk_u8 anchor, lk_i32 x,
-                 lk_i32 y, const lk_menu_item *items, lk_u32 n) {
+int lk_menu_open(lk_ui *ui, lk_node_id owner, lk_u8 anchor, lk_i32 x, lk_i32 y,
+                 const lk_menu_item *items, lk_u32 n) {
   struct lk_menu_state *m;
   lk_overlay ov;
   lk_u32 i;
@@ -208,8 +208,7 @@ int lk_menu_open(lk_ui *ui, lk_node_id owner, lk_u8 anchor, lk_i32 x,
   return 1;
 }
 
-lk_u32 lk_menu_open_context(lk_ui *ui, const lk_tree *t, lk_i32 x,
-                            lk_i32 y) {
+lk_u32 lk_menu_open_context(lk_ui *ui, const lk_tree *t, lk_i32 x, lk_i32 y) {
   lk_menu_item items[LK_MENU_MAX_ITEMS];
   lk_rect *rects;
   lk_ix target;
@@ -249,7 +248,8 @@ lk_u32 lk_menu_open_context_at_focus(lk_ui *ui, const lk_tree *t) {
   lk_rect r;
   lk_ix target;
 
-  if (!ui || !t || ui->focused_id == 0 || !lk_node_rect(ui, ui->focused_id, &r)) {
+  if (!ui || !t || ui->focused_id == 0 ||
+      !lk_node_rect(ui, ui->focused_id, &r)) {
     return 0;
   }
 
@@ -263,11 +263,11 @@ lk_u32 lk_menu_open_context_at_focus(lk_ui *ui, const lk_tree *t) {
     lk_menu_item items[LK_MENU_MAX_ITEMS];
     lk_i32 cx = r.x + r.w / 2;
     lk_i32 cy = r.y + r.h / 2;
-    lk_u32 n = lk_menu_candidates(ui, t, target, cx, cy, items,
-                                  LK_MENU_MAX_ITEMS);
+    lk_u32 n =
+        lk_menu_candidates(ui, t, target, cx, cy, items, LK_MENU_MAX_ITEMS);
 
-    if (n == 0 || !lk_menu_open(ui, ui->focused_id, LK_ANCHOR_AT_CURSOR, cx,
-                                cy, items, n)) {
+    if (n == 0 || !lk_menu_open(ui, ui->focused_id, LK_ANCHOR_AT_CURSOR, cx, cy,
+                                items, n)) {
       return 0;
     }
 
@@ -542,8 +542,8 @@ void lk_menu_render(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
       if (it->accel != 0) {
         lk_i32 aw = text_w(tb, st, ui->intern, it->accel);
 
-        text(out, r.x + r.w - LK_MENU_PAD_X - aw, y + LK_MENU_PAD_Y,
-             it->accel, ac, st);
+        text(out, r.x + r.w - LK_MENU_PAD_X - aw, y + LK_MENU_PAD_Y, it->accel,
+             ac, st);
       }
     }
 
@@ -592,8 +592,7 @@ static lk_i32 next_choosable(const struct lk_menu_state *m, lk_i32 from,
   return from;
 }
 
-static int label_starts_with(const lk_ui *ui, const lk_menu_item *it,
-                             char c) {
+static int label_starts_with(const lk_ui *ui, const lk_menu_item *it, char c) {
   lk_str s;
 
   if (it->label == 0) {
@@ -641,15 +640,11 @@ int lk_menu_route(lk_ui *ui, const lk_tree *t, lk_event *ev) {
       m->hover = next_choosable(m, m->hover < 0 ? -1 : m->hover, 1);
       return 1;
     case LKK_UP:
-      m->hover = next_choosable(m, m->hover < 0 ? (lk_i32)m->count : m->hover,
-                                -1);
+      m->hover =
+          next_choosable(m, m->hover < 0 ? (lk_i32)m->count : m->hover, -1);
       return 1;
-    case LKK_HOME:
-      m->hover = next_choosable(m, -1, 1);
-      return 1;
-    case LKK_END:
-      m->hover = next_choosable(m, (lk_i32)m->count, -1);
-      return 1;
+    case LKK_HOME: m->hover = next_choosable(m, -1, 1); return 1;
+    case LKK_END: m->hover = next_choosable(m, (lk_i32)m->count, -1); return 1;
     case LKK_RETURN:
     case LKK_SPACE:
       if (m->hover >= 0) {

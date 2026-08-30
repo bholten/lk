@@ -113,59 +113,59 @@ typedef enum lk_kind {
   UIK_BUTTON,
   UIK_TEXT_INPUT,
   UIK_SCROLL,
-  UIK_DROPDOWN, /* selection list — trigger renders collapsed; options
-                   become a popup overlay when LKS_EXPANDED == 1. */
-  UIK_OPTION,   /* option inside a dropdown.  Not laid out by the main
-                   pass; rendered and hit-tested as part of the owning
-                   dropdown's overlay. */
-  UIK_SPLIT_H,  /* two children side-by-side with a draggable vertical
-                   divider between them.  Ratio is per-mille (0..1000):
-                   LKS_SPLIT_RATIO state (set by dragging) overrides the
-                   UIP_SPLIT_RATIO prop (initial value), default 500.
-                   With one child it behaves as a plain container;
-                   children beyond the first two are ignored (zero
-                   rects). */
-  UIK_SPLIT_V,  /* same, stacked vertically (horizontal divider). */
-  UIK_EDITOR,   /* multi-line text editor view over an application-owned
-                   lk_document, attached via the UIP_EDITOR resource
-                   ref.  Vtable in src/editor/lk-editor-widget.c; see
-                   include/lk-editor.h and docs/editor.md section 7. */
-  UIK_CHECKBOX, /* toggle with a text label (docs/forms-widgets.md).
-                   Effective checked = LKS_CHECKED state (written by
-                   clicks / SPACE) > UIP_CHECKED prop > 0.  Toggling
-                   emits LK_EVENT_VALUE_CHANGED with "1"/"0". */
-  UIK_RADIO,    /* like CHECKBOX but exclusive among sibling RADIO
-                   nodes under the same parent: checking one clears
-                   the LKS_CHECKED state of its sibling radios.  Only
-                   the newly checked radio emits VALUE_CHANGED ("1"). */
-  UIK_SLIDER,   /* horizontal integer slider over [UIP_MIN, UIP_MAX]
-                   in UIP_STEP increments.  Effective value =
-                   LKS_SLIDER_VALUE state (drag / keys) > UIP_VALUE
-                   (i32) > UIP_MIN.  Emits VALUE_CHANGED with the new
-                   value as a decimal string. */
-  UIK_TABS,     /* tab strip + one visible page.  Children are UIK_TAB
-                   nodes; the strip is owned by the TABS node (like the
-                   dropdown trigger), the selected TAB's subtree fills
-                   the area below it, unselected TAB subtrees are
-                   skipped by layout/render/focus (their rects zero).
-                   Effective selection = LKS_SELECTED_INDEX state >
-                   UIP_VALUE (a TAB child's node id string) > 0.
-                   Selecting emits VALUE_CHANGED with the TAB's id. */
-  UIK_TAB,      /* one page of a TABS: UIP_TEXT is the strip title;
-                   children lay out as a column inside the page. */
-  UIK_GRID,     /* row-major cell grid with UIP_COLUMNS columns; every
-                   column is as wide as its widest cell, every row as
-                   tall as its tallest, children fill their cell. */
-  UIK_IMAGE,    /* leaf view over an application-owned lk_image pixel
-                   buffer, attached via the UIP_IMAGE resource ref.
-                   Measures at the image's intrinsic pixel size (UIP_W /
-                   UIP_H override); renders the image stretched to the
-                   node rect.  See docs/image-widget.md. */
-  UIK_CANVAS,   /* leaf replaying an application-owned lk_canvas display
-                   list (UIP_CANVAS resource ref): lines, polylines,
-                   rects, text in canvas-local pixels, clipped to the
-                   node rect.  Measures at the canvas's size hint (UIP_W /
-                   UIP_H override).  See docs/canvas.md. */
+  UIK_DROPDOWN,    /* selection list — trigger renders collapsed; options
+                      become a popup overlay when LKS_EXPANDED == 1. */
+  UIK_OPTION,      /* option inside a dropdown.  Not laid out by the main
+                      pass; rendered and hit-tested as part of the owning
+                      dropdown's overlay. */
+  UIK_SPLIT_H,     /* two children side-by-side with a draggable vertical
+                      divider between them.  Ratio is per-mille (0..1000):
+                      LKS_SPLIT_RATIO state (set by dragging) overrides the
+                      UIP_SPLIT_RATIO prop (initial value), default 500.
+                      With one child it behaves as a plain container;
+                      children beyond the first two are ignored (zero
+                      rects). */
+  UIK_SPLIT_V,     /* same, stacked vertically (horizontal divider). */
+  UIK_EDITOR,      /* multi-line text editor view over an application-owned
+                      lk_document, attached via the UIP_EDITOR resource
+                      ref.  Vtable in src/editor/lk-editor-widget.c; see
+                      include/lk-editor.h and docs/editor.md section 7. */
+  UIK_CHECKBOX,    /* toggle with a text label (docs/forms-widgets.md).
+                      Effective checked = LKS_CHECKED state (written by
+                      clicks / SPACE) > UIP_CHECKED prop > 0.  Toggling
+                      emits LK_EVENT_VALUE_CHANGED with "1"/"0". */
+  UIK_RADIO,       /* like CHECKBOX but exclusive among sibling RADIO
+                      nodes under the same parent: checking one clears
+                      the LKS_CHECKED state of its sibling radios.  Only
+                      the newly checked radio emits VALUE_CHANGED ("1"). */
+  UIK_SLIDER,      /* horizontal integer slider over [UIP_MIN, UIP_MAX]
+                      in UIP_STEP increments.  Effective value =
+                      LKS_SLIDER_VALUE state (drag / keys) > UIP_VALUE
+                      (i32) > UIP_MIN.  Emits VALUE_CHANGED with the new
+                      value as a decimal string. */
+  UIK_TABS,        /* tab strip + one visible page.  Children are UIK_TAB
+                      nodes; the strip is owned by the TABS node (like the
+                      dropdown trigger), the selected TAB's subtree fills
+                      the area below it, unselected TAB subtrees are
+                      skipped by layout/render/focus (their rects zero).
+                      Effective selection = LKS_SELECTED_INDEX state >
+                      UIP_VALUE (a TAB child's node id string) > 0.
+                      Selecting emits VALUE_CHANGED with the TAB's id. */
+  UIK_TAB,         /* one page of a TABS: UIP_TEXT is the strip title;
+                      children lay out as a column inside the page. */
+  UIK_GRID,        /* row-major cell grid with UIP_COLUMNS columns; every
+                      column is as wide as its widest cell, every row as
+                      tall as its tallest, children fill their cell. */
+  UIK_IMAGE,       /* leaf view over an application-owned lk_image pixel
+                      buffer, attached via the UIP_IMAGE resource ref.
+                      Measures at the image's intrinsic pixel size (UIP_W /
+                      UIP_H override); renders the image stretched to the
+                      node rect.  See docs/image-widget.md. */
+  UIK_CANVAS,      /* leaf replaying an application-owned lk_canvas display
+                      list (UIP_CANVAS resource ref): lines, polylines,
+                      rects, text in canvas-local pixels, clipped to the
+                      node rect.  Measures at the canvas's size hint (UIP_W /
+                      UIP_H override).  See docs/canvas.md. */
   UIK_STYLED_TEXT, /* read-only wrapping, per-range styled text: UIP_TEXT
                       for the bytes, UIP_SPANS (an app-owned lk_spans)
                       for colour / underline / presentations, UIP_WRAP
@@ -195,11 +195,11 @@ typedef enum lk_prop_key {
   UIP_ALIGN,   /* i32: lk_align — cross-axis alignment */
   UIP_JUSTIFY, /* i32: lk_align — main-axis alignment */
 
-  UIP_HIDDEN,  /* bool: subtree is skipped by the main measure, layout,
-                  render, hit-test, and focus passes.  Overlay content
-                  subtrees are built hidden and laid out on demand at
-                  their resolved anchor (see lk_layout_subtree and
-                  docs/overlays.md). */
+  UIP_HIDDEN, /* bool: subtree is skipped by the main measure, layout,
+                 render, hit-test, and focus passes.  Overlay content
+                 subtrees are built hidden and laid out on demand at
+                 their resolved anchor (see lk_layout_subtree and
+                 docs/overlays.md). */
 
   UIP_TOOLTIP, /* string (interned, like TEXT): hover help text.  When
                   the pointer moves onto a node carrying this prop, the
@@ -254,21 +254,21 @@ typedef enum lk_prop_key {
                      widget-owned interaction state.
                      Splits: this was UIP_SPLIT_CONTROLLED, kept as an
                      alias below. */
-  UIP_CHECKED,  /* bool: initial / controlled checked state of a
-                   CHECKBOX or RADIO (LKS_CHECKED state wins when
-                   present, the SPLIT_RATIO pattern). */
-  UIP_MIN,      /* i32: slider range minimum (default 0) */
-  UIP_MAX,      /* i32: slider range maximum (default 100; a MAX
-                   below MIN is treated as MIN) */
-  UIP_STEP,     /* i32 >= 1: slider increment (default 1); values snap
-                   to MIN + k*STEP */
-  UIP_COLUMNS,  /* i32 >= 1: column count of a GRID (default 1) */
+  UIP_CHECKED,    /* bool: initial / controlled checked state of a
+                     CHECKBOX or RADIO (LKS_CHECKED state wins when
+                     present, the SPLIT_RATIO pattern). */
+  UIP_MIN,        /* i32: slider range minimum (default 0) */
+  UIP_MAX,        /* i32: slider range maximum (default 100; a MAX
+                     below MIN is treated as MIN) */
+  UIP_STEP,       /* i32 >= 1: slider increment (default 1); values snap
+                     to MIN + k*STEP */
+  UIP_COLUMNS,    /* i32 >= 1: column count of a GRID (default 1) */
 
-  UIP_IMAGE, /* UIV_RESOURCE: typed ref to an application-owned
-                lk_image (registered under lk_image_type()).  Set by
-                the app every frame like any prop; a missing, stale,
-                or wrong-typed ref makes the UIK_IMAGE node render
-                background only.  See docs/image-widget.md. */
+  UIP_IMAGE,  /* UIV_RESOURCE: typed ref to an application-owned
+                 lk_image (registered under lk_image_type()).  Set by
+                 the app every frame like any prop; a missing, stale,
+                 or wrong-typed ref makes the UIK_IMAGE node render
+                 background only.  See docs/image-widget.md. */
   UIP_FILTER, /* i32 lk_image_filter: how a UIK_IMAGE is resampled when
                  its rect differs from the pixel size.  LINEAR (0,
                  default) for photos; NEAREST (1) keeps pixel art crisp
@@ -329,30 +329,30 @@ typedef enum lk_state_key {
   LKS_SELECTION_END,
   LKS_EXPANDED,
   LKS_TEXT_BUF,
-  LKS_SELECTED_INDEX, /* dropdown: index of currently selected option */
-  LKS_HOVER_INDEX,    /* dropdown: index of option under cursor while open */
-  LKS_FOCUSED,        /* i32 0/1: kept in sync with the UI focus by the
-                         lk_focus_* functions so widget render code (which
-                         only sees lk_state) can tell if its node is
-                         focused */
-  LKS_SPLIT_RATIO,    /* split: divider position in per-mille (0..1000),
-                         written by dragging.  Overrides UIP_SPLIT_RATIO. */
-  LKS_SPLIT_DRAGGING, /* split: 1 while the divider is being dragged
-                         (pointer captured by the split node) */
-  LKS_POPUP_SCROLL,   /* dropdown: popup scroll offset in px when the
-                         option list overflows DROPDOWN_POPUP_MAX_HEIGHT.
-                         User scroll position (wheel / keyboard), so it is
-                         retained state; reset to 0 on open and close. */
-  LKS_CHECKED,        /* checkbox / radio: 0/1, written by toggling.
-                         Overrides UIP_CHECKED. */
-  LKS_SLIDER_VALUE,   /* slider: current value, written by drag/keys.
-                         Overrides UIP_VALUE. */
-  LKS_CURSOR_ROW,     /* list: keyboard cursor row (-1 = none), written
-                         by keys / row clicks unless CONTROLLED */
-  LKS_LIST_DRAGGING,  /* list: grab offset while the bar thumb is being
-                         dragged (NONE otherwise) */
-  LKS_SLIDER_DRAGGING,/* slider: 1 while the thumb is being dragged
-                         (pointer captured by the slider node) */
+  LKS_SELECTED_INDEX,  /* dropdown: index of currently selected option */
+  LKS_HOVER_INDEX,     /* dropdown: index of option under cursor while open */
+  LKS_FOCUSED,         /* i32 0/1: kept in sync with the UI focus by the
+                          lk_focus_* functions so widget render code (which
+                          only sees lk_state) can tell if its node is
+                          focused */
+  LKS_SPLIT_RATIO,     /* split: divider position in per-mille (0..1000),
+                          written by dragging.  Overrides UIP_SPLIT_RATIO. */
+  LKS_SPLIT_DRAGGING,  /* split: 1 while the divider is being dragged
+                          (pointer captured by the split node) */
+  LKS_POPUP_SCROLL,    /* dropdown: popup scroll offset in px when the
+                          option list overflows DROPDOWN_POPUP_MAX_HEIGHT.
+                          User scroll position (wheel / keyboard), so it is
+                          retained state; reset to 0 on open and close. */
+  LKS_CHECKED,         /* checkbox / radio: 0/1, written by toggling.
+                          Overrides UIP_CHECKED. */
+  LKS_SLIDER_VALUE,    /* slider: current value, written by drag/keys.
+                          Overrides UIP_VALUE. */
+  LKS_CURSOR_ROW,      /* list: keyboard cursor row (-1 = none), written
+                          by keys / row clicks unless CONTROLLED */
+  LKS_LIST_DRAGGING,   /* list: grab offset while the bar thumb is being
+                          dragged (NONE otherwise) */
+  LKS_SLIDER_DRAGGING, /* slider: 1 while the thumb is being dragged
+                          (pointer captured by the slider node) */
   LKS__BUILTIN_COUNT,
   LKS_USER = 256
 } lk_state_key;
@@ -374,11 +374,11 @@ typedef enum lk_value_tag {
   UIV_I32,
   UIV_STR,
   UIV_RESOURCE, /* typed resource reference — see lk_resource_ref */
-  UIV_TEXT /* transient text in the command queue's dispatch arena
-              (docs/weft-surface.md §1.2).  Command/hit scope ONLY —
-              never valid in trees or retained state.  Valid from
-              emission until lk_ui_clear_commands; the command log
-              copies the bytes into its own arena at record time. */
+  UIV_TEXT      /* transient text in the command queue's dispatch arena
+                   (docs/weft-surface.md §1.2).  Command/hit scope ONLY —
+                   never valid in trees or retained state.  Valid from
+                   emission until lk_ui_clear_commands; the command log
+                   copies the bytes into its own arena at record time. */
 } lk_value_tag;
 
 typedef struct lk_value {
@@ -480,7 +480,7 @@ typedef struct lk_tag {
 
 typedef struct lk_tree {
   lk_intern *intern;
-  lk_u8 owns_intern; /* 1 if tree created the intern table */
+  lk_u8 owns_intern;       /* 1 if tree created the intern table */
   lk_resources *resources; /* borrowed resource table (like the shared
                               intern table) — never freed by the tree.
                               lk_ui sets it on both its trees so every
@@ -716,8 +716,7 @@ const lk_resource_type *lk_image_type(void);
 /* Resolve a node's UIP_IMAGE ref to the live image, NULL when the
  * prop is absent or the ref is stale/wrong-typed (the widget's
  * degrade contract). */
-lk_image *lk_image_from_node(const lk_resources *rs, const lk_tree *t,
-                             lk_ix n);
+lk_image *lk_image_from_node(const lk_resources *rs, const lk_tree *t, lk_ix n);
 
 /* Prop schema rules
  *
@@ -809,14 +808,56 @@ typedef enum lk_keycode {
   LKK_DOWN,
   LKK_HOME,
   LKK_END,
-  LKK_A, LKK_B, LKK_C, LKK_D, LKK_E, LKK_F, LKK_G, LKK_H, LKK_I,
-  LKK_J, LKK_K, LKK_L, LKK_M, LKK_N, LKK_O, LKK_P, LKK_Q, LKK_R,
-  LKK_S, LKK_T, LKK_U, LKK_V, LKK_W, LKK_X, LKK_Y, LKK_Z,
-  LKK_0, LKK_1, LKK_2, LKK_3, LKK_4, LKK_5, LKK_6, LKK_7, LKK_8,
+  LKK_A,
+  LKK_B,
+  LKK_C,
+  LKK_D,
+  LKK_E,
+  LKK_F,
+  LKK_G,
+  LKK_H,
+  LKK_I,
+  LKK_J,
+  LKK_K,
+  LKK_L,
+  LKK_M,
+  LKK_N,
+  LKK_O,
+  LKK_P,
+  LKK_Q,
+  LKK_R,
+  LKK_S,
+  LKK_T,
+  LKK_U,
+  LKK_V,
+  LKK_W,
+  LKK_X,
+  LKK_Y,
+  LKK_Z,
+  LKK_0,
+  LKK_1,
+  LKK_2,
+  LKK_3,
+  LKK_4,
+  LKK_5,
+  LKK_6,
+  LKK_7,
+  LKK_8,
   LKK_9,
-  LKK_PAGEUP, LKK_PAGEDOWN,
-  LKK_F1, LKK_F2, LKK_F3, LKK_F4, LKK_F5, LKK_F6, LKK_F7, LKK_F8,
-  LKK_F9, LKK_F10, LKK_F11, LKK_F12,
+  LKK_PAGEUP,
+  LKK_PAGEDOWN,
+  LKK_F1,
+  LKK_F2,
+  LKK_F3,
+  LKK_F4,
+  LKK_F5,
+  LKK_F6,
+  LKK_F7,
+  LKK_F8,
+  LKK_F9,
+  LKK_F10,
+  LKK_F11,
+  LKK_F12,
   LKK__COUNT
 } lk_keycode;
 
@@ -873,11 +914,11 @@ typedef struct lk_command {
   lk_u32 name; /* interned command name */
   lk_value args[LK_CMD_MAX_ARGS];
   lk_u8 arg_count;
-  lk_ix source_node;   /* node that triggered this */
-  lk_u32 source_ptype; /* matched presentation type (0 if none) */
-  lk_value source_value; /* event-carried value (e.g. new text for
-                          * value_changed); UIV_NONE for events with
-                          * no intrinsic value. */
+  lk_ix source_node;       /* node that triggered this */
+  lk_u32 source_ptype;     /* matched presentation type (0 if none) */
+  lk_value source_value;   /* event-carried value (e.g. new text for
+                            * value_changed); UIV_NONE for events with
+                            * no intrinsic value. */
   lk_presentation_hit hit; /* the interior-presentation hit that
                             * produced this command; all-zero when the
                             * command did not come from an interior
@@ -936,10 +977,10 @@ typedef enum lk_overlay_kind {
 } lk_overlay_kind;
 
 typedef enum lk_anchor_mode {
-  LK_ANCHOR_BELOW = 1,       /* below owner (flips above on overflow) */
-  LK_ANCHOR_ABOVE,           /* above owner (flips below on overflow) */
-  LK_ANCHOR_AT_CURSOR,       /* at (offset.x, offset.y) */
-  LK_ANCHOR_CENTER_VIEWPORT  /* centered in the viewport */
+  LK_ANCHOR_BELOW = 1,      /* below owner (flips above on overflow) */
+  LK_ANCHOR_ABOVE,          /* above owner (flips below on overflow) */
+  LK_ANCHOR_AT_CURSOR,      /* at (offset.x, offset.y) */
+  LK_ANCHOR_CENTER_VIEWPORT /* centered in the viewport */
 } lk_anchor_mode;
 
 typedef struct lk_overlay {
@@ -992,13 +1033,13 @@ typedef struct lk_ui {
   void *alloc_ud;
   lk_event_handler_fn event_handler;
   void *event_ud;
-  lk_node_id focused_id; /* 0 = no focus */
-  lk_node_id hovered_id; /* 0 = nothing hovered */
-  lk_node_id captured_id; /* 0 = no pointer capture (see lk_capture_set) */
+  lk_node_id focused_id;       /* 0 = no focus */
+  lk_node_id hovered_id;       /* 0 = nothing hovered */
+  lk_node_id captured_id;      /* 0 = no pointer capture (see lk_capture_set) */
   lk_node_id focus_request_id; /* pending lk_focus_request (0 = none) */
-  lk_state *state;       /* retained per-node state */
-  lk_resources *resources; /* owned resource table, borrowed by both
-                              trees (see lk_ui_resources) */
+  lk_state *state;             /* retained per-node state */
+  lk_resources *resources;     /* owned resource table, borrowed by both
+                                  trees (see lk_ui_resources) */
 
   /* Translators */
   lk_translator *translators;
@@ -1214,10 +1255,10 @@ typedef struct lk_text_backend {
   void *ud;
   void (*measure)(void *ud, lk_str run, lk_u16 font_id, lk_u16 font_size,
                   lk_text_metrics *out);
-  lk_i32 (*x_from_index)(void *ud, lk_str run, lk_u16 font_id,
-                         lk_u16 font_size, lk_u32 byte_ix);
-  lk_u32 (*index_from_x)(void *ud, lk_str run, lk_u16 font_id,
-                         lk_u16 font_size, lk_i32 x);
+  lk_i32 (*x_from_index)(void *ud, lk_str run, lk_u16 font_id, lk_u16 font_size,
+                         lk_u32 byte_ix);
+  lk_u32 (*index_from_x)(void *ud, lk_str run, lk_u16 font_id, lk_u16 font_size,
+                         lk_i32 x);
   lk_i32 (*line_height)(void *ud, lk_u16 font_id, lk_u16 font_size);
   lk_u16 (*register_font)(void *ud, const char *path);
 } lk_text_backend;
@@ -1290,11 +1331,11 @@ typedef union lk_widget_geom {
     lk_i32 row_h, max;   /* row height; max scroll offset */
     lk_i32 x, y, w, h;   /* content rect (bar geometry, ensure-visible) */
     lk_u8 placed;
-  } list;                /* UIK_LIST (lk-list.c) */
+  } list; /* UIK_LIST (lk-list.c) */
 } lk_widget_geom;
 
 typedef struct lk_layout_cfg {
-  const lk_text_backend *text;   /* NULL = all text measures as 0x0 */
+  const lk_text_backend *text; /* NULL = all text measures as 0x0 */
   lk_i32 viewport_w, viewport_h;
   const struct lk_style *styles; /* NULL = read tree props directly */
   lk_state *state;               /* NULL ok; widgets may use for cursor etc. */
@@ -1440,7 +1481,7 @@ void lk_theme_add_rule(lk_theme *th, lk_u16 kind, lk_u32 tag_id,
                        lk_u8 state_mask, const lk_style *style,
                        lk_u32 field_mask);
 lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
-                            void (*dealloc)(void *, void *), void *ud);
+                           void (*dealloc)(void *, void *), void *ud);
 
 void lk_style_resolve(const lk_theme *th, const lk_tree *t,
                       const lk_u8 *node_states, lk_style *styles);
@@ -1461,44 +1502,44 @@ typedef enum lk_render_op {
   LK_ROP_DRAW_TEXT,
   LK_ROP_CLIP_BEGIN,
   LK_ROP_CLIP_END,
-  LK_ROP_DRAW_RUN, /* like DRAW_TEXT, but the bytes live in the render
-                      list's own arena (run_off/run_len into rl->bytes)
-                      — never interned.  See docs/editor.md §8. */
+  LK_ROP_DRAW_RUN,   /* like DRAW_TEXT, but the bytes live in the render
+                        list's own arena (run_off/run_len into rl->bytes)
+                        — never interned.  See docs/editor.md §8. */
   LK_ROP_DRAW_IMAGE, /* blit an application-owned lk_image into rect.
                        img_id/img_gen carry the lk_resource_ref; the
                        consumer resolves it against the ui's table at
                        draw time (a stale ref draws nothing).  color is
                        a tint/alpha modulate — widgets emit opaque
                        white.  See docs/image-widget.md. */
-  LK_ROP_DRAW_LINES /* stroke a polyline: run_off/run_len index packed
-                       lk_i32 x,y pairs in the render list's byte arena
-                       (run_len in BYTES, a multiple of 8, >= 16 —
-                       at least two points), window coordinates.
-                       rect = bounding box (for culling), color = the
-                       stroke color, stroke = width in px (0/1 =
-                       hairline).  See docs/canvas.md. */
+  LK_ROP_DRAW_LINES  /* stroke a polyline: run_off/run_len index packed
+                        lk_i32 x,y pairs in the render list's byte arena
+                        (run_len in BYTES, a multiple of 8, >= 16 —
+                        at least two points), window coordinates.
+                        rect = bounding box (for culling), color = the
+                        stroke color, stroke = width in px (0/1 =
+                        hairline).  See docs/canvas.md. */
 } lk_render_op;
 
 typedef struct lk_render_cmd {
   lk_u8 op; /* lk_render_op */
   lk_rect rect;
   lk_color color;
-  lk_u32 str_id;     /* for DRAW_TEXT: interned string ID */
-  lk_u16 font_id;    /* for DRAW_TEXT/DRAW_RUN: face from resolved style
-                        (0 = default) */
-  lk_u16 font_size;  /* for DRAW_TEXT/DRAW_RUN: size from resolved style
-                        (0 = default) */
-  lk_u32 run_off;    /* for DRAW_RUN: byte offset into rl->bytes */
-  lk_u32 run_len;    /* for DRAW_RUN: run length in bytes */
-  lk_u32 img_id;     /* for DRAW_IMAGE: lk_resource_ref.id of the
-                        lk_image (0 on every other op) */
-  lk_u32 img_gen;    /* for DRAW_IMAGE: lk_resource_ref.generation.
-                        NOTE: this is the REF generation (stale-handle
-                        detection), not the pixel-dirty generation —
-                        consumers compare lk_image_generation() of the
-                        resolved image against their own cache. */
-  lk_u8 img_filter;  /* for DRAW_IMAGE: lk_image_filter (0 = linear) */
-  lk_u8 stroke;      /* for DRAW_LINES: width in px (0/1 = hairline) */
+  lk_u32 str_id;    /* for DRAW_TEXT: interned string ID */
+  lk_u16 font_id;   /* for DRAW_TEXT/DRAW_RUN: face from resolved style
+                       (0 = default) */
+  lk_u16 font_size; /* for DRAW_TEXT/DRAW_RUN: size from resolved style
+                       (0 = default) */
+  lk_u32 run_off;   /* for DRAW_RUN: byte offset into rl->bytes */
+  lk_u32 run_len;   /* for DRAW_RUN: run length in bytes */
+  lk_u32 img_id;    /* for DRAW_IMAGE: lk_resource_ref.id of the
+                       lk_image (0 on every other op) */
+  lk_u32 img_gen;   /* for DRAW_IMAGE: lk_resource_ref.generation.
+                       NOTE: this is the REF generation (stale-handle
+                       detection), not the pixel-dirty generation —
+                       consumers compare lk_image_generation() of the
+                       resolved image against their own cache. */
+  lk_u8 img_filter; /* for DRAW_IMAGE: lk_image_filter (0 = linear) */
+  lk_u8 stroke;     /* for DRAW_LINES: width in px (0/1 = hairline) */
 } lk_render_cmd;
 
 typedef struct lk_render_list {
@@ -1683,8 +1724,8 @@ int lk_spans_add(lk_spans *s, lk_u32 start, lk_u32 end, lk_color fg,
                  lk_color bg, lk_u8 flags);
 /* Insert a presentation-carrying entry with no appearance (flags 0);
  * type_id 0 is rejected.  Same ordering / overlap rules. */
-int lk_spans_add_present(lk_spans *s, lk_u32 start, lk_u32 end,
-                         lk_u32 type_id, lk_value value);
+int lk_spans_add_present(lk_spans *s, lk_u32 start, lk_u32 end, lk_u32 type_id,
+                         lk_value value);
 /* Entry i (0..count-1) in start order; NULL out of range. */
 const lk_text_span *lk_spans_get(const lk_spans *s, lk_u32 i);
 /* Entry i's presentation: 1 + fills when it carries one, else 0. */
@@ -1699,15 +1740,14 @@ lk_u32 lk_spans_present_at(const lk_spans *s, lk_u32 pos,
 void lk_spans_set_release(lk_spans *s, void (*fn)(void *ud, lk_value v),
                           void *ud);
 const lk_resource_type *lk_spans_type(void);
-lk_spans *lk_spans_from_node(const lk_resources *rs, const lk_tree *t,
-                             lk_ix n);
+lk_spans *lk_spans_from_node(const lk_resources *rs, const lk_tree *t, lk_ix n);
 
 /* Byte position under a window point in a STYLED_TEXT node, from the
  * ui-owned rects (lk_ui_rects) and text backend: 1 + pos, or 0 when
  * the node is unknown, not laid out into the ui array, or the point
  * is outside its rect. */
-int lk_styled_text_pos_at(const lk_ui *ui, lk_node_id id, lk_i32 x,
-                          lk_i32 y, lk_u32 *out_pos);
+int lk_styled_text_pos_at(const lk_ui *ui, lk_node_id id, lk_i32 x, lk_i32 y,
+                          lk_u32 *out_pos);
 
 /**
  * Context menus (docs/context-menu.md)
@@ -1727,7 +1767,7 @@ typedef struct lk_menu_item {
   lk_u32 command_name; /* interned */
   lk_u32 accel;        /* interned chord / gesture text, 0 = none */
   lk_u8 enabled;
-  lk_u8 separator;     /* a rule, not a choice */
+  lk_u8 separator; /* a rule, not a choice */
   /* activation record: */
   lk_u32 translator_ix; /* into the ui's table, or LK_MENU_NO_TRANSLATOR
                            for an explicit item */
@@ -1741,14 +1781,14 @@ typedef struct lk_menu_item {
 
 /* The producer: candidates for a gesture at (x, y) on target, in the
  * order a click would consider them.  Returns the count written. */
-lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target,
-                          lk_i32 x, lk_i32 y, lk_menu_item *out, lk_u32 cap);
+lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
+                          lk_i32 y, lk_menu_item *out, lk_u32 cap);
 
 /* Open the popup with explicit items (copied; at most 64), anchored per
  * `anchor` (LK_ANCHOR_AT_CURSOR at (x, y); BELOW/ABOVE the owner).
  * Replaces an open menu.  1 on success. */
-int lk_menu_open(lk_ui *ui, lk_node_id owner, lk_u8 anchor, lk_i32 x,
-                 lk_i32 y, const lk_menu_item *items, lk_u32 n);
+int lk_menu_open(lk_ui *ui, lk_node_id owner, lk_u8 anchor, lk_i32 x, lk_i32 y,
+                 const lk_menu_item *items, lk_u32 n);
 /* Hit-test (x, y) in the ui-owned rects, run the producer, open at the
  * cursor.  Returns the item count; 0 = nothing applicable, no menu. */
 lk_u32 lk_menu_open_context(lk_ui *ui, const lk_tree *t, lk_i32 x, lk_i32 y);
@@ -1777,8 +1817,7 @@ lk_rect lk_menu_rect(const lk_ui *ui);
  * ui-owned geometry: 1 + first/count, 0 when the node is unknown, not
  * a list, or not laid out yet.  The next frame builds those rows
  * (plus a margin) as children carrying UIP_ROW. */
-int lk_list_range(const lk_ui *ui, lk_node_id id, lk_i32 *first,
-                  lk_i32 *count);
+int lk_list_range(const lk_ui *ui, lk_node_id id, lk_i32 *first, lk_i32 *count);
 /* Scroll so that `row` is inside the viewport (no-op when it is);
  * 0 for an unknown / unlaid-out list or a row out of range. */
 int lk_list_scroll_to_row(lk_ui *ui, lk_node_id id, lk_i32 row);
@@ -1852,8 +1891,9 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
 /* Outcome of lk_overlay_dismiss_outside. */
 #define LK_DISMISS_NONE 0      /* no overlay affected */
 #define LK_DISMISS_DISMISSED 1 /* at least one overlay was dismissed */
-#define LK_DISMISS_BLOCKED 2   /* a modal overlay consumed the click:
-                                * caller must NOT route the event */
+#define LK_DISMISS_BLOCKED                                                     \
+  2 /* a modal overlay consumed the click:                                     \
+     * caller must NOT route the event */
 
 /* Handle a pointer-down at (x,y) with respect to the overlay stack.
  * Topmost-first: an overlay containing the point (or whose owner rect
@@ -1883,9 +1923,8 @@ lk_u32 lk_overlay_count(const lk_ui *ui);
  * clamped into the viewport on both axes.  offset.w/h override the
  * content size when non-zero.  Deterministic; pass vw/vh = 0 to skip
  * clamping on that axis. */
-lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect,
-                          lk_i32 vw, lk_i32 vh, lk_i32 content_w,
-                          lk_i32 content_h);
+lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect, lk_i32 vw,
+                          lk_i32 vh, lk_i32 content_w, lk_i32 content_h);
 
 void lk_event_init_pointer(lk_event *ev, lk_u8 type, lk_i32 x, lk_i32 y,
                            lk_u8 button);

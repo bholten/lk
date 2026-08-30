@@ -128,9 +128,14 @@ static int ed_set_cursor(lk_editor *e, lk_ui *ui, lk_u32 pos, int extend) {
  * and spelled in the Lk::editor_command vocabulary; keep them honest,
  * Weft prints them. */
 
-#define EDK(key, mods, mask, cmd, act, ext, doc) \
-  {(lk_u16)(key), (lk_u8)(mods), (lk_u8)(mask), (lk_u8)(cmd), \
-   (lk_u8)(act), (lk_u8)(ext), doc}
+#define EDK(key, mods, mask, cmd, act, ext, doc)                               \
+  {(lk_u16)(key),                                                              \
+   (lk_u8)(mods),                                                              \
+   (lk_u8)(mask),                                                              \
+   (lk_u8)(cmd),                                                               \
+   (lk_u8)(act),                                                               \
+   (lk_u8)(ext),                                                               \
+   doc}
 
 static const lk_editor_key_binding ed_key_table[] = {
     EDK(LKK_LEFT, LK_MOD_CTRL, LK_MOD_CTRL, LK_ED_MOVE_WORD_LEFT,
@@ -155,8 +160,8 @@ static const lk_editor_key_binding ed_key_table[] = {
         LK_EDK_COMMAND, 1, "move to the start of the document"),
     EDK(LKK_HOME, 0, LK_MOD_CTRL, LK_ED_MOVE_ROW_START, LK_EDK_COMMAND, 1,
         "move to the start of the visual row"),
-    EDK(LKK_END, LK_MOD_CTRL, LK_MOD_CTRL, LK_ED_MOVE_DOC_END,
-        LK_EDK_COMMAND, 1, "move to the end of the document"),
+    EDK(LKK_END, LK_MOD_CTRL, LK_MOD_CTRL, LK_ED_MOVE_DOC_END, LK_EDK_COMMAND,
+        1, "move to the end of the document"),
     EDK(LKK_END, 0, LK_MOD_CTRL, LK_ED_MOVE_ROW_END, LK_EDK_COMMAND, 1,
         "move to the end of the visual row"),
     EDK(LKK_PAGEUP, 0, 0, LK_ED_MOVE_PAGE_UP, LK_EDK_COMMAND, 1,
@@ -165,8 +170,8 @@ static const lk_editor_key_binding ed_key_table[] = {
         "move down one page"),
     EDK(LKK_BACKSPACE, LK_MOD_CTRL, LK_MOD_CTRL, LK_ED_DELETE_WORD_BACKWARD,
         LK_EDK_COMMAND, 0, "delete the word before the caret"),
-    EDK(LKK_BACKSPACE, 0, LK_MOD_CTRL, LK_ED_DELETE_BACKWARD, LK_EDK_COMMAND,
-        0, "delete the character before the caret (or the selection)"),
+    EDK(LKK_BACKSPACE, 0, LK_MOD_CTRL, LK_ED_DELETE_BACKWARD, LK_EDK_COMMAND, 0,
+        "delete the character before the caret (or the selection)"),
     EDK(LKK_DELETE, LK_MOD_CTRL, LK_MOD_CTRL, LK_ED_DELETE_WORD_FORWARD,
         LK_EDK_COMMAND, 0, "delete the word after the caret"),
     EDK(LKK_DELETE, 0, LK_MOD_CTRL, LK_ED_DELETE_FORWARD, LK_EDK_COMMAND, 0,
@@ -191,14 +196,13 @@ static const lk_editor_key_binding ed_key_table[] = {
     EDK(LKK_D, LK_MOD_CTRL, LK_EDITOR_MODS_ALL, LK_ED_SELECT_NEXT_MATCH,
         LK_EDK_COMMAND, 0,
         "select the next match of the primary selection, as a new caret"),
-    EDK(LKK_ESCAPE, 0, 0, LK_ED_COLLAPSE_CURSORS, LK_EDK_COLLAPSE_IF_MULTI,
-        0, "collapse to the primary caret (only with more than one caret; "
-           "otherwise bubbles)")
-};
+    EDK(LKK_ESCAPE, 0, 0, LK_ED_COLLAPSE_CURSORS, LK_EDK_COLLAPSE_IF_MULTI, 0,
+        "collapse to the primary caret (only with more than one caret; "
+        "otherwise bubbles)")};
 
-#define EDP(gest, btn, mods, mask, act, has, cmd, doc) \
-  {(lk_u8)(gest), (lk_u8)(btn), (lk_u8)(mods), (lk_u8)(mask), \
-   (lk_u8)(act), (lk_u8)(has), (lk_u8)(cmd), doc}
+#define EDP(gest, btn, mods, mask, act, has, cmd, doc)                         \
+  {(lk_u8)(gest), (lk_u8)(btn), (lk_u8)(mods), (lk_u8)(mask),                  \
+   (lk_u8)(act),  (lk_u8)(has), (lk_u8)(cmd),  doc}
 
 static const lk_editor_pointer_binding ed_pointer_table[] = {
     EDP(LK_EDG_DRAG, LK_POINTER_BUTTON_PRIMARY, LK_MOD_ALT, LK_MOD_ALT,
@@ -215,9 +219,8 @@ static const lk_editor_pointer_binding ed_pointer_table[] = {
         "dragging extends the selection"),
     EDP(LK_EDG_WHEEL, 0, LK_MOD_SHIFT, LK_MOD_SHIFT, LK_EDP_SCROLL_X, 0, 0,
         "scroll horizontally (unwrapped mode only)"),
-    EDP(LK_EDG_WHEEL, 0, 0, LK_MOD_SHIFT, LK_EDP_SCROLL, 1,
-        LK_ED_SCROLL_LINES, "scroll the viewport three lines per notch")
-};
+    EDP(LK_EDG_WHEEL, 0, 0, LK_MOD_SHIFT, LK_EDP_SCROLL, 1, LK_ED_SCROLL_LINES,
+        "scroll the viewport three lines per notch")};
 
 const lk_editor_key_binding *lk_editor_key_bindings(lk_u32 *count) {
   if (count) {
@@ -229,8 +232,7 @@ const lk_editor_key_binding *lk_editor_key_bindings(lk_u32 *count) {
 
 const lk_editor_pointer_binding *lk_editor_pointer_bindings(lk_u32 *count) {
   if (count) {
-    *count =
-        (lk_u32)(sizeof(ed_pointer_table) / sizeof(ed_pointer_table[0]));
+    *count = (lk_u32)(sizeof(ed_pointer_table) / sizeof(ed_pointer_table[0]));
   }
 
   return ed_pointer_table;
@@ -251,11 +253,9 @@ const lk_editor_key_binding *lk_editor_key_lookup(lk_u16 key, lk_u8 mods) {
   return NULL;
 }
 
-const lk_editor_pointer_binding *lk_editor_pointer_lookup(lk_u8 gesture,
-                                                          lk_u8 button,
-                                                          lk_u8 mods) {
-  lk_u32 n =
-      (lk_u32)(sizeof(ed_pointer_table) / sizeof(ed_pointer_table[0]));
+const lk_editor_pointer_binding *
+lk_editor_pointer_lookup(lk_u8 gesture, lk_u8 button, lk_u8 mods) {
+  lk_u32 n = (lk_u32)(sizeof(ed_pointer_table) / sizeof(ed_pointer_table[0]));
   lk_u32 i;
 
   for (i = 0; i < n; i++) {
@@ -288,10 +288,7 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
   }
 
   switch (b->action) {
-  case LK_EDK_INSERT_NEWLINE:
-    ed_insert_bytes(e, ui, "\n", 1);
-
-    return 1;
+  case LK_EDK_INSERT_NEWLINE: ed_insert_bytes(e, ui, "\n", 1); return 1;
 
   case LK_EDK_INSERT_TAB: {
     /* Plain TAB inserts tab_size spaces (v1 pinned policy); focus
@@ -322,8 +319,7 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
 
     return 0;
 
-  default:
-    break;
+  default: break;
   }
 
   if (b->shift_extends) {
@@ -362,8 +358,7 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
     return 1;
 
-  case LK_EVENT_KEY_DOWN:
-    return event_editor_key(e, ui, ev);
+  case LK_EVENT_KEY_DOWN: return event_editor_key(e, ui, ev);
 
   case LK_EVENT_POINTER_DOWN: {
     lk_u32 pos;
@@ -405,8 +400,7 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     pb = lk_editor_pointer_lookup((lk_u8)LK_EDG_DRAG, btn, ev->mods);
 
     if (pb && pb->action == (lk_u8)LK_EDP_BOX_SELECT) {
-      if (!lk_editor_box_down(e, ui, ev->data.pointer.x,
-                              ev->data.pointer.y)) {
+      if (!lk_editor_box_down(e, ui, ev->data.pointer.x, ev->data.pointer.y)) {
         return 0;
       }
 
@@ -551,8 +545,7 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 1;
   }
 
-  default:
-    return 0;
+  default: return 0;
   }
 }
 

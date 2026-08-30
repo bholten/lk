@@ -232,7 +232,6 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     ch = t->nodes[ch].next_sibling;
   }
 
-
   if (hs) {
     lk_sys_dealloc(NULL, hs);
   }

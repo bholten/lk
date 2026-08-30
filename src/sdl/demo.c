@@ -166,7 +166,8 @@ int main(int argc, char **argv) {
    *   POINTER_DOWN + ptype "item" -> "Select"
    *   KEY_DOWN     + ptype "item" -> "Select" (Return/Space activate)
    */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
+                         "Select");
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "item", 0, 0, 0, 0, "Select");
 
   /* Handlers */

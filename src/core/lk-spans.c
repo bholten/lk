@@ -121,8 +121,7 @@ static int spans_slot(const lk_spans *s, lk_u32 start, lk_u32 end,
     i++;
   }
 
-  if (i < s->count && s->e[i].span.start == start &&
-      s->e[i].span.end == end) {
+  if (i < s->count && s->e[i].span.start == start && s->e[i].span.end == end) {
     *out = i;
 
     return 2;
@@ -218,8 +217,8 @@ int lk_spans_add(lk_spans *s, lk_u32 start, lk_u32 end, lk_color fg,
   return spans_insert(s, at, &ent);
 }
 
-int lk_spans_add_present(lk_spans *s, lk_u32 start, lk_u32 end,
-                         lk_u32 type_id, lk_value value) {
+int lk_spans_add_present(lk_spans *s, lk_u32 start, lk_u32 end, lk_u32 type_id,
+                         lk_value value) {
   spans_entry ent;
   lk_u32 at;
   int slot;

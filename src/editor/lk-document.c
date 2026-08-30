@@ -15,8 +15,8 @@
 
 #include <string.h>
 
-#include "lk-document.h"
 #include "core/lk-memory.h"
+#include "lk-document.h"
 
 #ifdef LK_EDITOR_DEBUG_ASSERTS
 #include <assert.h>
@@ -238,8 +238,7 @@ static int ensure_delta_capacity(lk_document *d) {
   }
 
   new_cap = grow_cap(d->delta_cap, needed, DOC_INITIAL_DELTA_CAP);
-  nd = (lk_doc_delta *)d->alloc(d->ud,
-                                new_cap * (lk_u32)sizeof(lk_doc_delta));
+  nd = (lk_doc_delta *)d->alloc(d->ud, new_cap * (lk_u32)sizeof(lk_doc_delta));
   ni = (lk_u32 *)d->alloc(d->ud, new_cap * (lk_u32)sizeof(lk_u32));
   nx = (lk_u32 *)d->alloc(d->ud, new_cap * (lk_u32)sizeof(lk_u32));
 
@@ -289,9 +288,9 @@ static int ensure_subs_capacity(lk_document *d) {
   }
 
   new_cap = grow_cap(d->sub_cap, needed, DOC_INITIAL_SUBS_CAP);
-  ns = (doc_sub *)doc_realloc(d, d->subs,
-                              d->sub_count * (lk_u32)sizeof(doc_sub),
-                              new_cap * (lk_u32)sizeof(doc_sub));
+  ns =
+      (doc_sub *)doc_realloc(d, d->subs, d->sub_count * (lk_u32)sizeof(doc_sub),
+                             new_cap * (lk_u32)sizeof(doc_sub));
 
   if (!ns) {
     return 0;
@@ -391,8 +390,7 @@ static void rebuild_line_index(lk_document *d) {
 
 /* First line_starts entry strictly greater than pos, searching
  * [from, line_count). */
-static lk_u32 line_upper_bound(const lk_document *d, lk_u32 from,
-                               lk_u32 pos) {
+static lk_u32 line_upper_bound(const lk_document *d, lk_u32 from, lk_u32 pos) {
   lk_u32 lo = from;
   lk_u32 hi = d->line_count;
 
@@ -446,8 +444,7 @@ static void update_line_index_insert(lk_document *d, lk_u32 pos,
 
   if (entries_to_shift > 0) {
     memmove(&d->line_starts[shift_from + new_line_count],
-            &d->line_starts[shift_from],
-            entries_to_shift * sizeof(lk_u32));
+            &d->line_starts[shift_from], entries_to_shift * sizeof(lk_u32));
   }
 
   for (i = shift_from + new_line_count; i < new_total; i++) {
@@ -477,8 +474,7 @@ static void update_line_index_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
     lk_u32 remaining_after = d->line_count - after_removed;
 
     if (remaining_after > 0) {
-      memmove(&d->line_starts[first_removed],
-              &d->line_starts[after_removed],
+      memmove(&d->line_starts[first_removed], &d->line_starts[after_removed],
               remaining_after * sizeof(lk_u32));
     }
 
@@ -514,8 +510,8 @@ lk_document *lk_doc_new(void *(*alloc)(void *, lk_u32),
   d->ud = ud;
 
   d->add = (char *)alloc(ud, DOC_INITIAL_ADD_CAP);
-  d->pieces = (doc_piece *)alloc(
-      ud, DOC_INITIAL_PIECES_CAP * (lk_u32)sizeof(doc_piece));
+  d->pieces = (doc_piece *)alloc(ud, DOC_INITIAL_PIECES_CAP *
+                                         (lk_u32)sizeof(doc_piece));
   d->line_starts =
       (lk_u32 *)alloc(ud, DOC_INITIAL_LINES_CAP * (lk_u32)sizeof(lk_u32));
 
@@ -657,8 +653,8 @@ lk_u32 lk_doc_get_text(const lk_document *d, lk_u32 pos, char *buf,
     const char *src = get_source_buffer(d, piece->source);
     lk_u32 piece_start = (p == piece_idx) ? offset_in_piece : 0;
     lk_u32 piece_remaining = piece->length - piece_start;
-    lk_u32 to_copy = (piece_remaining < remaining) ? piece_remaining
-                                                   : remaining;
+    lk_u32 to_copy =
+        (piece_remaining < remaining) ? piece_remaining : remaining;
 
     memcpy(buf + bytes_written, src + piece->start + piece_start, to_copy);
     bytes_written += to_copy;
@@ -689,8 +685,7 @@ unsigned char lk_doc_get_byte(const lk_document *d, lk_u32 pos) {
    * to the next piece's first byte instead: one past the earlier
    * piece's bytes is outside its contents, and at the add-buffer
    * frontier it is unwritten memory. */
-  while (offset_in_piece >= piece->length &&
-         piece_idx + 1 < d->pieces_len) {
+  while (offset_in_piece >= piece->length && piece_idx + 1 < d->pieces_len) {
     offset_in_piece -= piece->length;
     piece_idx++;
     piece = &d->pieces[piece_idx];
@@ -838,8 +833,7 @@ int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
     last = got - needle_len;
 
     for (i = 0; i <= last; i++) {
-      if (win[i] == needle[0] &&
-          memcmp(win + i, needle, needle_len) == 0) {
+      if (win[i] == needle[0] && memcmp(win + i, needle, needle_len) == 0) {
         *out_pos = base + i;
         found = 1;
         break;
@@ -1159,8 +1153,7 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
       piece_after.start = piece->start + end_offset;
       piece_after.length = piece->length - end_offset;
 
-      memmove(&d->pieces[start_piece_idx + 2],
-              &d->pieces[start_piece_idx + 1],
+      memmove(&d->pieces[start_piece_idx + 2], &d->pieces[start_piece_idx + 1],
               (d->pieces_len - start_piece_idx - 1) * sizeof(doc_piece));
 
       d->pieces[start_piece_idx] = piece_before;

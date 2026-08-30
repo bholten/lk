@@ -18,8 +18,8 @@
 
 #include <string.h>
 
-#include "lk-document.h"
 #include "core/lk-memory.h"
+#include "lk-document.h"
 
 #define HIST_INITIAL_STACK_CAP 16
 
@@ -67,8 +67,7 @@ struct lk_edit_history {
 
 /* ---- Entry helpers ---- */
 
-static char *hist_copy_bytes(lk_edit_history *h, const char *src,
-                             lk_u32 len) {
+static char *hist_copy_bytes(lk_edit_history *h, const char *src, lk_u32 len) {
   char *b;
 
   if (len == 0 || !src) {

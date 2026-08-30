@@ -42,8 +42,7 @@ typedef struct st_font {
   lk_u16 font_id, font_size;
 } st_font;
 
-static lk_i32 st_run_x(const st_font *f, const char *p, lk_u32 len,
-                       lk_u32 ix) {
+static lk_i32 st_run_x(const st_font *f, const char *p, lk_u32 len, lk_u32 ix) {
   lk_str run;
 
   if (!f->tb || len == 0) {
@@ -60,8 +59,7 @@ static lk_i32 st_run_x(const st_font *f, const char *p, lk_u32 len,
   return f->tb->x_from_index(f->tb->ud, run, f->font_id, f->font_size, ix);
 }
 
-static lk_u32 st_run_ix(const st_font *f, const char *p, lk_u32 len,
-                        lk_i32 x) {
+static lk_u32 st_run_ix(const st_font *f, const char *p, lk_u32 len, lk_i32 x) {
   lk_str run;
 
   if (!f->tb || len == 0) {
@@ -278,7 +276,9 @@ static void st_rows(const st_font *f, lk_str text, lk_i32 width,
   }
 }
 
-struct st_count { lk_u32 n; };
+struct st_count {
+  lk_u32 n;
+};
 
 static int st_count_fn(void *ud, lk_u32 s, lk_u32 e, lk_u32 k) {
   (void)s;
@@ -289,7 +289,10 @@ static int st_count_fn(void *ud, lk_u32 s, lk_u32 e, lk_u32 k) {
   return 1;
 }
 
-struct st_find { lk_u32 want, start, end; int found; };
+struct st_find {
+  lk_u32 want, start, end;
+  int found;
+};
 
 static int st_find_fn(void *ud, lk_u32 s, lk_u32 e, lk_u32 k) {
   struct st_find *fd = (struct st_find *)ud;
@@ -353,8 +356,7 @@ int lk_styled_text_row(const lk_text_backend *tb, lk_u16 font_id,
 
 /* Pixel x of byte ix within row p[0..len), with tab expansion
  * (relative to the row's origin). */
-static lk_i32 st_row_x(const st_font *f, const char *p, lk_u32 len,
-                       lk_u32 ix) {
+static lk_i32 st_row_x(const st_font *f, const char *p, lk_u32 len, lk_u32 ix) {
   lk_i32 x = 0;
   lk_u32 i = 0;
   lk_i32 tabpx = st_tab_px(f);
@@ -392,8 +394,7 @@ static lk_i32 st_row_x(const st_font *f, const char *p, lk_u32 len,
 }
 
 /* Byte index in row p[0..len) nearest pixel x (row-relative). */
-static lk_u32 st_row_ix(const st_font *f, const char *p, lk_u32 len,
-                        lk_i32 x) {
+static lk_u32 st_row_ix(const st_font *f, const char *p, lk_u32 len, lk_i32 x) {
   lk_i32 cx = 0;
   lk_u32 i = 0;
   lk_i32 tabpx = st_tab_px(f);
@@ -464,7 +465,11 @@ static lk_i32 st_inset(const lk_tree *t, lk_ix n, const lk_style *styles) {
 
 /* ---- measure / fit ---- */
 
-struct st_widest { const st_font *f; lk_str text; lk_i32 w; };
+struct st_widest {
+  const st_font *f;
+  lk_str text;
+  lk_i32 w;
+};
 
 static int st_widest_fn(void *ud, lk_u32 s, lk_u32 e, lk_u32 k) {
   struct st_widest *wd = (struct st_widest *)ud;
@@ -478,8 +483,7 @@ static int st_widest_fn(void *ud, lk_u32 s, lk_u32 e, lk_u32 k) {
   return 1;
 }
 
-static void measure_styled_text(const lk_tree *t, lk_ix n,
-                                const lk_size *sizes,
+static void measure_styled_text(const lk_tree *t, lk_ix n, const lk_size *sizes,
                                 const lk_layout_cfg *cfg, lk_i32 *out_w,
                                 lk_i32 *out_h) {
   st_font f;
@@ -552,8 +556,8 @@ struct st_render {
   lk_u8 talign;
 };
 
-static void st_fill(lk_render_list *out, lk_i32 x, lk_i32 y, lk_i32 w,
-                    lk_i32 h, lk_color c) {
+static void st_fill(lk_render_list *out, lk_i32 x, lk_i32 y, lk_i32 w, lk_i32 h,
+                    lk_color c) {
   lk_render_cmd cmd;
 
   if (w <= 0 || h <= 0) {
@@ -683,8 +687,7 @@ static int st_render_row(void *ud, lk_u32 rs, lk_u32 re, lk_u32 k) {
       seg_end++;
     }
 
-    st_run(r, x0 + st_row_x(r->f, p, len, cur), y, p + cur, seg_end - cur,
-           fg);
+    st_run(r, x0 + st_row_x(r->f, p, len, cur), y, p + cur, seg_end - cur, fg);
     cur = seg_end;
   }
 
@@ -771,8 +774,7 @@ static void render_styled_text(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
   r.x0 = rect->x + inset;
   r.y0 = rect->y + inset +
-         lk_text_align_offset(style->text_valign, rect->h - inset * 2,
-                              block_h);
+         lk_text_align_offset(style->text_valign, rect->h - inset * 2, block_h);
 
   st_rows(&f, text, r.inner_w, mode, st_render_row, &r);
 
@@ -820,8 +822,7 @@ static int st_hit_fn(void *ud, lk_u32 rs, lk_u32 re, lk_u32 k) {
 /* Shared by the public query and the event handler: the byte under
  * (x, y) in window coords for node n laid out at rect. */
 static int st_pos_at(const lk_ui *ui, const lk_tree *t, lk_ix n,
-                     const lk_rect *rect, lk_i32 x, lk_i32 y,
-                     lk_u32 *out_pos) {
+                     const lk_rect *rect, lk_i32 x, lk_i32 y, lk_u32 *out_pos) {
   const lk_style *styles = lk_ui_styles(ui);
   st_font f;
   lk_str text = lk_node_text(t, n);
@@ -867,8 +868,8 @@ static int st_pos_at(const lk_ui *ui, const lk_tree *t, lk_ix n,
   return 1;
 }
 
-int lk_styled_text_pos_at(const lk_ui *ui, lk_node_id id, lk_i32 x,
-                          lk_i32 y, lk_u32 *out_pos) {
+int lk_styled_text_pos_at(const lk_ui *ui, lk_node_id id, lk_i32 x, lk_i32 y,
+                          lk_u32 *out_pos) {
   const lk_tree *t;
   lk_ix n;
   lk_rect rect;
@@ -934,8 +935,8 @@ static int event_styled_text(lk_ui *ui, const lk_tree *t, lk_ix n,
 
 /* Interior-presentation discovery for the context-menu producer: the
  * click path's query half, same locus stamping. */
-static lk_u32 presentations_at_styled_text(lk_ui *ui, const lk_tree *t,
-                                           lk_ix n, lk_i32 x, lk_i32 y,
+static lk_u32 presentations_at_styled_text(lk_ui *ui, const lk_tree *t, lk_ix n,
+                                           lk_i32 x, lk_i32 y,
                                            lk_presentation_hit *out,
                                            lk_u32 cap) {
   lk_rect rect;

@@ -54,8 +54,8 @@ static lk_ix find(lk_ui *ui, const char *id) {
 /* window > column (align start, padding 10) > canvas "cv" [+ optional
  * UIP_CANVAS ref, optional UIP_W/UIP_H].  The padding puts the canvas
  * at a non-zero origin so translation is actually exercised. */
-static void build_canvas_frame(lk_ui *ui, const lk_resource_ref *ref,
-                               lk_i32 w, lk_i32 h) {
+static void build_canvas_frame(lk_ui *ui, const lk_resource_ref *ref, lk_i32 w,
+                               lk_i32 h) {
   lk_tree *t = lk_ui_begin_frame(ui);
   lk_ix win = lk_tree_add_node_c(t, "w", UIK_WINDOW);
   lk_ix col = lk_tree_add_node_c(t, "col", UIK_COLUMN);
@@ -219,8 +219,8 @@ static void test_canvas_basics(void) {
   /* Rejections leave the list unchanged. */
   CHECK(lk_canvas_polyline(c, pts, 1, rgb(1, 2, 3), 1) == 0);
   CHECK(lk_canvas_polyline(c, NULL, 3, rgb(1, 2, 3), 1) == 0);
-  CHECK(lk_canvas_polyline(c, pts, LK_CANVAS_MAX_POINTS + 1, rgb(1, 2, 3),
-                           1) == 0);
+  CHECK(lk_canvas_polyline(c, pts, LK_CANVAS_MAX_POINTS + 1, rgb(1, 2, 3), 1) ==
+        0);
   CHECK(lk_canvas_text(c, 0, 0, NULL, 3, rgb(1, 2, 3)) == 0);
   CHECK(lk_canvas_text(c, 0, 0, "", 0, rgb(1, 2, 3)) == 1); /* no-op ok */
   CHECK_EQ(lk_canvas_op_count(c), 5);
@@ -256,8 +256,7 @@ static void test_canvas_bounds(void) {
 
   /* Past the initial op capacity and the initial arena. */
   for (i = 0; i < 1000; i++) {
-    CHECK(lk_canvas_text(c, 0, 0, "0123456789abcdef", 16, rgb(0, 0, 0)) ==
-          1);
+    CHECK(lk_canvas_text(c, 0, 0, "0123456789abcdef", 16, rgb(0, 0, 0)) == 1);
   }
   CHECK_EQ(lk_canvas_op_count(c), 1000);
 
@@ -519,7 +518,8 @@ static void test_canvas_render_long_polyline(void) {
     xy = (const lk_i32 *)(rl.bytes + cmd->run_off);
 
     for (i = 0; i < 200; i++) {
-      if (xy[i * 2] != (lk_i32)i + 10 || xy[i * 2 + 1] != (lk_i32)(i * 2) + 10) {
+      if (xy[i * 2] != (lk_i32)i + 10 ||
+          xy[i * 2 + 1] != (lk_i32)(i * 2) + 10) {
         ok = 0;
       }
     }

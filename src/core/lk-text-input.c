@@ -162,8 +162,8 @@ static void emit_value_changed(lk_ui *ui, lk_ix n, lk_u32 str_id) {
 /* THE mutation sink: intern the edited text, store it as the retained
  * buffer unless the input is controlled, and emit VALUE_CHANGED with
  * it either way.  Every edit path ends here. */
-static void commit_text(lk_ui *ui, const lk_tree *t, lk_ix n,
-                        const char *buf, lk_i32 len) {
+static void commit_text(lk_ui *ui, const lk_tree *t, lk_ix n, const char *buf,
+                        lk_i32 len) {
   lk_str s;
   lk_value v;
 
@@ -369,8 +369,7 @@ void lk_text_input_store_geometry(const lk_tree *t, const lk_rect *rects,
 
 static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
                               const lk_style *style, const lk_state *state,
-                              const lk_widget_geom *geom,
-                              lk_render_list *out) {
+                              const lk_widget_geom *geom, lk_render_list *out) {
   lk_i32 pad = style->padding;
   lk_i32 bw = style->border_width;
   lk_i32 inset = pad + bw;
@@ -464,8 +463,8 @@ static void render_text_input(const lk_tree *t, lk_ix n, const lk_rect *rect,
  * a replace-selection insert is one commit, not two.
  */
 static lk_i32 delete_selection(lk_ui *ui, const lk_tree *t, lk_ix n,
-                               const char *text, lk_i32 text_len,
-                               char *buf, lk_i32 *out_len) {
+                               const char *text, lk_i32 text_len, char *buf,
+                               lk_i32 *out_len) {
   lk_state *st = lk_ui_state(ui);
   lk_node_id nid = t->nodes[n].id;
   lk_i32 sel_s = get_sel_start(st, nid, text_len);
@@ -535,8 +534,8 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
     }
 
     /* Delete selection first: continue from the cut text. */
-    sel_cursor = delete_selection(ui, t, n, text.ptr, text_len, base,
-                                  &text_len);
+    sel_cursor =
+        delete_selection(ui, t, n, text.ptr, text_len, base, &text_len);
 
     if (sel_cursor >= 0) {
       text.ptr = base;
@@ -658,8 +657,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
             (lk_i32)lk_utf8_prev(text.ptr, text.len, (lk_u32)cursor);
         lk_i32 new_len = text_len - (cursor - del_from);
         memcpy(buf, text.ptr, (size_t)del_from);
-        memcpy(buf + del_from, text.ptr + cursor,
-               (size_t)(text_len - cursor));
+        memcpy(buf + del_from, text.ptr + cursor, (size_t)(text_len - cursor));
         buf[new_len] = '\0';
         lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(del_from));
         commit_text(ui, t, n, buf, new_len);
@@ -686,8 +684,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
             (lk_i32)lk_utf8_next(text.ptr, text.len, (lk_u32)cursor);
         lk_i32 new_len = text_len - (del_to - cursor);
         memcpy(buf, text.ptr, (size_t)cursor);
-        memcpy(buf + cursor, text.ptr + del_to,
-               (size_t)(text_len - del_to));
+        memcpy(buf + cursor, text.ptr + del_to, (size_t)(text_len - del_to));
         buf[new_len] = '\0';
         /* cursor stays at same position */
         commit_text(ui, t, n, buf, new_len);
@@ -840,8 +837,8 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
             char cut[LK_TEXT_INPUT_MAX];
             lk_i32 cut_len;
 
-            if (delete_selection(ui, t, n, text.ptr, text_len, cut,
-                                 &cut_len) >= 0) {
+            if (delete_selection(ui, t, n, text.ptr, text_len, cut, &cut_len) >=
+                0) {
               commit_text(ui, t, n, cut, cut_len);
             }
           }
@@ -864,8 +861,8 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
           lk_i32 new_len;
 
           /* Delete selection first: continue from the cut text. */
-          sel_cursor = delete_selection(ui, t, n, text.ptr, text_len, base,
-                                        &text_len);
+          sel_cursor =
+              delete_selection(ui, t, n, text.ptr, text_len, base, &text_len);
 
           if (sel_cursor >= 0) {
             text.ptr = base;
@@ -883,9 +880,8 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
 
             /* Truncate at a codepoint boundary — never split a
              * UTF-8 sequence at the buffer cap. */
-            while (ins_len > 0 &&
-                   !lk_utf8_is_boundary(clip, (lk_u32)full_len,
-                                        (lk_u32)ins_len)) {
+            while (ins_len > 0 && !lk_utf8_is_boundary(clip, (lk_u32)full_len,
+                                                       (lk_u32)ins_len)) {
               ins_len--;
             }
           }
@@ -898,8 +894,7 @@ static int event_text_input(lk_ui *ui, const lk_tree *t, lk_ix n,
             new_len = text_len + ins_len;
             buf[new_len] = '\0';
 
-            lk_state_set(st, nid, LKS_CURSOR_POS,
-                         lk_v_i32(cursor + ins_len));
+            lk_state_set(st, nid, LKS_CURSOR_POS, lk_v_i32(cursor + ins_len));
             lk_state_set(st, nid, LKS_SELECTION_START, lk_v_i32(0));
             lk_state_set(st, nid, LKS_SELECTION_END, lk_v_i32(0));
             commit_text(ui, t, n, buf, new_len);

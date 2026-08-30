@@ -68,8 +68,7 @@ lk_i32 lk_list_cursor(const lk_tree *t, lk_ix n, const lk_state *state) {
   lk_i32 c;
   lk_value v;
 
-  v = state ? lk_state_get(state, t->nodes[n].id, LKS_CURSOR_ROW)
-            : lk_v_none();
+  v = state ? lk_state_get(state, t->nodes[n].id, LKS_CURSOR_ROW) : lk_v_none();
 
   if (v.tag == UIV_I32) {
     c = (lk_i32)v.as.i;
@@ -345,8 +344,8 @@ int lk_list_scroll_to_row(lk_ui *ui, lk_node_id id, lk_i32 row) {
   t = lk_ui_tree(ui);
   n = lk_tree_find_by_id(t, id);
 
-  if (n == 0 || t->nodes[n].kind != UIK_LIST || !list_geom(ui, n) ||
-      row < 0 || row >= list_rows(t, n)) {
+  if (n == 0 || t->nodes[n].kind != UIK_LIST || !list_geom(ui, n) || row < 0 ||
+      row >= list_rows(t, n)) {
     return 0;
   }
 
@@ -393,8 +392,8 @@ static lk_ix row_child_of(const lk_tree *t, lk_ix n, lk_ix target) {
 }
 
 /* Bar geometry from the stashed content rect. */
-static int bar_geom(const lk_ui *ui, const lk_tree *t, lk_ix n,
-                    lk_rect *track, lk_rect *thumb) {
+static int bar_geom(const lk_ui *ui, const lk_tree *t, lk_ix n, lk_rect *track,
+                    lk_rect *thumb) {
   const lk_widget_geom *g = list_geom(ui, n);
   lk_i32 scroll_y, total_h, thumb_h;
 
@@ -402,9 +401,9 @@ static int bar_geom(const lk_ui *ui, const lk_tree *t, lk_ix n,
     return 0;
   }
 
-  scroll_y = clamp(get_i32(lk_ui_state((lk_ui *)ui), t->nodes[n].id,
-                           LKS_SCROLL_Y, 0),
-                   0, g->list.max);
+  scroll_y =
+      clamp(get_i32(lk_ui_state((lk_ui *)ui), t->nodes[n].id, LKS_SCROLL_Y, 0),
+            0, g->list.max);
   total_h = g->list.h + g->list.max;
   thumb_h = (g->list.h * g->list.h) / total_h;
 
@@ -576,26 +575,15 @@ static int event_list(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     }
 
     switch (ev->data.key.keycode) {
-    case LKK_DOWN:
-      cursor_set(ui, t, n, cur < 0 ? 0 : cur + 1);
-      return 1;
-    case LKK_UP:
-      cursor_set(ui, t, n, cur < 0 ? 0 : cur - 1);
-      return 1;
+    case LKK_DOWN: cursor_set(ui, t, n, cur < 0 ? 0 : cur + 1); return 1;
+    case LKK_UP: cursor_set(ui, t, n, cur < 0 ? 0 : cur - 1); return 1;
     case LKK_PAGEDOWN:
       cursor_set(ui, t, n, cur < 0 ? page - 1 : cur + page);
       return 1;
-    case LKK_PAGEUP:
-      cursor_set(ui, t, n, cur < 0 ? 0 : cur - page);
-      return 1;
-    case LKK_HOME:
-      cursor_set(ui, t, n, 0);
-      return 1;
-    case LKK_END:
-      cursor_set(ui, t, n, rows - 1);
-      return 1;
-    default:
-      return 0;
+    case LKK_PAGEUP: cursor_set(ui, t, n, cur < 0 ? 0 : cur - page); return 1;
+    case LKK_HOME: cursor_set(ui, t, n, 0); return 1;
+    case LKK_END: cursor_set(ui, t, n, rows - 1); return 1;
+    default: return 0;
     }
   }
 

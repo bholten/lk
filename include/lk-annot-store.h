@@ -81,8 +81,8 @@ typedef enum lk_layer_state {
 typedef struct lk_annot_layer {
   char *name; /* owned */
   lk_layer_state state;
-  lk_u32 version; /* bumped by clear/clear_layer/set_dirty (weft:
-                     an ephemeral session counter, lk_u32 here) */
+  lk_u32 version;  /* bumped by clear/clear_layer/set_dirty (weft:
+                      an ephemeral session counter, lk_u32 here) */
   lk_i32 priority; /* presentation precedence, default 0; higher wins
                       (lk_annot_presentations_at orders by priority
                       DESC before specificity) */
@@ -201,8 +201,8 @@ const char *lk_annot_layer_name(const lk_annot_store *s, lk_u32 index);
  * pairs (all strings copied).  The layer is auto-registered.  Returns
  * the record id, 0 on failure (start >= end, or allocation). */
 lk_u32 lk_annot_add(lk_annot_store *s, lk_u32 start, lk_u32 end,
-                    const char *layer, const char **keys,
-                    const char **values, lk_u32 meta_count);
+                    const char *layer, const char **keys, const char **values,
+                    lk_u32 meta_count);
 
 /* Remove by id.  Returns 1 if removed, 0 if not found. */
 int lk_annot_remove(lk_annot_store *s, lk_u32 id);
@@ -288,8 +288,7 @@ void lk_annot_set_layer_dirty(lk_annot_store *s, const char *name);
 void lk_annot_set_layer_valid(lk_annot_store *s, const char *name);
 
 /* Unknown layers read as DIRTY / version 0. */
-lk_layer_state lk_annot_layer_state(const lk_annot_store *s,
-                                    const char *name);
+lk_layer_state lk_annot_layer_state(const lk_annot_store *s, const char *name);
 lk_u32 lk_annot_layer_version(const lk_annot_store *s, const char *name);
 
 #ifdef __cplusplus

@@ -8,10 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lcl-lk.h"
 #include <lcl.h>
 #include <lk-editor.h>
 #include <lk.h>
-#include "lcl-lk.h"
 
 /* ---- minimal test harness ---- */
 
@@ -60,8 +60,9 @@ static int eval_ok(lcl_interp *interp, const char *src, lcl_value **out) {
   int rc = lcl_eval_string(interp, src, out);
   if (rc != LCL_RC_OK) {
     const char *msg = lcl_interp_error_msg(interp);
-    if (g_cur_ok)
+    if (g_cur_ok) {
       printf("FAIL\n");
+    }
     printf("    eval error: %s\n    src: %.80s\n", msg ? msg : "(null)", src);
     g_cur_ok = 0;
   }
@@ -78,7 +79,9 @@ static void test_ui_create_destroy(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Check it's an opaque */
@@ -102,23 +105,25 @@ static void test_begin_end_frame(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* First frame: build a simple tree */
   eval_ok(interp,
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let col [Lk::node $t \"root\" \"column\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $col\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let col [Lk::node $t \"root\" \"column\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $col\n"
+          "Lk::end_frame $ui",
+          &r);
 
   /* end_frame returns a list of changes */
   if (r) {
     size_t len = lcl_list_len(r);
-    CHECK(len > 0);  /* should have ADDED entries */
+    CHECK(len > 0); /* should have ADDED entries */
     lcl_ref_dec(r);
   }
 
@@ -134,13 +139,15 @@ static void test_node_returns_index(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp,
-    "let t [Lk::begin_frame $ui]\n"
-    "Lk::node $t \"n1\" \"label\"",
-    &r);
+          "let t [Lk::begin_frame $ui]\n"
+          "Lk::node $t \"n1\" \"label\"",
+          &r);
 
   if (r) {
     lcl_int ix;
@@ -152,7 +159,9 @@ static void test_node_returns_index(void) {
   /* Clean up frame */
   r = NULL;
   eval_ok(interp, "Lk::end_frame $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -166,16 +175,18 @@ static void test_prop_text(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let lbl [Lk::node $t \"lbl\" \"label\"]\n"
-    "Lk::prop $t $lbl \"text\" \"Hello\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $lbl\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let lbl [Lk::node $t \"lbl\" \"label\"]\n"
+          "Lk::prop $t $lbl \"text\" \"Hello\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $lbl\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -189,19 +200,21 @@ static void test_prop_numeric(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let col [Lk::node $t \"root\" \"column\"]\n"
-    "Lk::prop $t $col \"padding\" 20\n"
-    "Lk::prop $t $col \"gap\" 12\n"
-    "Lk::prop $t $col \"w\" 300\n"
-    "Lk::prop $t $col \"h\" 400\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $col\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let col [Lk::node $t \"root\" \"column\"]\n"
+          "Lk::prop $t $col \"padding\" 20\n"
+          "Lk::prop $t $col \"gap\" 12\n"
+          "Lk::prop $t $col \"w\" 300\n"
+          "Lk::prop $t $col \"h\" 400\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $col\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -215,17 +228,19 @@ static void test_prop_align(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let col [Lk::node $t \"root\" \"column\"]\n"
-    "Lk::prop $t $col \"align\" \"center\"\n"
-    "Lk::prop $t $col \"justify\" \"end\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $col\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let col [Lk::node $t \"root\" \"column\"]\n"
+          "Lk::prop $t $col \"align\" \"center\"\n"
+          "Lk::prop $t $col \"justify\" \"end\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $col\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -239,17 +254,19 @@ static void test_prop_bool(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let btn [Lk::node $t \"btn\" \"button\"]\n"
-    "Lk::prop $t $btn \"focusable\" 1\n"
-    "Lk::prop $t $btn \"disabled\" 0\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let btn [Lk::node $t \"btn\" \"button\"]\n"
+          "Lk::prop $t $btn \"focusable\" 1\n"
+          "Lk::prop $t $btn \"disabled\" 0\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -263,16 +280,18 @@ static void test_present(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let btn [Lk::node $t \"btn\" \"button\"]\n"
-    "Lk::present $t $btn \"item\" 42\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let btn [Lk::node $t \"btn\" \"button\"]\n"
+          "Lk::present $t $btn \"item\" 42\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -286,13 +305,15 @@ static void test_changeset_contains_added(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "let cs [Lk::end_frame $ui]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "let cs [Lk::end_frame $ui]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Check the first change is "added" */
@@ -315,14 +336,14 @@ static void test_tree_returns_current(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::end_frame $ui\n"
-    "let cur [Lk::tree $ui]\n"
-    "opaque? $cur",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::end_frame $ui\n"
+          "let cur [Lk::tree $ui]\n"
+          "opaque? $cur",
+          &r);
   if (r) {
     lcl_int v;
     lcl_value_to_int(r, &v);
@@ -343,18 +364,22 @@ static void test_state_set_get(void) {
 
   /* Build a frame so we have a valid UI */
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Set and get state */
   eval_ok(interp, "Lk::state_set $ui \"main\" 256 99", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp, "Lk::state_get $ui \"main\" 256", &r);
@@ -377,13 +402,15 @@ static void test_intern_round_trip(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp,
-    "let id [Lk::intern_id $ui \"hello\"]\n"
-    "Lk::intern_str $ui $id",
-    &r);
+          "let id [Lk::intern_id $ui \"hello\"]\n"
+          "Lk::intern_str $ui $id",
+          &r);
   if (r) {
     const char *s = lcl_value_to_string(r);
     CHECK(strcmp(s, "hello") == 0);
@@ -402,18 +429,20 @@ static void test_focus_set_clear(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let btn [Lk::node $t \"btn\" \"button\"]\n"
-    "Lk::prop $t $btn \"focusable\" 1\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::end_frame $ui\n"
-    "Lk::focus_set $ui \"btn\"\n"
-    "Lk::focus_clear $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let btn [Lk::node $t \"btn\" \"button\"]\n"
+          "Lk::prop $t $btn \"focusable\" 1\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::end_frame $ui\n"
+          "Lk::focus_set $ui \"btn\"\n"
+          "Lk::focus_clear $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   /* If we got here without crashing, it passes */
   CHECK(1);
 
@@ -428,11 +457,14 @@ static void test_add_translator(void) {
   BEGIN_TEST("add_translator registers without error");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"pointer_down\" \"item\" \"\" \"\" \"\" \"Select\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"pointer_down\" \"item\" \"\" \"\" \"\" \"Select\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(1);
 
   lcl_interp_free(interp);
@@ -447,13 +479,13 @@ static void test_commands_empty(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::end_frame $ui\n"
-    "Lk::commands $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::end_frame $ui\n"
+          "Lk::commands $ui",
+          &r);
   if (r) {
     size_t len = lcl_list_len(r);
     CHECK(len == 0);
@@ -472,9 +504,9 @@ static void test_command_log_empty(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::command_log $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "Lk::command_log $ui",
+          &r);
   if (r) {
     size_t len = lcl_list_len(r);
     CHECK(len == 0);
@@ -494,21 +526,29 @@ static void test_error_bad_kind(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp, "let t [Lk::begin_frame $ui]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   rc = lcl_eval_string(interp, "Lk::node $t \"n\" \"bogus\"", &r);
   CHECK(rc != LCL_RC_OK);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Clean up */
   r = NULL;
   lcl_eval_string(interp, "Lk::end_frame $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -523,21 +563,27 @@ static void test_error_bad_prop_key(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   rc = lcl_eval_string(interp, "Lk::prop $t $w \"nonexistent\" 42", &r);
   CHECK(rc != LCL_RC_OK);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Clean up */
   r = NULL;
   lcl_eval_string(interp, "Lk::end_frame $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -552,29 +598,33 @@ static void test_two_frames_diff(void) {
 
   /* Frame 1 */
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let lbl [Lk::node $t \"lbl\" \"label\"]\n"
-    "Lk::prop $t $lbl \"text\" \"Hello\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $lbl\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let lbl [Lk::node $t \"lbl\" \"label\"]\n"
+          "Lk::prop $t $lbl \"text\" \"Hello\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $lbl\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Frame 2: change the label text */
   eval_ok(interp,
-    "let t2 [Lk::begin_frame $ui]\n"
-    "let w2 [Lk::node $t2 \"main\" \"window\"]\n"
-    "let lbl2 [Lk::node $t2 \"lbl\" \"label\"]\n"
-    "Lk::prop $t2 $lbl2 \"text\" \"World\"\n"
-    "Lk::set_root $t2 $w2\n"
-    "Lk::append_child $t2 $w2 $lbl2\n"
-    "let cs2 [Lk::end_frame $ui]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let t2 [Lk::begin_frame $ui]\n"
+          "let w2 [Lk::node $t2 \"main\" \"window\"]\n"
+          "let lbl2 [Lk::node $t2 \"lbl\" \"label\"]\n"
+          "Lk::prop $t2 $lbl2 \"text\" \"World\"\n"
+          "Lk::set_root $t2 $w2\n"
+          "Lk::append_child $t2 $w2 $lbl2\n"
+          "let cs2 [Lk::end_frame $ui]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Check changeset has an "updated" entry */
@@ -598,30 +648,30 @@ static void test_full_tree_build_in_proc(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "\n"
-    "proc view {tree} {\n"
-    "  let w   [Lk::node $tree \"main\" \"window\"]\n"
-    "  let col [Lk::node $tree \"root\" \"column\"]\n"
-    "  let lbl [Lk::node $tree \"greeting\" \"label\"]\n"
-    "  Lk::prop $tree $col \"padding\" 20\n"
-    "  Lk::prop $tree $col \"gap\" 12\n"
-    "  Lk::prop $tree $lbl \"text\" \"Hello from Lcl!\"\n"
-    "  Lk::set_root $tree $w\n"
-    "  Lk::append_child $tree $w $col\n"
-    "  Lk::append_child $tree $col $lbl\n"
-    "}\n"
-    "\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "view $t\n"
-    "let cs [Lk::end_frame $ui]\n"
-    "len $cs",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "\n"
+          "proc view {tree} {\n"
+          "  let w   [Lk::node $tree \"main\" \"window\"]\n"
+          "  let col [Lk::node $tree \"root\" \"column\"]\n"
+          "  let lbl [Lk::node $tree \"greeting\" \"label\"]\n"
+          "  Lk::prop $tree $col \"padding\" 20\n"
+          "  Lk::prop $tree $col \"gap\" 12\n"
+          "  Lk::prop $tree $lbl \"text\" \"Hello from Lcl!\"\n"
+          "  Lk::set_root $tree $w\n"
+          "  Lk::append_child $tree $w $col\n"
+          "  Lk::append_child $tree $col $lbl\n"
+          "}\n"
+          "\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "view $t\n"
+          "let cs [Lk::end_frame $ui]\n"
+          "len $cs",
+          &r);
 
   if (r) {
     lcl_int len;
     lcl_value_to_int(r, &len);
-    CHECK(len == 3);  /* 3 nodes added: main, root, greeting */
+    CHECK(len == 3); /* 3 nodes added: main, root, greeting */
     lcl_ref_dec(r);
   }
 
@@ -637,14 +687,14 @@ static void test_clear_commands(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::end_frame $ui\n"
-    "Lk::clear_commands $ui\n"
-    "Lk::commands $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::end_frame $ui\n"
+          "Lk::clear_commands $ui\n"
+          "Lk::commands $ui",
+          &r);
   if (r) {
     CHECK(lcl_list_len(r) == 0);
     lcl_ref_dec(r);
@@ -662,10 +712,10 @@ static void test_clear_command_log(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::clear_command_log $ui\n"
-    "Lk::command_log $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "Lk::clear_command_log $ui\n"
+          "Lk::command_log $ui",
+          &r);
   if (r) {
     CHECK(lcl_list_len(r) == 0);
     lcl_ref_dec(r);
@@ -683,22 +733,22 @@ static void test_all_kinds(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let a [Lk::node $t \"a\" \"window\"]\n"
-    "let b [Lk::node $t \"b\" \"row\"]\n"
-    "let c [Lk::node $t \"c\" \"column\"]\n"
-    "let d [Lk::node $t \"d\" \"spacer\"]\n"
-    "let e [Lk::node $t \"e\" \"label\"]\n"
-    "let f [Lk::node $t \"f\" \"button\"]\n"
-    "Lk::set_root $t $a\n"
-    "Lk::append_child $t $a $b\n"
-    "Lk::append_child $t $a $c\n"
-    "Lk::append_child $t $a $d\n"
-    "Lk::append_child $t $a $e\n"
-    "Lk::append_child $t $a $f\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let a [Lk::node $t \"a\" \"window\"]\n"
+          "let b [Lk::node $t \"b\" \"row\"]\n"
+          "let c [Lk::node $t \"c\" \"column\"]\n"
+          "let d [Lk::node $t \"d\" \"spacer\"]\n"
+          "let e [Lk::node $t \"e\" \"label\"]\n"
+          "let f [Lk::node $t \"f\" \"button\"]\n"
+          "Lk::set_root $t $a\n"
+          "Lk::append_child $t $a $b\n"
+          "Lk::append_child $t $a $c\n"
+          "Lk::append_child $t $a $d\n"
+          "Lk::append_child $t $a $e\n"
+          "Lk::append_child $t $a $f\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     size_t len = lcl_list_len(r);
     CHECK(len == 6);
@@ -716,26 +766,32 @@ static void test_add_translator_all_event_types(void) {
   BEGIN_TEST("add_translator accepts all event types");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"pointer_down\" \"\" \"\" \"\" \"\" \"cmd1\"\n"
-    "Lk::add_translator $ui \"pointer_up\" \"\" \"\" \"\" \"\" \"cmd2\"\n"
-    "Lk::add_translator $ui \"pointer_move\" \"\" \"\" \"\" \"\" \"cmd3\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"\" \"\" \"cmd4\"\n"
-    "Lk::add_translator $ui \"key_up\" \"\" \"\" \"\" \"\" \"cmd5\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"pointer_down\" \"\" \"\" \"\" \"\" \"cmd1\"\n"
+      "Lk::add_translator $ui \"pointer_up\" \"\" \"\" \"\" \"\" \"cmd2\"\n"
+      "Lk::add_translator $ui \"pointer_move\" \"\" \"\" \"\" \"\" \"cmd3\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"\" \"\" \"cmd4\"\n"
+      "Lk::add_translator $ui \"key_up\" \"\" \"\" \"\" \"\" \"cmd5\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
-  eval_ok(interp,
-    "Lk::add_translator $ui \"text\" \"\" \"\" \"\" \"\" \"cmd6\"\n"
-    "Lk::add_translator $ui \"wheel\" \"\" \"\" \"\" \"\" \"cmd7\"\n"
-    "Lk::add_translator $ui \"window_resize\" \"\" \"\" \"\" \"\" \"cmd8\"\n"
-    "Lk::add_translator $ui \"window_close\" \"\" \"\" \"\" \"\" \"cmd9\"\n"
-    "Lk::add_translator $ui \"\" \"\" \"\" \"\" \"\" \"cmd_any\"",
-    &r);
-  if (r) lcl_ref_dec(r);
-  CHECK(g_cur_ok);  /* no errors */
+  eval_ok(
+      interp,
+      "Lk::add_translator $ui \"text\" \"\" \"\" \"\" \"\" \"cmd6\"\n"
+      "Lk::add_translator $ui \"wheel\" \"\" \"\" \"\" \"\" \"cmd7\"\n"
+      "Lk::add_translator $ui \"window_resize\" \"\" \"\" \"\" \"\" \"cmd8\"\n"
+      "Lk::add_translator $ui \"window_close\" \"\" \"\" \"\" \"\" \"cmd9\"\n"
+      "Lk::add_translator $ui \"\" \"\" \"\" \"\" \"\" \"cmd_any\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  CHECK(g_cur_ok); /* no errors */
 
   lcl_interp_free(interp);
   END_TEST();
@@ -749,16 +805,18 @@ static void test_present_string_value(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let btn [Lk::node $t \"btn\" \"button\"]\n"
-    "Lk::present $t $btn \"item\" \"apple\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let btn [Lk::node $t \"btn\" \"button\"]\n"
+          "Lk::present $t $btn \"item\" \"apple\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -773,21 +831,23 @@ static void test_dropdown_kind(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t main window]\n"
-    "let dd [Lk::node $t cat dropdown]\n"
-    "let o1 [Lk::node $t o1 option]\n"
-    "let o2 [Lk::node $t o2 option]\n"
-    "Lk::prop $t $o1 text Food\n"
-    "Lk::prop $t $o2 text Transport\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $dd\n"
-    "Lk::append_child $t $dd $o1\n"
-    "Lk::append_child $t $dd $o2\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t main window]\n"
+          "let dd [Lk::node $t cat dropdown]\n"
+          "let o1 [Lk::node $t o1 option]\n"
+          "let o2 [Lk::node $t o2 option]\n"
+          "Lk::prop $t $o1 text Food\n"
+          "Lk::prop $t $o2 text Transport\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $dd\n"
+          "Lk::append_child $t $dd $o1\n"
+          "Lk::append_child $t $dd $o2\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -802,16 +862,18 @@ static void test_present_list_value(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t main window]\n"
-    "let btn [Lk::node $t btn button]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::present $t $btn action (remove_row 5)\n"
-    "Lk::end_frame $ui\n",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t main window]\n"
+          "let btn [Lk::node $t btn button]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::present $t $btn action (remove_row 5)\n"
+          "Lk::end_frame $ui\n",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -828,16 +890,18 @@ static void test_lcl_tag(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t w window]\n"
-    "let btn [Lk::node $t btn button]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::tag $t $btn primary\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t w window]\n"
+          "let btn [Lk::node $t btn button]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::tag $t $btn primary\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -852,11 +916,13 @@ static void test_lcl_theme_rule(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::theme_rule $ui button \"\" \"\" {bg {200 50 50}}\n"
-    "Lk::theme_rule $ui \"*\" \"\" \"\" {fg {255 255 0}}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "Lk::theme_rule $ui button \"\" \"\" {bg {200 50 50}}\n"
+          "Lk::theme_rule $ui \"*\" \"\" \"\" {fg {255 255 0}}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -871,11 +937,13 @@ static void test_theme_rule_font_keys(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::theme_rule $ui label \"\" \"\" #{font_id 1 font_size 24}\n"
-    "Lk::theme_rule $ui \"*\" \"\" \"\" #{font_size 18}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "Lk::theme_rule $ui label \"\" \"\" #{font_id 1 font_size 24}\n"
+          "Lk::theme_rule $ui \"*\" \"\" \"\" #{font_size 18}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -891,10 +959,12 @@ static void test_theme_rule_bad_font_id(void) {
   interp = make_interp();
 
   rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::theme_rule $ui label \"\" \"\" #{font_id nope}",
-    &r);
-  if (r) lcl_ref_dec(r);
+                       "let ui [Lk::ui_create]\n"
+                       "Lk::theme_rule $ui label \"\" \"\" #{font_id nope}",
+                       &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -910,10 +980,12 @@ static void test_theme_rule_bad_font_size(void) {
   interp = make_interp();
 
   rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::theme_rule $ui label \"\" \"\" #{font_size -4}",
-    &r);
-  if (r) lcl_ref_dec(r);
+                       "let ui [Lk::ui_create]\n"
+                       "Lk::theme_rule $ui label \"\" \"\" #{font_size -4}",
+                       &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -942,7 +1014,9 @@ static void test_register_font_arity(void) {
   interp = make_interp();
 
   rc = lcl_eval_string(interp, "Lk::register_font \"only-one-arg\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -959,10 +1033,12 @@ static void test_register_font_bad_window(void) {
 
   /* An lk_ui opaque is not an lk_window opaque */
   rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::register_font $ui \"/tmp/font.ttf\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+                       "let ui [Lk::ui_create]\n"
+                       "Lk::register_font $ui \"/tmp/font.ttf\"",
+                       &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -980,30 +1056,38 @@ static void test_window_icon_errors(void) {
   interp = make_interp();
 
   rc = lcl_eval_string(interp, "Lk::window_icon \"only-one-arg\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   CHECK(rc != LCL_RC_OK);
 
   rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::window_icon $ui \"icon.png\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+                       "let ui [Lk::ui_create]\n"
+                       "Lk::window_icon $ui \"icon.png\"",
+                       &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   CHECK(rc != LCL_RC_OK);
 
   rc = lcl_eval_string(interp, "Lk::window_icon_hex \"89504e47\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   CHECK(rc != LCL_RC_OK);
 
   /* Handle check precedes hex validation, so a bad window fails even
    * with a well-formed payload. */
   rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::window_icon_hex $ui \"89504e47\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+                       "let ui [Lk::ui_create]\n"
+                       "Lk::window_icon_hex $ui \"89504e47\"",
+                       &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -1015,20 +1099,19 @@ static void test_window_icon_errors(void) {
  * for file IO: lcl_lk_test never touches the filesystem by design,
  * and lk_image_load_mem needs no display. */
 static const unsigned char tiny_bmp[] = {
-  0x42, 0x4d, 0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8a, 0x00,
-  0x00, 0x00, 0x7c, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00,
-  0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00, 0x10, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff,
-  0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x42, 0x47,
-  0x52, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0xff, 0xff, 0x00,
-  0xff, 0xff, 0x1e, 0x14, 0x0a, 0xff, 0x64, 0x96, 0xc8, 0xff
-};
+    0x42, 0x4d, 0x9a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8a, 0x00,
+    0x00, 0x00, 0x7c, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00, 0x10, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff,
+    0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x42, 0x47,
+    0x52, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0xff, 0xff, 0x00,
+    0xff, 0xff, 0x1e, 0x14, 0x0a, 0xff, 0x64, 0x96, 0xc8, 0xff};
 
 static void test_image_load_mem_roundtrip(void) {
   lk_image *img;
@@ -1071,10 +1154,12 @@ static void test_image_io_errors(void) {
           "let ui [Lk::ui_create]\n"
           "let img [Lk::image_new $ui 2 2]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
-  eval_expect_err(interp, "Lk::image_load $ui", "Lk::image_load",
-                  "2 arguments", NULL);
+  eval_expect_err(interp, "Lk::image_load $ui", "Lk::image_load", "2 arguments",
+                  NULL);
   eval_expect_err(interp, "Lk::image_load $img \"x.bmp\"",
                   "expected lk_ui opaque", NULL, NULL);
   eval_expect_err(interp, "Lk::image_load $ui \"/no/such/file.bmp\"",
@@ -1086,8 +1171,8 @@ static void test_image_io_errors(void) {
                   "expected lk_image opaque", NULL, NULL);
   eval_expect_err(interp, "Lk::image_save $img \"out.gif\"",
                   "unknown extension", ".bmp, .png", NULL);
-  eval_expect_err(interp, "Lk::image_save $img \"noext\"",
-                  "unknown extension", NULL, NULL);
+  eval_expect_err(interp, "Lk::image_save $img \"noext\"", "unknown extension",
+                  NULL, NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -1103,14 +1188,16 @@ static void test_dialog_errors(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
-  eval_expect_err(interp, "Lk::open_file_dialog $ui",
-                  "Lk::open_file_dialog", "2 to 4 arguments", NULL);
+  eval_expect_err(interp, "Lk::open_file_dialog $ui", "Lk::open_file_dialog",
+                  "2 to 4 arguments", NULL);
   eval_expect_err(interp, "Lk::open_file_dialog $ui [lambda {p} {}]",
                   "expected lk_window opaque", NULL, NULL);
-  eval_expect_err(interp, "Lk::save_file_dialog $ui",
-                  "Lk::save_file_dialog", "2 to 4 arguments", NULL);
+  eval_expect_err(interp, "Lk::save_file_dialog $ui", "Lk::save_file_dialog",
+                  "2 to 4 arguments", NULL);
   eval_expect_err(interp, "Lk::save_file_dialog $ui [lambda {p} {}]",
                   "expected lk_window opaque", NULL, NULL);
 
@@ -1127,12 +1214,14 @@ static void test_set_command_handler(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::set_command_handler $ui [lambda {cmd} {\n"
-    "  puts $cmd\n"
-    "}]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "Lk::set_command_handler $ui [lambda {cmd} {\n"
+          "  puts $cmd\n"
+          "}]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -1146,23 +1235,26 @@ static void test_set_command_handler_with_translator(void) {
   BEGIN_TEST("set_command_handler + add_translator integration");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let btn [Lk::node $t \"btn\" \"button\"]\n"
-    "Lk::prop $t $btn \"text\" \"Click\"\n"
-    "Lk::present $t $btn \"action\" 42\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::end_frame $ui\n"
-    "Lk::add_translator $ui \"pointer_down\" \"action\" \"\" \"\" \"\" \"DoIt\"\n"
-    "let got_cmd 0\n"
-    "Lk::set_command_handler $ui [lambda {cmd} {\n"
-    "  set got_cmd 1\n"
-    "}]",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "let t [Lk::begin_frame $ui]\n"
+      "let w [Lk::node $t \"main\" \"window\"]\n"
+      "let btn [Lk::node $t \"btn\" \"button\"]\n"
+      "Lk::prop $t $btn \"text\" \"Click\"\n"
+      "Lk::present $t $btn \"action\" 42\n"
+      "Lk::set_root $t $w\n"
+      "Lk::append_child $t $w $btn\n"
+      "Lk::end_frame $ui\n"
+      "Lk::add_translator $ui \"pointer_down\" \"action\" \"\" \"\" \"\" \"DoIt\"\n"
+      "let got_cmd 0\n"
+      "Lk::set_command_handler $ui [lambda {cmd} {\n"
+      "  set got_cmd 1\n"
+      "}]",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -1176,13 +1268,16 @@ static void test_add_translator_with_keycode(void) {
   BEGIN_TEST("add_translator with keycode+mods registers");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"key_down\" \"doc\" \"\" \"s\" \"ctrl\" \"Save\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"f\" \"ctrl\" \"Find\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"z\" \"ctrl+shift\" \"Redo\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"key_down\" \"doc\" \"\" \"s\" \"ctrl\" \"Save\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"f\" \"ctrl\" \"Find\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"z\" \"ctrl+shift\" \"Redo\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -1196,16 +1291,19 @@ static void test_add_translator_extended_keycodes(void) {
   BEGIN_TEST("add_translator accepts page_up/f5/digit keycodes");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"page_up\" \"\" \"PgUp\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"page_down\" \"\" \"PgDn\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"f5\" \"\" \"Refresh\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"f12\" \"\" \"DevTools\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"0\" \"ctrl\" \"ZoomReset\"\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"9\" \"ctrl\" \"LastTab\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"page_up\" \"\" \"PgUp\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"page_down\" \"\" \"PgDn\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"f5\" \"\" \"Refresh\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"f12\" \"\" \"DevTools\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"0\" \"ctrl\" \"ZoomReset\"\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"9\" \"ctrl\" \"LastTab\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   lcl_interp_free(interp);
@@ -1220,11 +1318,14 @@ static void test_add_translator_bad_keycode(void) {
   BEGIN_TEST("add_translator rejects unknown keycode");
   interp = make_interp();
 
-  rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"not_a_key\" \"\" \"Cmd\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  rc = lcl_eval_string(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"not_a_key\" \"\" \"Cmd\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -1239,11 +1340,14 @@ static void test_add_translator_bad_mods(void) {
   BEGIN_TEST("add_translator rejects unknown modifier");
   interp = make_interp();
 
-  rc = lcl_eval_string(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"key_down\" \"\" \"\" \"s\" \"super\" \"Cmd\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  rc = lcl_eval_string(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"key_down\" \"\" \"\" \"s\" \"super\" \"Cmd\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(rc != LCL_RC_OK);
 
   lcl_interp_free(interp);
@@ -1258,15 +1362,15 @@ static void test_text_input_kind(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let ti [Lk::node $t \"ti\" \"text_input\"]\n"
-    "Lk::prop $t $ti \"text\" \"hello\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $ti\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let ti [Lk::node $t \"ti\" \"text_input\"]\n"
+          "Lk::prop $t $ti \"text\" \"hello\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $ti\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     /* changeset should have 2 entries (window + text_input) */
     CHECK(lcl_list_len(r) >= 2);
@@ -1285,15 +1389,15 @@ static void test_scroll_kind(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let sc [Lk::node $t \"sc\" \"scroll\"]\n"
-    "Lk::prop $t $sc \"h\" 200\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $sc\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let sc [Lk::node $t \"sc\" \"scroll\"]\n"
+          "Lk::prop $t $sc \"h\" 200\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $sc\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     /* changeset should have 2 entries (window + scroll) */
     CHECK(lcl_list_len(r) >= 2);
@@ -1333,7 +1437,9 @@ static void test_clipboard_get_set(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Get the raw lk_ui* to install mock clipboard */
@@ -1342,8 +1448,8 @@ static void test_clipboard_get_set(void) {
     ui = NULL;
     lcl_opaque_get(r, "lk_ui", (void **)&ui);
     if (ui) {
-      lk_ui_set_clipboard(ui, lcl_mock_clipboard_get,
-                          lcl_mock_clipboard_set, NULL);
+      lk_ui_set_clipboard(ui, lcl_mock_clipboard_get, lcl_mock_clipboard_set,
+                          NULL);
     }
     lcl_ref_dec(r);
   }
@@ -1351,7 +1457,9 @@ static void test_clipboard_get_set(void) {
 
   /* Set via binding */
   eval_ok(interp, "Lk::clipboard_set $ui \"hello clip\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   CHECK(strcmp(g_lcl_mock_clipboard, "hello clip") == 0);
@@ -1376,7 +1484,9 @@ static void test_clipboard_get_no_clipboard(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* No clipboard installed */
@@ -1399,7 +1509,9 @@ static void test_overlay_count_proc(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp, "Lk::overlay_count $ui", &r);
@@ -1422,15 +1534,15 @@ static void test_hidden_prop(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let col [Lk::node $t \"col\" \"column\"]\n"
-    "Lk::prop $t $col \"hidden\" 1\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $col\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let col [Lk::node $t \"col\" \"column\"]\n"
+          "Lk::prop $t $col \"hidden\" 1\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $col\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     CHECK(lcl_list_len(r) >= 2);
     lcl_ref_dec(r);
@@ -1447,32 +1559,36 @@ static void eval_modal_tree(lcl_interp *interp) {
   lcl_value *r = NULL;
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let col [Lk::node $t \"col\" \"column\"]\n"
-    "let outside [Lk::node $t \"outside\" \"button\"]\n"
-    "Lk::prop $t $outside \"focusable\" 1\n"
-    "let m [Lk::node $t \"m\" \"column\"]\n"
-    "Lk::prop $t $m \"hidden\" 1\n"
-    "let m1 [Lk::node $t \"m1\" \"button\"]\n"
-    "Lk::prop $t $m1 \"focusable\" 1\n"
-    "let m2 [Lk::node $t \"m2\" \"button\"]\n"
-    "Lk::prop $t $m2 \"focusable\" 1",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let col [Lk::node $t \"col\" \"column\"]\n"
+          "let outside [Lk::node $t \"outside\" \"button\"]\n"
+          "Lk::prop $t $outside \"focusable\" 1\n"
+          "let m [Lk::node $t \"m\" \"column\"]\n"
+          "Lk::prop $t $m \"hidden\" 1\n"
+          "let m1 [Lk::node $t \"m1\" \"button\"]\n"
+          "Lk::prop $t $m1 \"focusable\" 1\n"
+          "let m2 [Lk::node $t \"m2\" \"button\"]\n"
+          "Lk::prop $t $m2 \"focusable\" 1",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp,
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $col\n"
-    "Lk::append_child $t $col $outside\n"
-    "Lk::append_child $t $col $m\n"
-    "Lk::append_child $t $m $m1\n"
-    "Lk::append_child $t $m $m2\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $col\n"
+          "Lk::append_child $t $col $outside\n"
+          "Lk::append_child $t $col $m\n"
+          "Lk::append_child $t $m $m1\n"
+          "Lk::append_child $t $m $m2\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 }
 
 /* Fetch the lk_ui* behind the script-side "$ui" for C-level asserts. */
@@ -1503,7 +1619,9 @@ static void test_overlay_push_modal(void) {
   eval_ok(interp,
           "Lk::overlay_push $ui #{kind modal owner_id m content_root_id m}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp, "Lk::overlay_count $ui", &r);
@@ -1562,7 +1680,9 @@ static void test_overlay_pop_proc(void) {
   eval_modal_tree(interp);
 
   eval_ok(interp, "Lk::overlay_push $ui #{kind tooltip owner_id outside}", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   ui = fetch_ui(interp);
@@ -1581,7 +1701,9 @@ static void test_overlay_pop_proc(void) {
   }
 
   eval_ok(interp, "Lk::overlay_pop $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp, "Lk::overlay_count $ui", &r);
@@ -1594,7 +1716,9 @@ static void test_overlay_pop_proc(void) {
 
   /* pop on an empty stack is a safe no-op */
   eval_ok(interp, "Lk::overlay_pop $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -1611,19 +1735,24 @@ static void test_overlay_push_errors(void) {
 
   rc = lcl_eval_string(interp, "Lk::overlay_push $ui #{kind bogus}", &r);
   CHECK(rc != LCL_RC_OK);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
-  rc = lcl_eval_string(interp,
-                       "Lk::overlay_push $ui #{kind modal anchor sideways}",
-                       &r);
+  rc = lcl_eval_string(
+      interp, "Lk::overlay_push $ui #{kind modal anchor sideways}", &r);
   CHECK(rc != LCL_RC_OK);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   rc = lcl_eval_string(interp, "Lk::overlay_push $ui #{owner_id m}", &r);
   CHECK(rc != LCL_RC_OK); /* missing kind */
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Nothing was pushed by the failed calls. */
@@ -1647,15 +1776,15 @@ static void test_tooltip_prop_binding(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let b [Lk::node $t \"b\" \"button\"]\n"
-    "Lk::prop $t $b \"tooltip\" \"Saves the file\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $b\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let b [Lk::node $t \"b\" \"button\"]\n"
+          "Lk::prop $t $b \"tooltip\" \"Saves the file\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $b\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     CHECK(lcl_list_len(r) >= 2);
     lcl_ref_dec(r);
@@ -1673,22 +1802,22 @@ static void test_split_kinds(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let sh [Lk::node $t \"sh\" \"split_h\"]\n"
-    "let sv [Lk::node $t \"sv\" \"split_v\"]\n"
-    "let c1 [Lk::node $t \"c1\" \"column\"]\n"
-    "let c2 [Lk::node $t \"c2\" \"column\"]\n"
-    "let c3 [Lk::node $t \"c3\" \"column\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $sh\n"
-    "Lk::append_child $t $sh $c1\n"
-    "Lk::append_child $t $sh $sv\n"
-    "Lk::append_child $t $sv $c2\n"
-    "Lk::append_child $t $sv $c3\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let sh [Lk::node $t \"sh\" \"split_h\"]\n"
+          "let sv [Lk::node $t \"sv\" \"split_v\"]\n"
+          "let c1 [Lk::node $t \"c1\" \"column\"]\n"
+          "let c2 [Lk::node $t \"c2\" \"column\"]\n"
+          "let c3 [Lk::node $t \"c3\" \"column\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $sh\n"
+          "Lk::append_child $t $sh $c1\n"
+          "Lk::append_child $t $sh $sv\n"
+          "Lk::append_child $t $sv $c2\n"
+          "Lk::append_child $t $sv $c3\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     /* changeset: window + split_h + split_v + 3 columns */
     CHECK(lcl_list_len(r) >= 6);
@@ -1707,19 +1836,19 @@ static void test_split_ratio_prop_lcl(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let sp [Lk::node $t \"sp\" \"split_h\"]\n"
-    "Lk::prop $t $sp \"split_ratio\" 300\n"
-    "let c1 [Lk::node $t \"c1\" \"column\"]\n"
-    "let c2 [Lk::node $t \"c2\" \"column\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $sp\n"
-    "Lk::append_child $t $sp $c1\n"
-    "Lk::append_child $t $sp $c2\n"
-    "Lk::end_frame $ui",
-    &r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let sp [Lk::node $t \"sp\" \"split_h\"]\n"
+          "Lk::prop $t $sp \"split_ratio\" 300\n"
+          "let c1 [Lk::node $t \"c1\" \"column\"]\n"
+          "let c2 [Lk::node $t \"c2\" \"column\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $sp\n"
+          "Lk::append_child $t $sp $c1\n"
+          "Lk::append_child $t $sp $c2\n"
+          "Lk::end_frame $ui",
+          &r);
   if (r) {
     CHECK(lcl_list_len(r) >= 4);
     lcl_ref_dec(r);
@@ -1754,11 +1883,14 @@ static lcl_interp *make_dsl_interp(void) {
   lcl_value *r = NULL;
   int rc = lcl_eval_file(interp, TEST_DSL_PATH, &r);
 
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   if (rc != LCL_RC_OK) {
     const char *msg = lcl_interp_error_msg(interp);
-    if (g_cur_ok)
+    if (g_cur_ok) {
       printf("FAIL\n");
+    }
     printf("    dsl load error (%s): %s\n", TEST_DSL_PATH,
            msg ? msg : "(null)");
     g_cur_ok = 0;
@@ -1773,13 +1905,15 @@ static void dsl_begin(lcl_interp *interp) {
   lcl_value *r = NULL;
 
   eval_ok(interp,
-    "let u [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $u]\n"
-    "set! LkDsl::_ui $u\n"
-    "set! LkDsl::_tree $t\n"
-    "set! LkDsl::_parent_stack ()",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let u [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $u]\n"
+          "set! LkDsl::_ui $u\n"
+          "set! LkDsl::_tree $t\n"
+          "set! LkDsl::_parent_stack ()",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 }
 
 /* Eval expecting an error: asserts eval fails and that the interp
@@ -1790,21 +1924,31 @@ static void eval_expect_err(lcl_interp *interp, const char *src,
   lcl_value *r = NULL;
   int rc = lcl_eval_string(interp, src, &r);
 
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   if (rc == LCL_RC_OK) {
-    if (g_cur_ok)
+    if (g_cur_ok) {
       printf("FAIL\n");
+    }
     printf("    expected error but eval succeeded\n    src: %.80s\n", src);
     g_cur_ok = 0;
   } else {
     const char *msg = lcl_interp_error_msg(interp);
     CHECK(msg != NULL);
     if (msg) {
-      if (sub1) CHECK(strstr(msg, sub1) != NULL);
-      if (sub2) CHECK(strstr(msg, sub2) != NULL);
-      if (sub3) CHECK(strstr(msg, sub3) != NULL);
-      if (!g_cur_ok)
+      if (sub1) {
+        CHECK(strstr(msg, sub1) != NULL);
+      }
+      if (sub2) {
+        CHECK(strstr(msg, sub2) != NULL);
+      }
+      if (sub3) {
+        CHECK(strstr(msg, sub3) != NULL);
+      }
+      if (!g_cur_ok) {
         printf("    error message was: %s\n", msg);
+      }
     }
   }
 }
@@ -1841,7 +1985,9 @@ static lk_ui *dsl_ui(lcl_interp *interp) {
 
 /* Find a node index by its string id. */
 static lk_ix dsl_find(lk_tree *t, const char *id) {
-  if (!t) return 0;
+  if (!t) {
+    return 0;
+  }
   return lk_tree_find_by_id(t, lk_intern_cid(t->intern, id));
 }
 
@@ -1851,7 +1997,9 @@ static const char *dsl_prop_str(const lk_tree *t, lk_ix n, lk_prop_key key) {
   const lk_node *nd;
   lk_u16 i;
 
-  if (!t || n == 0) return NULL;
+  if (!t || n == 0) {
+    return NULL;
+  }
   nd = &t->nodes[n];
   for (i = 0; i < nd->props_len; i++) {
     const lk_prop *p = &t->props[nd->props_off + i];
@@ -1867,15 +2015,23 @@ static void test_dsl_widget_kinds(void) {
     const char *id;
     int kind;
   } exp[] = {
-    {"k_col", UIK_COLUMN},   {"k_row", UIK_ROW},
-    {"k_lbl", UIK_LABEL},    {"k_btn", UIK_BUTTON},
-    {"k_ti", UIK_TEXT_INPUT},{"k_sp", UIK_SPACER},
-    {"k_sc", UIK_SCROLL},    {"k_dd", UIK_DROPDOWN},
-    {"k_opt", UIK_OPTION},   {"k_sh", UIK_SPLIT_H},
-    {"k_sv", UIK_SPLIT_V},   {"k_cb", UIK_CHECKBOX},
-    {"k_rd", UIK_RADIO},     {"k_sl", UIK_SLIDER},
-    {"k_tabs", UIK_TABS},    {"k_tab", UIK_TAB},
-    {"k_grid", UIK_GRID}
+      {"k_col",  UIK_COLUMN    },
+      {"k_row",  UIK_ROW       },
+      {"k_lbl",  UIK_LABEL     },
+      {"k_btn",  UIK_BUTTON    },
+      {"k_ti",   UIK_TEXT_INPUT},
+      {"k_sp",   UIK_SPACER    },
+      {"k_sc",   UIK_SCROLL    },
+      {"k_dd",   UIK_DROPDOWN  },
+      {"k_opt",  UIK_OPTION    },
+      {"k_sh",   UIK_SPLIT_H   },
+      {"k_sv",   UIK_SPLIT_V   },
+      {"k_cb",   UIK_CHECKBOX  },
+      {"k_rd",   UIK_RADIO     },
+      {"k_sl",   UIK_SLIDER    },
+      {"k_tabs", UIK_TABS      },
+      {"k_tab",  UIK_TAB       },
+      {"k_grid", UIK_GRID      }
   };
   lcl_interp *interp;
   lcl_value *r = NULL;
@@ -1887,25 +2043,27 @@ static void test_dsl_widget_kinds(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "column k_col\n"
-    "row k_row\n"
-    "label k_lbl\n"
-    "button k_btn\n"
-    "text_input k_ti\n"
-    "spacer k_sp\n"
-    "scroll k_sc\n"
-    "dropdown k_dd\n"
-    "option k_opt\n"
-    "split_h k_sh\n"
-    "split_v k_sv\n"
-    "checkbox k_cb\n"
-    "radio k_rd\n"
-    "slider k_sl\n"
-    "tabs k_tabs\n"
-    "tab k_tab\n"
-    "grid k_grid",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "column k_col\n"
+          "row k_row\n"
+          "label k_lbl\n"
+          "button k_btn\n"
+          "text_input k_ti\n"
+          "spacer k_sp\n"
+          "scroll k_sc\n"
+          "dropdown k_dd\n"
+          "option k_opt\n"
+          "split_h k_sh\n"
+          "split_v k_sv\n"
+          "checkbox k_cb\n"
+          "radio k_rd\n"
+          "slider k_sl\n"
+          "tabs k_tabs\n"
+          "tab k_tab\n"
+          "grid k_grid",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -1931,7 +2089,9 @@ static void test_dsl_props_text_dims(void) {
   dsl_begin(interp);
 
   eval_ok(interp, "label f_lab #{text \"Hello\" w 120 h 40}", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -1958,7 +2118,9 @@ static void test_dsl_props_layout(void) {
 
   eval_ok(interp, "column f_col #{padding 8 gap 4 align center justify end}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -1985,11 +2147,13 @@ static void test_dsl_props_bools(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "button f_btn #{focusable 1 disabled 1}\n"
-    "column f_hid #{hidden 1}\n"
-    "button f_off #{focusable 0}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "button f_btn #{focusable 1 disabled 1}\n"
+          "column f_hid #{hidden 1}\n"
+          "button f_off #{focusable 0}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2018,10 +2182,12 @@ static void test_dsl_props_tooltip_split_ratio(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "button f_tip #{tooltip \"Saves the file\"}\n"
-    "split_h f_spl #{split_ratio 300}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "button f_tip #{tooltip \"Saves the file\"}\n"
+          "split_h f_spl #{split_ratio 300}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2047,24 +2213,28 @@ static void test_state_internal_keys_blocked(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* Scripts never poke widget state: builtin keys error */
-  eval_expect_err(interp, "Lk::state_set $ui \"main\" 6 1",
-                  "Lk::state_set", "internal widget state", NULL);
-  eval_expect_err(interp, "Lk::state_get $ui \"main\" 6",
-                  "Lk::state_get", "internal widget state", NULL);
+  eval_expect_err(interp, "Lk::state_set $ui \"main\" 6 1", "Lk::state_set",
+                  "internal widget state", NULL);
+  eval_expect_err(interp, "Lk::state_get $ui \"main\" 6", "Lk::state_get",
+                  "internal widget state", NULL);
 
   /* App-owned keys (>= LKS_USER = 256) still round-trip */
   eval_ok(interp, "Lk::state_set $ui \"main\" 300 7", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_ok(interp, "Lk::state_get $ui \"main\" 300", &r);
   if (r) {
@@ -2086,16 +2256,18 @@ static void test_value_prop_binding(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let dd [Lk::node $t \"dd\" \"dropdown\"]\n"
-    "Lk::prop $t $dd \"value\" \"Banana\"\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $dd\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let dd [Lk::node $t \"dd\" \"dropdown\"]\n"
+          "Lk::prop $t $dd \"value\" \"Banana\"\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $dd\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   {
     lk_tree *t = dsl_tree(interp);
@@ -2123,12 +2295,14 @@ static void test_dsl_prop_value(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "dropdown v_dd #{value \"Banana\"} {\n"
-    "    option v_o1 #{text \"Apple\"}\n"
-    "    option v_o2 #{text \"Banana\"}\n"
-    "}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "dropdown v_dd #{value \"Banana\"} {\n"
+          "    option v_o1 #{text \"Apple\"}\n"
+          "    option v_o2 #{text \"Banana\"}\n"
+          "}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2154,10 +2328,12 @@ static void test_dsl_prop_grow(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "spacer g_sp #{grow 2}\n"
-    "editor g_ed_zero #{grow 0}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "spacer g_sp #{grow 2}\n"
+          "editor g_ed_zero #{grow 0}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2188,12 +2364,13 @@ static void test_prop_grow_negative_errors(void) {
   dsl_begin(interp);
 
   eval_ok(interp, "let gn [Lk::node $t \"g_neg\" \"spacer\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* raw binding: negative and non-integer both error, naming the
    * constraint */
-  eval_expect_err(interp, "Lk::prop $t $gn \"grow\" -1", "grow", ">= 0",
-                  NULL);
+  eval_expect_err(interp, "Lk::prop $t $gn \"grow\" -1", "grow", ">= 0", NULL);
   eval_expect_err(interp, "Lk::prop $t $gn \"grow\" \"lots\"", "grow",
                   "integer", NULL);
 
@@ -2214,7 +2391,9 @@ static void test_dsl_tag(void) {
   dsl_begin(interp);
 
   eval_ok(interp, "button g_tag #{tag primary}", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2239,7 +2418,9 @@ static void test_dsl_present_scalar(void) {
   dsl_begin(interp);
 
   eval_ok(interp, "button g_p1 #{present (item 42)}", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2271,7 +2452,9 @@ static void test_dsl_present_multiarg(void) {
   dsl_begin(interp);
 
   eval_ok(interp, "button g_p2 #{present (action (remove_row 3))}", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2306,14 +2489,16 @@ static void test_dsl_nesting(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "column outer #{gap 2} {\n"
-    "    row mid {\n"
-    "        label leaf1 #{text a}\n"
-    "        label leaf2 #{text b}\n"
-    "    }\n"
-    "}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "column outer #{gap 2} {\n"
+          "    row mid {\n"
+          "        label leaf1 #{text a}\n"
+          "        label leaf2 #{text b}\n"
+          "    }\n"
+          "}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2347,8 +2532,8 @@ static void test_dsl_unknown_prop_errors(void) {
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_expect_err(interp, "label w_unk #{bogus 42 text ok}",
-                  "w_unk", "unknown prop 'bogus'", "(known:");
+  eval_expect_err(interp, "label w_unk #{bogus 42 text ok}", "w_unk",
+                  "unknown prop 'bogus'", "(known:");
 
   lcl_interp_free(interp);
   END_TEST();
@@ -2368,16 +2553,16 @@ static void test_dsl_bad_trailing_arg_errors(void) {
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_expect_err(interp, "button w_tr1 42",
-                  "w_tr1", "expected a props dict", NULL);
-  eval_expect_err(interp, "label w_tr2 -w",
-                  "w_tr2", "'-flag' syntax was removed", NULL);
-  eval_expect_err(interp, "button w_tr3 42 { label x }",
-                  "w_tr3", "expected a props dict", NULL);
-  eval_expect_err(interp, "row w_tr4 #{gap 2} #{gap 3}",
-                  "w_tr4", "body must be a block", NULL);
-  eval_expect_err(interp, "row w_tr5 #{gap 2} { label y } extra",
-                  "w_tr5", "too many arguments", NULL);
+  eval_expect_err(interp, "button w_tr1 42", "w_tr1", "expected a props dict",
+                  NULL);
+  eval_expect_err(interp, "label w_tr2 -w", "w_tr2",
+                  "'-flag' syntax was removed", NULL);
+  eval_expect_err(interp, "button w_tr3 42 { label x }", "w_tr3",
+                  "expected a props dict", NULL);
+  eval_expect_err(interp, "row w_tr4 #{gap 2} #{gap 3}", "w_tr4",
+                  "body must be a block", NULL);
+  eval_expect_err(interp, "row w_tr5 #{gap 2} { label y } extra", "w_tr5",
+                  "too many arguments", NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -2396,18 +2581,20 @@ static void test_dsl_theme_rules(void) {
    * hovered rule is added last but must NOT apply (no node is in the
    * hovered state at resolve time). */
   eval_ok(interp,
-    "theme {\n"
-    "    rule button #{tag primary} #{bg (10 20 30)}\n"
-    "    rule * #{fg (200 201 202)}\n"
-    "    rule button #{state hovered} #{bg (1 2 3)}\n"
-    "}\n"
-    "let w [Lk::node $t rw window]\n"
-    "Lk::set_root $t $w\n"
-    "let b [button pb #{tag primary}]\n"
-    "Lk::append_child $t $w $b\n"
-    "Lk::end_frame $u",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "theme {\n"
+          "    rule button #{tag primary} #{bg (10 20 30)}\n"
+          "    rule * #{fg (200 201 202)}\n"
+          "    rule button #{state hovered} #{bg (1 2 3)}\n"
+          "}\n"
+          "let w [Lk::node $t rw window]\n"
+          "Lk::set_root $t $w\n"
+          "let b [button pb #{tag primary}]\n"
+          "Lk::append_child $t $w $b\n"
+          "Lk::end_frame $u",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = dsl_ui(interp);
   CHECK(ui != NULL);
@@ -2443,12 +2630,14 @@ static void test_dsl_translators_keybindings(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "translator pointer_down item Select\n"
-    "translator pointer_down action button DoIt\n"
-    "keybinding s ctrl Save\n"
-    "keybinding f5 \"\" doc Refresh",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "translator pointer_down item Select\n"
+          "translator pointer_down action button DoIt\n"
+          "keybinding s ctrl Save\n"
+          "keybinding f5 \"\" doc Refresh",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = dsl_ui(interp);
   CHECK(ui != NULL);
@@ -2497,11 +2686,11 @@ static void test_dsl_on_dispatch(void) {
    * script.  Dispatching an unregistered command name is a no-op (no
    * error, state untouched). */
   eval_ok(interp,
-    "on Save [lambda {cmd} { Lk::state_set $u sink 300 [get $cmd n] }]\n"
-    "LkDsl::_dispatch_command #{name Save n 7}\n"
-    "LkDsl::_dispatch_command #{name Unknown n 9}\n"
-    "Lk::state_get $u sink 300",
-    &r);
+          "on Save [lambda {cmd} { Lk::state_set $u sink 300 [get $cmd n] }]\n"
+          "LkDsl::_dispatch_command #{name Save n 7}\n"
+          "LkDsl::_dispatch_command #{name Unknown n 9}\n"
+          "Lk::state_get $u sink 300",
+          &r);
   if (r) {
     lcl_int v = -1;
     lcl_value_to_int(r, &v);
@@ -2523,19 +2712,19 @@ static void test_dsl_frame_view_rebuild(void) {
 
   /* Frame 1: view body + _frame on a fresh begin_frame tree. */
   eval_ok(interp,
-    "let u [Lk::ui_create]\n"
-    "set! LkDsl::_ui $u\n"
-    "view {\n"
-    "    column main #{padding 4} {\n"
-    "        label greet #{text Hi}\n"
-    "        button ok #{text OK}\n"
-    "    }\n"
-    "}\n"
-    "let t [Lk::begin_frame $u]\n"
-    "LkDsl::_frame $t\n"
-    "let cs [Lk::end_frame $u]\n"
-    "len $cs",
-    &r);
+          "let u [Lk::ui_create]\n"
+          "set! LkDsl::_ui $u\n"
+          "view {\n"
+          "    column main #{padding 4} {\n"
+          "        label greet #{text Hi}\n"
+          "        button ok #{text OK}\n"
+          "    }\n"
+          "}\n"
+          "let t [Lk::begin_frame $u]\n"
+          "LkDsl::_frame $t\n"
+          "let cs [Lk::end_frame $u]\n"
+          "len $cs",
+          &r);
   if (r) {
     lcl_int v = -1;
     lcl_value_to_int(r, &v);
@@ -2566,11 +2755,11 @@ static void test_dsl_frame_view_rebuild(void) {
 
   /* Frame 2: identical rebuild diffs to zero changes. */
   eval_ok(interp,
-    "let t2 [Lk::begin_frame $u]\n"
-    "LkDsl::_frame $t2\n"
-    "let cs2 [Lk::end_frame $u]\n"
-    "len $cs2",
-    &r);
+          "let t2 [Lk::begin_frame $u]\n"
+          "LkDsl::_frame $t2\n"
+          "let cs2 [Lk::end_frame $u]\n"
+          "len $cs2",
+          &r);
   if (r) {
     lcl_int v = -1;
     lcl_value_to_int(r, &v);
@@ -2599,11 +2788,13 @@ static void test_dsl_props_dict_variable(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "let compact #{padding 2 gap 2}\n"
-    "column v1 $compact\n"
-    "column v2 $compact",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let compact #{padding 2 gap 2}\n"
+          "column v1 $compact\n"
+          "column v2 $compact",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2633,10 +2824,12 @@ static void test_dsl_props_dict_merge(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "let base #{text Base w 100}\n"
-    "button v3 [Dict::merge $base #{w 150 tooltip Hi}]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let base #{text Base w 100}\n"
+          "button v3 [Dict::merge $base #{w 150 tooltip Hi}]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -2673,8 +2866,9 @@ static void check_int(lcl_interp *interp, const char *src, lcl_int expect) {
 
       lcl_int_format(got, v);
       lcl_int_format(want, expect);
-      if (g_cur_ok)
+      if (g_cur_ok) {
         printf("FAIL\n");
+      }
       printf("    %s => %s, expected %s\n", src, got, want);
       g_cur_ok = 0;
     }
@@ -2690,8 +2884,9 @@ static void check_str(lcl_interp *interp, const char *src, const char *expect) {
   if (r) {
     const char *s = lcl_value_to_string(r);
     if (!s || strcmp(s, expect) != 0) {
-      if (g_cur_ok)
+      if (g_cur_ok) {
         printf("FAIL\n");
+      }
       printf("    %s => \"%s\", expected \"%s\"\n", src, s ? s : "(null)",
              expect);
       g_cur_ok = 0;
@@ -2730,15 +2925,17 @@ static void test_text_input_controlled_binding(void) {
           "  set! got [get $cmd source_value]\n"
           "}]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
 
   if (ui) {
     const lk_tree *cur = lk_ui_tree(ui);
-    lk_ix e = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                   lk_str_c("cell")));
+    lk_ix e =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("cell")));
     lk_event ev;
 
     memset(&ev, 0, sizeof(ev));
@@ -2753,8 +2950,8 @@ static void test_text_input_controlled_binding(void) {
     check_str(interp, "$got", "abx");
     /* ... and no retained buffer: the app owns the text. */
     CHECK(lk_state_get(lk_ui_state(ui),
-                       lk_intern_id(ui->intern, lk_str_c("cell")),
-                       LKS_TEXT_BUF).tag == UIV_NONE);
+                       lk_intern_id(ui->intern, lk_str_c("cell")), LKS_TEXT_BUF)
+              .tag == UIV_NONE);
   }
 
   lcl_interp_free(interp);
@@ -2769,28 +2966,31 @@ static void test_text_align_binding(void) {
   BEGIN_TEST("text_align: prop + theme rule keys, bad value errors");
   interp = make_interp();
 
-  eval_ok(interp,
-          "let ui [Lk::ui_create]\n"
-          "Lk::theme_rule $ui label \"\" \"\" #{text_align center text_valign end}\n"
-          "let t [Lk::begin_frame $ui]\n"
-          "let w [Lk::node $t root window]\n"
-          "let l [Lk::node $t num label]\n"
-          "Lk::prop $t $l text end\n"
-          "Lk::prop $t $l text_align end\n"
-          "Lk::prop $t $l text_valign center\n"
-          "Lk::set_root $t $w\n"
-          "Lk::append_child $t $w $l\n"
-          "Lk::end_frame $ui",
-          &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::theme_rule $ui label \"\" \"\" #{text_align center text_valign end}\n"
+      "let t [Lk::begin_frame $ui]\n"
+      "let w [Lk::node $t root window]\n"
+      "let l [Lk::node $t num label]\n"
+      "Lk::prop $t $l text end\n"
+      "Lk::prop $t $l text_align end\n"
+      "Lk::prop $t $l text_valign center\n"
+      "Lk::set_root $t $w\n"
+      "Lk::append_child $t $w $l\n"
+      "Lk::end_frame $ui",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
 
   if (ui) {
     const lk_tree *cur = lk_ui_tree(ui);
-    lk_ix l = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                   lk_str_c("num")));
+    lk_ix l =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("num")));
     CHECK(lk_node_prop_i32(cur, l, UIP_TEXT_ALIGN, -1) == LK_ALIGN_END);
     CHECK(lk_node_prop_i32(cur, l, UIP_TEXT_VALIGN, -1) == LK_ALIGN_CENTER);
   }
@@ -2810,7 +3010,9 @@ static void test_doc_new_read(void) {
   interp = make_interp();
 
   eval_ok(interp, "let d [Lk::doc_new \"hello\nworld\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_str(interp, "Lk::doc_text $d", "hello\nworld");
   check_int(interp, "Lk::doc_len $d", 11);
@@ -2819,7 +3021,9 @@ static void test_doc_new_read(void) {
   /* The empty document is one empty line. */
   r = NULL;
   eval_ok(interp, "let d0 [Lk::doc_new]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::doc_len $d0", 0);
   check_int(interp, "Lk::doc_line_count $d0", 1);
   check_str(interp, "Lk::doc_text $d0", "");
@@ -2836,7 +3040,9 @@ static void test_doc_revision_string(void) {
   interp = make_interp();
 
   eval_ok(interp, "let d [Lk::doc_new \"abc\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Reading does not advance it; comparing from script works. */
   check_int(interp,
@@ -2864,7 +3070,9 @@ static void test_doc_insert_delete(void) {
   interp = make_interp();
 
   eval_ok(interp, "let d [Lk::doc_new \"hello world\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_str(interp,
             "Lk::doc_insert $d 5 \",\"\n"
@@ -2890,16 +3098,18 @@ static void test_doc_mutation_errors(void) {
           "let d [Lk::doc_new \"abc\"]\n"
           "let ui [Lk::ui_create]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* insert past the end / delete at the end are rejected by the C
    * contract; the binding turns the rejection into a hard error. */
-  eval_expect_err(interp, "Lk::doc_insert $d 99 \"x\"",
-                  "Lk::doc_insert", "rejected", NULL);
-  eval_expect_err(interp, "Lk::doc_delete $d 3 1",
-                  "Lk::doc_delete", "rejected", NULL);
-  eval_expect_err(interp, "Lk::doc_insert $d -1 \"x\"",
-                  "Lk::doc_insert", "non-negative", NULL);
+  eval_expect_err(interp, "Lk::doc_insert $d 99 \"x\"", "Lk::doc_insert",
+                  "rejected", NULL);
+  eval_expect_err(interp, "Lk::doc_delete $d 3 1", "Lk::doc_delete", "rejected",
+                  NULL);
+  eval_expect_err(interp, "Lk::doc_insert $d -1 \"x\"", "Lk::doc_insert",
+                  "non-negative", NULL);
 
   /* Arity and wrong opaque type. */
   eval_expect_err(interp, "Lk::doc_insert $d 0", "Lk::doc_insert",
@@ -2927,25 +3137,27 @@ static void test_int_args_checked(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::end_frame $ui\n"
-    "let d [Lk::doc_new \"ab\ncd\nef\"]\n"
-    "let s [Lk::annot_store_new]\n"
-    "Lk::annot_attach $s $d\n"
-    "let a [Lk::annot_add $s 0 5 \"m\"]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "Lk::set_root $t $w\n"
+          "Lk::end_frame $ui\n"
+          "let d [Lk::doc_new \"ab\ncd\nef\"]\n"
+          "let s [Lk::annot_store_new]\n"
+          "Lk::annot_attach $s $d\n"
+          "let a [Lk::annot_add $s 0 5 \"m\"]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* 2^32 + 1 wraps to line 1 (start 3) through a bare (lk_u32) cast;
    * 2^32 wraps to pos 0 (column 1). */
   eval_expect_err(interp, "Lk::doc_line_start $d 4294967297",
                   "Lk::doc_line_start", "integer", NULL);
-  eval_expect_err(interp, "Lk::doc_char_col $d 4294967296",
-                  "Lk::doc_char_col", "integer", NULL);
+  eval_expect_err(interp, "Lk::doc_char_col $d 4294967296", "Lk::doc_char_col",
+                  "integer", NULL);
 
   /* arg_* sites tell the two failures apart. */
   eval_expect_err(interp, "Lk::state_set $ui \"main\" 70000 1",
@@ -2959,12 +3171,16 @@ static void test_int_args_checked(void) {
   eval_expect_err(interp, "Lk::annot_remove $s -1", "id out of range", NULL,
                   NULL);
   eval_ok(interp, "let t2 [Lk::begin_frame $ui]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_expect_err(interp, "Lk::set_root $t2 -1",
                   "Lk::set_root: node_ix out of range", NULL, NULL);
   eval_ok(interp, "Lk::end_frame $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   /* In range is unchanged. */
@@ -2983,7 +3199,9 @@ static void test_doc_line_procs(void) {
   interp = make_interp();
 
   eval_ok(interp, "let d [Lk::doc_new \"ab\ncd\nef\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* 0-based lines, mirroring the C API. */
   check_int(interp, "Lk::doc_pos_to_line $d 0", 0);
@@ -3004,14 +3222,14 @@ static void test_doc_line_procs(void) {
   /* Errors: arity, wrong opaque, bad values, out-of-range lines. */
   eval_expect_err(interp, "Lk::doc_pos_to_line $d", "Lk::doc_pos_to_line",
                   "2 arguments", NULL);
-  eval_expect_err(interp, "Lk::doc_pos_to_line $d -1",
-                  "non-negative integer", NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_line_start $d 3", "line out of range",
+  eval_expect_err(interp, "Lk::doc_pos_to_line $d -1", "non-negative integer",
                   NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_line_end $d 99", "line out of range",
+  eval_expect_err(interp, "Lk::doc_line_start $d 3", "line out of range", NULL,
+                  NULL);
+  eval_expect_err(interp, "Lk::doc_line_end $d 99", "line out of range", NULL,
+                  NULL);
+  eval_expect_err(interp, "Lk::doc_line_start $d nope", "non-negative integer",
                   NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_line_start $d nope",
-                  "non-negative integer", NULL, NULL);
   eval_expect_err(interp, "Lk::doc_line_start 5 0",
                   "expected lk_document opaque", NULL, NULL);
   eval_expect_err(interp, "Lk::doc_line_end $d", "Lk::doc_line_end",
@@ -3035,7 +3253,9 @@ static void test_doc_char_col(void) {
   eval_ok(interp,
           "let d [Lk::doc_new \"hello\nna\xC3\xAFve caf\xC3\xA9\n\ta\tb\"]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "Lk::doc_len $d", 23);
 
@@ -3045,9 +3265,9 @@ static void test_doc_char_col(void) {
   check_int(interp, "Lk::doc_char_col $d 5", 6); /* end of "hello" */
 
   /* Multi-byte UTF-8: columns count codepoints, not bytes. */
-  check_int(interp, "Lk::doc_char_col $d 6", 1);  /* line start */
-  check_int(interp, "Lk::doc_char_col $d 8", 3);  /* before the i-uml */
-  check_int(interp, "Lk::doc_char_col $d 10", 4); /* after it: 3 cp */
+  check_int(interp, "Lk::doc_char_col $d 6", 1);   /* line start */
+  check_int(interp, "Lk::doc_char_col $d 8", 3);   /* before the i-uml */
+  check_int(interp, "Lk::doc_char_col $d 10", 4);  /* after it: 3 cp */
   check_int(interp, "Lk::doc_char_col $d 18", 11); /* 10 cp, 12 bytes */
 
   /* Tabs count as ONE character (pinned definition, editor-wrap #8). */
@@ -3057,14 +3277,14 @@ static void test_doc_char_col(void) {
   check_int(interp, "Lk::doc_char_col $d 23", 5); /* pos == doc len */
 
   /* Errors. */
-  eval_expect_err(interp, "Lk::doc_char_col $d 24", "pos out of range",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::doc_char_col $d 24", "pos out of range", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::doc_char_col $d -1", "non-negative integer",
                   NULL, NULL);
   eval_expect_err(interp, "Lk::doc_char_col $d", "Lk::doc_char_col",
                   "2 arguments", NULL);
-  eval_expect_err(interp, "Lk::doc_char_col 5 0",
-                  "expected lk_document opaque", NULL, NULL);
+  eval_expect_err(interp, "Lk::doc_char_col 5 0", "expected lk_document opaque",
+                  NULL, NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3078,7 +3298,9 @@ static void test_doc_find_binding(void) {
   interp = make_interp();
 
   eval_ok(interp, "let d [Lk::doc_new \"one two one\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "Lk::doc_find $d \"one\"", 0);
   check_int(interp, "Lk::doc_find $d \"two\"", 4);
@@ -3092,7 +3314,9 @@ static void test_doc_find_binding(void) {
    * resulting seams. */
   r = NULL;
   eval_ok(interp, "Lk::doc_insert $d 4 \"XY \"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::doc_text $d", "one XY two one");
   check_int(interp, "Lk::doc_find $d \"e XY t\"", 2);
   check_int(interp, "Lk::doc_find $d \"Y tw\" 3", 5);
@@ -3100,7 +3324,9 @@ static void test_doc_find_binding(void) {
   /* UTF-8 needle matches its exact bytes. */
   r = NULL;
   eval_ok(interp, "let d2 [Lk::doc_new \"caf\xC3\xA9 bar\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::doc_find $d2 \"\xC3\xA9 b\"", 3);
 
   /* Search-next idiom from script. */
@@ -3121,20 +3347,22 @@ static void test_doc_find_errors(void) {
   interp = make_interp();
 
   eval_ok(interp, "let d [Lk::doc_new \"abc\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
-  eval_expect_err(interp, "Lk::doc_find $d", "Lk::doc_find",
-                  "2 or 3 arguments", NULL);
+  eval_expect_err(interp, "Lk::doc_find $d", "Lk::doc_find", "2 or 3 arguments",
+                  NULL);
   eval_expect_err(interp, "Lk::doc_find $d \"a\" 0 extra", "Lk::doc_find",
                   "2 or 3 arguments", NULL);
   eval_expect_err(interp, "Lk::doc_find $d \"\"", "needle must be non-empty",
                   NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_find $d \"a\" -1",
-                  "non-negative integer", NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_find $d \"a\" nope",
-                  "non-negative integer", NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_find 5 \"a\"",
-                  "expected lk_document opaque", NULL, NULL);
+  eval_expect_err(interp, "Lk::doc_find $d \"a\" -1", "non-negative integer",
+                  NULL, NULL);
+  eval_expect_err(interp, "Lk::doc_find $d \"a\" nope", "non-negative integer",
+                  NULL, NULL);
+  eval_expect_err(interp, "Lk::doc_find 5 \"a\"", "expected lk_document opaque",
+                  NULL, NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3151,7 +3379,9 @@ static void test_doc_transact_groups(void) {
           "let d [Lk::doc_new \"base\"]\n"
           "let h [Lk::history_new $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_str(interp,
             "Lk::doc_transact $d {\n"
@@ -3184,7 +3414,9 @@ static void test_doc_transact_error_propagates(void) {
           "let d [Lk::doc_new \"base\"]\n"
           "let h [Lk::history_new $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* The body errors after one successful edit: the commit still runs
    * (the partial edit stays applied, as one transaction), then the
@@ -3218,12 +3450,16 @@ static void test_doc_subscribe_deltas(void) {
           "    set! got $deltas\n"
           "}]]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Insert: one delta with the inserted bytes, nothing deleted. */
   r = NULL;
   eval_ok(interp, "Lk::doc_insert $d 2 \"XY\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "len $got", 1);
   check_int(interp, "get [get $got 0] start", 2);
   check_int(interp, "get [get $got 0] inserted_len", 2);
@@ -3235,7 +3471,9 @@ static void test_doc_subscribe_deltas(void) {
   /* Delete: the removed bytes were copied into the delta dict. */
   r = NULL;
   eval_ok(interp, "Lk::doc_delete $d 2 2", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "len $got", 1);
   check_int(interp, "get [get $got 0] start", 2);
   check_int(interp, "get [get $got 0] deleted_len", 2);
@@ -3250,7 +3488,9 @@ static void test_doc_subscribe_deltas(void) {
           "    Lk::doc_insert $d 1 \"b\"\n"
           "}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "len $got", 2);
   check_str(interp, "get [get $got 1] inserted", "b");
 
@@ -3275,13 +3515,15 @@ static void test_doc_unsubscribe(void) {
           "Lk::doc_unsubscribe $d $sid\n"
           "Lk::doc_insert $d 0 \"y\"",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "$count", 1);
   eval_expect_err(interp, "Lk::doc_unsubscribe $d 999",
                   "unknown subscription id", NULL, NULL);
-  eval_expect_err(interp, "Lk::doc_subscribe $d 42", "expected callable",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::doc_subscribe $d 42", "expected callable", NULL,
+                  NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3295,16 +3537,18 @@ static void test_focus_get_round_trip(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"main\" \"window\"]\n"
-    "let btn [Lk::node $t \"btn\" \"button\"]\n"
-    "Lk::prop $t $btn \"focusable\" 1\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $btn\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"main\" \"window\"]\n"
+          "let btn [Lk::node $t \"btn\" \"button\"]\n"
+          "Lk::prop $t $btn \"focusable\" 1\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $btn\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* no focus yet -> "" */
   check_str(interp, "Lk::focus_get $ui", "");
@@ -3321,8 +3565,7 @@ static void test_focus_get_round_trip(void) {
             "Lk::focus_get $ui",
             "");
 
-  eval_expect_err(interp, "Lk::focus_get", "Lk::focus_get", "1 argument",
-                  NULL);
+  eval_expect_err(interp, "Lk::focus_get", "Lk::focus_get", "1 argument", NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3337,7 +3580,9 @@ static void test_time_ms_binding(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* no backend stamped anything yet -> 0 */
   check_int(interp, "Lk::time_ms $ui", 0);
@@ -3367,7 +3612,9 @@ static void test_history_undo_redo(void) {
           "let d [Lk::doc_new \"one\"]\n"
           "let h [Lk::history_new $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "Lk::history_can_undo $h", 0);
   check_int(interp, "Lk::history_undo $h $d", 0);
@@ -3398,7 +3645,9 @@ static void test_history_errors(void) {
           "let d [Lk::doc_new \"x\"]\n"
           "let h [Lk::history_new]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   eval_expect_err(interp, "Lk::history_undo $h", "Lk::history_undo",
                   "2 arguments", NULL);
@@ -3424,7 +3673,9 @@ static void test_history_savepoint(void) {
           "let d [Lk::doc_new \"one\"]\n"
           "let h [Lk::history_new $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* fresh history: no savepoint */
   check_int(interp, "Lk::history_at_saved $h", 0);
@@ -3442,8 +3693,8 @@ static void test_history_savepoint(void) {
             "Lk::history_at_saved $h",
             1);
 
-  eval_expect_err(interp, "Lk::history_mark_saved",
-                  "Lk::history_mark_saved", "1 argument", NULL);
+  eval_expect_err(interp, "Lk::history_mark_saved", "Lk::history_mark_saved",
+                  "1 argument", NULL);
   eval_expect_err(interp, "Lk::history_at_saved $d",
                   "expected lk_edit_history opaque", NULL, NULL);
 
@@ -3464,7 +3715,9 @@ static void test_editor_new_basic(void) {
           "let h [Lk::history_new]\n"
           "let e [Lk::editor_new $ui $d $h]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "opaque? $e", 1);
   check_int(interp, "Lk::editor_cursor $e", 0);
@@ -3472,14 +3725,16 @@ static void test_editor_new_basic(void) {
   /* Without a history the editor still works (undo just no-ops). */
   r = NULL;
   eval_ok(interp, "let e2 [Lk::editor_new $ui $d]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::editor_command $e2 undo", 0);
 
   /* Errors: arity, wrong opaques, foreign-doc history. */
   eval_expect_err(interp, "Lk::editor_new $ui", "Lk::editor_new",
                   "2 or 3 arguments", NULL);
-  eval_expect_err(interp, "Lk::editor_new $d $d", "expected lk_ui opaque",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::editor_new $d $d", "expected lk_ui opaque", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::editor_new $ui $ui",
                   "expected lk_document opaque", NULL, NULL);
   eval_expect_err(interp,
@@ -3504,7 +3759,9 @@ static void test_editor_cursor_selection(void) {
           "let d [Lk::doc_new \"hello world\"]\n"
           "let e [Lk::editor_new $ui $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_str(interp,
             "Lk::editor_set_cursor $e 5\n"
@@ -3549,7 +3806,9 @@ static void test_editor_scroll_to_cursor(void) {
           "Lk::editor_set_cursor $e 4\n"
           "Lk::editor_command $e select_all",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_str(interp, "Lk::editor_scroll_to_cursor $e", "");
   check_int(interp, "Lk::editor_cursor $e", 11);
@@ -3559,8 +3818,8 @@ static void test_editor_scroll_to_cursor(void) {
   check_str(interp, "Lk::editor_set_cursor $e 11", "");
   check_int(interp, "len [Lk::editor_selection $e]", 0);
 
-  eval_expect_err(interp, "Lk::editor_scroll_to_cursor",
-                  "expected 1 argument", NULL, NULL);
+  eval_expect_err(interp, "Lk::editor_scroll_to_cursor", "expected 1 argument",
+                  NULL, NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3579,7 +3838,9 @@ static void test_editor_command_drives_doc(void) {
           "let h [Lk::history_new $d]\n"
           "let e [Lk::editor_new $ui $d $h]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* insert_text at the cursor, cursor follows. */
   check_int(interp, "Lk::editor_command $e insert_text \"hello \"", 1);
@@ -3614,10 +3875,14 @@ static void test_editor_command_drives_doc(void) {
   /* scroll_lines takes a signed count and never errors on ints. */
   r = NULL;
   eval_ok(interp, "Lk::editor_command $e scroll_lines 2", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_ok(interp, "Lk::editor_command $e scroll_lines -2", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3635,7 +3900,9 @@ static void test_editor_command_errors(void) {
           "let d [Lk::doc_new \"abc\"]\n"
           "let e [Lk::editor_new $ui $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Unknown command errors name the known-command list. */
   eval_expect_err(interp, "Lk::editor_command $e frobnicate",
@@ -3657,8 +3924,8 @@ static void test_editor_command_errors(void) {
                   "signed line count", NULL, NULL);
   eval_expect_err(interp, "Lk::editor_command $e select_all now",
                   "takes no arguments", NULL, NULL);
-  eval_expect_err(interp, "Lk::editor_command $e", "Lk::editor_command",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::editor_command $e", "Lk::editor_command", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::editor_command $d insert_text x",
                   "expected lk_editor opaque", NULL, NULL);
 
@@ -3678,7 +3945,9 @@ static void test_editor_multicursor_procs(void) {
           "let d [Lk::doc_new \"foo\\nfoo\"]\n"
           "let e [Lk::editor_new $ui $d [Lk::history_new]]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* single caret baseline; selections is index-parallel */
   check_int(interp, "len [Lk::editor_carets $e]", 1);
@@ -3727,9 +3996,8 @@ static void test_editor_multicursor_procs(void) {
   check_int(interp, "get [Lk::editor_carets $e] 1", 4);
 
   /* the unknown-command listing includes the new names */
-  eval_expect_err(interp, "Lk::editor_command $e frobnicate",
-                  "add_cursor_at", "collapse_cursors",
-                  "select_next_match");
+  eval_expect_err(interp, "Lk::editor_command $e frobnicate", "add_cursor_at",
+                  "collapse_cursors", "select_next_match");
 
   /* error paths */
   eval_expect_err(interp, "Lk::editor_command $e add_cursor_at",
@@ -3740,8 +4008,8 @@ static void test_editor_multicursor_procs(void) {
                   "takes no arguments", NULL, NULL);
   eval_expect_err(interp, "Lk::editor_carets", "expected 1 argument", NULL,
                   NULL);
-  eval_expect_err(interp, "Lk::editor_carets $d",
-                  "expected lk_editor opaque", NULL, NULL);
+  eval_expect_err(interp, "Lk::editor_carets $d", "expected lk_editor opaque",
+                  NULL, NULL);
   eval_expect_err(interp, "Lk::editor_selections $ui",
                   "expected lk_editor opaque", NULL, NULL);
 
@@ -3762,7 +4030,9 @@ static void test_editor_wrap_proc(void) {
           "let d [Lk::doc_new \"abc\"]\n"
           "let e [Lk::editor_new $ui $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Default NONE; all three modes round-trip through the getter. */
   check_str(interp, "Lk::editor_wrap_get $e", "none");
@@ -3776,8 +4046,8 @@ static void test_editor_wrap_proc(void) {
   /* Bogus mode name: hard error listing the supported modes; the
    * mode is left unchanged. */
   eval_expect_err(interp, "Lk::editor_wrap $e diagonal",
-                  "unknown mode 'diagonal'",
-                  "supported: none, character, word", NULL);
+                  "unknown mode 'diagonal'", "supported: none, character, word",
+                  NULL);
   check_str(interp, "Lk::editor_wrap_get $e", "none");
 
   /* Word mode wraps for real: "hello world foo" under the stub
@@ -3798,7 +4068,9 @@ static void test_editor_wrap_proc(void) {
           "Lk::end_frame $ui\n"
           "Lk::editor_wrap $e2 word",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   r = NULL;
   eval_ok(interp, "$ui", &r);
@@ -3830,12 +4102,12 @@ static void test_editor_wrap_proc(void) {
   /* Arity and type errors. */
   eval_expect_err(interp, "Lk::editor_wrap $e", "Lk::editor_wrap",
                   "2 arguments", NULL);
-  eval_expect_err(interp, "Lk::editor_wrap $e none extra",
-                  "2 arguments", NULL, NULL);
+  eval_expect_err(interp, "Lk::editor_wrap $e none extra", "2 arguments", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::editor_wrap $d character",
                   "expected lk_editor opaque", NULL, NULL);
-  eval_expect_err(interp, "Lk::editor_wrap_get $d",
-                  "expected lk_editor opaque", NULL, NULL);
+  eval_expect_err(interp, "Lk::editor_wrap_get $d", "expected lk_editor opaque",
+                  NULL, NULL);
   eval_expect_err(interp, "Lk::editor_wrap_get", "Lk::editor_wrap_get",
                   "1 argument", NULL);
 
@@ -3857,7 +4129,9 @@ static void test_editor_row_commands(void) {
           "let d0 [Lk::doc_new \"ab\ncd\"]\n"
           "let e0 [Lk::editor_new $ui $d0]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::editor_command $e0 set_cursor 4", 1);
   check_int(interp, "Lk::editor_command $e0 move_row_start", 1);
   check_int(interp, "Lk::editor_cursor $e0", 3);
@@ -3882,7 +4156,9 @@ static void test_editor_row_commands(void) {
           "Lk::end_frame $ui\n"
           "Lk::editor_wrap $e character",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   r = NULL;
   eval_ok(interp, "$ui", &r);
@@ -3933,8 +4209,8 @@ static void test_editor_row_commands(void) {
    * unknown-command listing names the row commands. */
   eval_expect_err(interp, "Lk::editor_command $e move_row_end sideways",
                   "\"select\" flag", NULL, NULL);
-  eval_expect_err(interp, "Lk::editor_command $e frobnicate",
-                  "move_row_start", "move_row_end", NULL);
+  eval_expect_err(interp, "Lk::editor_command $e frobnicate", "move_row_start",
+                  "move_row_end", NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -3952,7 +4228,9 @@ static void test_editor_set_spans(void) {
           "let d [Lk::doc_new \"hello world again\"]\n"
           "let e [Lk::editor_new $ui $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* fg-only, bg + underline, all three. */
   check_str(interp,
@@ -3980,7 +4258,9 @@ static void test_editor_set_spans_errors(void) {
           "let d [Lk::doc_new \"hello world\"]\n"
           "let e [Lk::editor_new $ui $d]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   eval_expect_err(interp, "Lk::editor_set_spans $e $d #{start 0 end 2}",
                   "must be a list", NULL, NULL);
@@ -3988,9 +4268,9 @@ static void test_editor_set_spans_errors(void) {
                   "missing 'start'", NULL, NULL);
   eval_expect_err(interp, "Lk::editor_set_spans $e $d ( #{start 2 end 2} )",
                   "end must be an integer > start", NULL, NULL);
-  eval_expect_err(interp,
-                  "Lk::editor_set_spans $e $d ( #{start 0 end 2 color (1 2 3)} )",
-                  "unknown span key", "underline", NULL);
+  eval_expect_err(
+      interp, "Lk::editor_set_spans $e $d ( #{start 0 end 2 color (1 2 3)} )",
+      "unknown span key", "underline", NULL);
   eval_expect_err(interp,
                   "Lk::editor_set_spans $e $d ( #{start 0 end 2 fg (1 2)} )",
                   "fg must be", NULL, NULL);
@@ -4027,7 +4307,9 @@ static void test_editor_lifetime(void) {
           "}\n"
           "var e [mk $ui]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* d and h went out of scope with mk's frame; only the editor keeps
    * them alive.  The editor must keep working: */
@@ -4041,7 +4323,9 @@ static void test_editor_lifetime(void) {
    * live doc), and only then lets the doc/history finalizers run. */
   r = NULL;
   eval_ok(interp, "set! e 0", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Interp still healthy afterwards. */
   check_int(interp, "+ 1 1", 2);
@@ -4057,14 +4341,17 @@ static void test_annot_store_basics(void) {
   BEGIN_TEST("annot: store new/attach/add/span/meta");
   interp = make_interp();
 
-  eval_ok(interp,
-          "let d [Lk::doc_new \"hello world\"]\n"
-          "let s [Lk::annot_store_new]\n"
-          "Lk::annot_attach $s $d\n"
-          "Lk::annot_layer_register $s \"marks\"\n"
-          "let a [Lk::annot_add $s 0 5 \"marks\" #{kind word note \"greeting\"}]",
-          &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let d [Lk::doc_new \"hello world\"]\n"
+      "let s [Lk::annot_store_new]\n"
+      "Lk::annot_attach $s $d\n"
+      "Lk::annot_layer_register $s \"marks\"\n"
+      "let a [Lk::annot_add $s 0 5 \"marks\" #{kind word note \"greeting\"}]",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "$a", 1);
   check_int(interp, "get [Lk::annot_span $s $a] 0", 0);
@@ -4084,8 +4371,8 @@ static void test_annot_store_basics(void) {
 
   /* annot_layer: the record's layer name. */
   check_str(interp, "Lk::annot_layer $s $a", "marks");
-  eval_expect_err(interp, "Lk::annot_layer $s 999", "no such annotation",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::annot_layer $s 999", "no such annotation", NULL,
+                  NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -4106,7 +4393,9 @@ static void test_annot_queries(void) {
           "let a2 [Lk::annot_add $s 6 11 \"y\"]\n"
           "let a3 [Lk::annot_add $s 12 17 \"x\"]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "len [Lk::annot_in_range $s 0 100]", 3);
   check_int(interp, "len [Lk::annot_in_range $s 0 100 x]", 2);
@@ -4134,19 +4423,25 @@ static void test_annot_anchor_tracking(void) {
           "Lk::annot_attach $s $d\n"
           "let a [Lk::annot_add $s 6 11 \"w\"]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Insert before the annotation: both ends shift right. */
   r = NULL;
   eval_ok(interp, "Lk::doc_insert $d 0 \"say: \"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "get [Lk::annot_span $s $a] 0", 11);
   check_int(interp, "get [Lk::annot_span $s $a] 1", 16);
 
   /* Delete across the middle: the span shrinks. */
   r = NULL;
   eval_ok(interp, "Lk::doc_delete $d 11 2", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "get [Lk::annot_span $s $a] 0", 11);
   check_int(interp, "get [Lk::annot_span $s $a] 1", 14);
 
@@ -4167,7 +4462,9 @@ static void test_annot_errors(void) {
           "Lk::annot_attach $s $d\n"
           "let a [Lk::annot_add $s 0 5 \"m\"]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "Lk::annot_remove $s $a", 1);
   check_int(interp, "Lk::annot_remove $s $a", 0);
@@ -4204,14 +4501,18 @@ static void test_annot_seq_and_layers(void) {
           "let s [Lk::annot_store_new]\n"
           "Lk::annot_attach $s $d",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   check_int(interp, "Lk::annot_store_seq $s", 0);
   check_int(interp, "len [Lk::annot_layers $s]", 0);
 
   eval_ok(interp, "let a [Lk::annot_add $s 0 5 \"notes\"]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   check_int(interp, "Lk::annot_store_seq $s", 1);
   check_str(interp, "String::join [Lk::annot_layers $s] \",\"", "notes");
@@ -4221,7 +4522,9 @@ static void test_annot_seq_and_layers(void) {
           "Lk::annot_layer_register $s \"plumb\"\n"
           "let b [Lk::annot_add $s 6 11 \"style\"]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   check_str(interp, "String::join [Lk::annot_layers $s] \",\"",
             "notes,plumb,style");
@@ -4230,7 +4533,9 @@ static void test_annot_seq_and_layers(void) {
   /* Anchor motion alone does not count; a delete that drops a record
    * does. */
   eval_ok(interp, "Lk::doc_insert $d 0 \"x\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   check_int(interp, "Lk::annot_store_seq $s", 2);
 
@@ -4240,7 +4545,9 @@ static void test_annot_seq_and_layers(void) {
   check_int(interp, "Lk::annot_store_seq $s", 3);
 
   eval_ok(interp, "Lk::doc_delete $d 0 12", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   check_int(interp, "len [Lk::annot_by_layer $s \"style\"]", 0);
   check_int(interp, "Lk::annot_store_seq $s", 4);
@@ -4272,7 +4579,9 @@ static void test_dsl_editor_widget(void) {
           "let ed [Lk::editor_new $u $d]\n"
           "editor e1 #{editor $ed focusable 1 w 300 h 200}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   ui = dsl_ui(interp);
@@ -4332,7 +4641,9 @@ static void test_dsl_image_widget(void) {
           "let img [Lk::image_new $u 8 4]\n"
           "image pic #{image $img w 64 h 48}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   ui = dsl_ui(interp);
@@ -4378,7 +4689,9 @@ static void test_dsl_canvas_widget(void) {
           "Lk::canvas_line $cv 0 0 10 10 (1 2 3)\n"
           "canvas plot #{canvas $cv grow 1}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   ui = dsl_ui(interp);
@@ -4436,7 +4749,9 @@ static void test_dsl_global_keybinding_fallback(void) {
           "Lk::append_child $t $w $l\n"
           "Lk::end_frame $u",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = dsl_ui(interp);
   CHECK(ui != NULL);
@@ -4478,7 +4793,9 @@ static void test_focus_request_binding(void) {
           "Lk::append_child $t $w $e\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::focus_get $ui", "cmdline");
 
   /* Cancel: "" clears a pending request, so the node never focuses. */
@@ -4495,7 +4812,9 @@ static void test_focus_request_binding(void) {
           "Lk::append_child $t2 $w2 $e2\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::focus_get $ui", "");
 
   eval_expect_err(interp, "Lk::focus_request $ui", "Lk::focus_request",
@@ -4518,11 +4837,15 @@ static void test_capture_binding(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::capture_get $ui", "");
   r = NULL;
   eval_ok(interp, "Lk::capture_set $ui canvas", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::capture_get $ui", "canvas");
 
   ui = fetch_ui(interp);
@@ -4534,12 +4857,14 @@ static void test_capture_binding(void) {
 
   r = NULL;
   eval_ok(interp, "Lk::capture_clear $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::capture_get $ui", "");
 
   eval_expect_err(interp, "Lk::capture_set $ui", "2 arguments", NULL, NULL);
-  eval_expect_err(interp, "Lk::capture_set 1 x", "expected lk_ui opaque",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::capture_set 1 x", "expected lk_ui opaque", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::capture_set $ui #{a 1}", "must be a string",
                   NULL, NULL);
   eval_expect_err(interp, "Lk::capture_clear", "1 argument", NULL, NULL);
@@ -4558,7 +4883,9 @@ static void test_text_size_binding(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* Stub backend: 8 px per codepoint, 16 tall. */
   check_str(interp, "repr [Lk::text_size $ui hello]", "(40 16)");
@@ -4566,14 +4893,13 @@ static void test_text_size_binding(void) {
   check_str(interp, "repr [Lk::text_size $ui \"h\xc3\xa9llo\"]", "(40 16)");
   check_str(interp, "repr [Lk::text_size $ui 12345 1 13]", "(40 16)");
 
-  eval_expect_err(interp, "Lk::text_size $ui", "2 to 4 arguments", NULL,
-                  NULL);
+  eval_expect_err(interp, "Lk::text_size $ui", "2 to 4 arguments", NULL, NULL);
   eval_expect_err(interp, "Lk::text_size 1 x", "expected lk_ui opaque", NULL,
                   NULL);
-  eval_expect_err(interp, "Lk::text_size $ui x abc", "font_id must be",
-                  NULL, NULL);
-  eval_expect_err(interp, "Lk::text_size $ui x 0 -1", "font_size must be",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::text_size $ui x abc", "font_id must be", NULL,
+                  NULL);
+  eval_expect_err(interp, "Lk::text_size $ui x 0 -1", "font_size must be", NULL,
+                  NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -4595,11 +4921,13 @@ static void test_canvas_clip_binding(void) {
           "Lk::canvas_clip_end $c\n"
           "Lk::canvas_clip_end $c",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::canvas_op_count $c", 5);
 
-  eval_expect_err(interp, "Lk::canvas_clip_end $c", "no sub-clip is open",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::canvas_clip_end $c", "no sub-clip is open", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::canvas_clip $c 0 0 -1 5", "w and h must be",
                   NULL, NULL);
   eval_expect_err(interp, "Lk::canvas_clip $c 0 0 1", "5 arguments", NULL,
@@ -4610,17 +4938,20 @@ static void test_canvas_clip_binding(void) {
   /* Depth cap: 8 nested is fine, the 9th is a hard error; clear
    * forgets them all. */
   r = NULL;
-  eval_ok(interp,
-          "foreach i [List::range 0 8] { Lk::canvas_clip $c 0 0 1 1 }",
+  eval_ok(interp, "foreach i [List::range 0 8] { Lk::canvas_clip $c 0 0 1 1 }",
           &r);
-  if (r) lcl_ref_dec(r);
-  eval_expect_err(interp, "Lk::canvas_clip $c 0 0 1 1", "at most 8 deep",
-                  NULL, NULL);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  eval_expect_err(interp, "Lk::canvas_clip $c 0 0 1 1", "at most 8 deep", NULL,
+                  NULL);
   r = NULL;
   eval_ok(interp, "Lk::canvas_clear $c", &r);
-  if (r) lcl_ref_dec(r);
-  eval_expect_err(interp, "Lk::canvas_clip_end $c", "no sub-clip is open",
-                  NULL, NULL);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  eval_expect_err(interp, "Lk::canvas_clip_end $c", "no sub-clip is open", NULL,
+                  NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -4643,15 +4974,17 @@ static void test_spans_binding(void) {
           "Lk::spans_present $s 30 40 loc #{file a line 7}\n"
           "Lk::spans_add $s 30 40 #{underline 1}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "opaque? $s", 1);
   /* the identical range merged: style + presentation on one entry */
   check_int(interp, "Lk::spans_count $s", 3);
 
   eval_expect_err(interp, "Lk::spans_add $s 3 7 #{fg (1 2 3)}", "overlaps",
                   NULL, NULL);
-  eval_expect_err(interp, "Lk::spans_add $s 50 60 #{}", "needs fg, bg",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::spans_add $s 50 60 #{}", "needs fg, bg", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::spans_add $s 50 60 #{colour (1 2 3)}",
                   "unknown style key", NULL, NULL);
   eval_expect_err(interp, "Lk::spans_add $s 60 50 #{fg (1 2 3)}",
@@ -4664,15 +4997,17 @@ static void test_spans_binding(void) {
                   NULL);
   eval_expect_err(interp, "Lk::spans_present $s 50 60 \"\" 1",
                   "ptype must be non-empty", NULL, NULL);
-  eval_expect_err(interp, "Lk::spans_present $s 35 45 loc 1", "overlaps",
-                  NULL, NULL);
-  eval_expect_err(interp, "Lk::spans_count 1", "expected lk_spans opaque",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::spans_present $s 35 45 loc 1", "overlaps", NULL,
+                  NULL);
+  eval_expect_err(interp, "Lk::spans_count 1", "expected lk_spans opaque", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::spans_new", "1 argument", NULL, NULL);
 
   r = NULL;
   eval_ok(interp, "Lk::spans_clear $s", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::spans_count $s", 0);
   /* every lcl-value box the presentations held is gone */
   CHECK(lcl_lk_debug_pres_boxes() == 0);
@@ -4700,7 +5035,9 @@ static void test_styled_text_present_binding(void) {
           "Lk::add_translator $ui pointer_down word \"\" \"\" \"\" Look\n"
           "Lk::set_command_handler $ui [lambda {cmd} { set! got $cmd }]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_ok(interp,
           "let t [Lk::begin_frame $ui]\n"
@@ -4718,7 +5055,9 @@ static void test_styled_text_present_binding(void) {
           "Lk::append_child $t $c $p\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
@@ -4790,7 +5129,9 @@ static void test_dsl_styled_text_widget(void) {
           "styled_text para #{text \"hi there\" spans $sp wrap none}\n"
           "styled_text plain #{text \"just wraps\"}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   t = dsl_tree(interp);
   ui = dsl_ui(interp);
   CHECK(t != NULL && ui != NULL);
@@ -4807,8 +5148,8 @@ static void test_dsl_styled_text_widget(void) {
     CHECK(lk_spans_from_node(lk_ui_resources(ui), t, m) == NULL);
   }
 
-  eval_expect_err(interp, "styled_text p2 #{spans 42}", "lk_spans opaque",
-                  NULL, NULL);
+  eval_expect_err(interp, "styled_text p2 #{spans 42}", "lk_spans opaque", NULL,
+                  NULL);
   eval_expect_err(interp, "styled_text p3 #{wrap sideways}",
                   "none, character, word", NULL, NULL);
 
@@ -4834,7 +5175,9 @@ static void test_menu_open_binding(void) {
           "Lk::append_child $t $w $b\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "repr [Lk::menu_items $ui]", "()");
   check_int(interp, "Lk::menu_hover $ui", -1);
 
@@ -4843,7 +5186,9 @@ static void test_menu_open_binding(void) {
           "Lk::menu_open $ui #{owner file items ((\"Open...\" Open recent)"
           " (---) #{label Save command Save enabled 0} (Quit Quit))}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "len [Lk::menu_items $ui]", 4);
   check_str(interp, "get [get [Lk::menu_items $ui] 0] label", "Open...");
   check_str(interp, "get [get [Lk::menu_items $ui] 0] command", "Open");
@@ -4860,17 +5205,21 @@ static void test_menu_open_binding(void) {
   /* No owner: the root is the source; close works. */
   r = NULL;
   eval_ok(interp, "Lk::menu_open $ui #{items ((A A))}", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "len [Lk::menu_items $ui]", 1);
   r = NULL;
   eval_ok(interp, "Lk::menu_close $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "len [Lk::menu_items $ui]", 0);
 
-  eval_expect_err(interp, "Lk::menu_open $ui #{items ()}", "non-empty",
+  eval_expect_err(interp, "Lk::menu_open $ui #{items ()}", "non-empty", NULL,
+                  NULL);
+  eval_expect_err(interp, "Lk::menu_open $ui #{items ((A))}", "(label command",
                   NULL, NULL);
-  eval_expect_err(interp, "Lk::menu_open $ui #{items ((A))}",
-                  "(label command", NULL, NULL);
   eval_expect_err(interp, "Lk::menu_open $ui #{items (#{label X})}",
                   "needs `command`", NULL, NULL);
   eval_expect_err(interp, "Lk::menu_open $ui #{items (#{command X colour 1})}",
@@ -4896,15 +5245,18 @@ static void test_context_menu_binding(void) {
   BEGIN_TEST("context_menu: producer over a laid-out tree, via script");
   interp = make_interp();
 
-  eval_ok(interp,
-          "let ui [Lk::ui_create]\n"
-          "var got \"\"\n"
-          "Lk::set_command_handler $ui [lambda {cmd} { set! got $cmd }]\n"
-          "Lk::add_translator $ui pointer_down cell \"\" \"\" \"\" Reveal primary\n"
-          "Lk::add_translator $ui pointer_down cell \"\" \"\" \"\" Flag secondary\n"
-          "Lk::add_translator $ui key_down \"\" \"\" f2 \"\" NewGame",
-          &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "var got \"\"\n"
+      "Lk::set_command_handler $ui [lambda {cmd} { set! got $cmd }]\n"
+      "Lk::add_translator $ui pointer_down cell \"\" \"\" \"\" Reveal primary\n"
+      "Lk::add_translator $ui pointer_down cell \"\" \"\" \"\" Flag secondary\n"
+      "Lk::add_translator $ui key_down \"\" \"\" f2 \"\" NewGame",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_ok(interp,
           "let t [Lk::begin_frame $ui]\n"
@@ -4922,7 +5274,9 @@ static void test_context_menu_binding(void) {
           "Lk::append_child $t $c $b\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
@@ -4961,7 +5315,9 @@ static void test_context_menu_binding(void) {
     check_str(interp, "get [get [Lk::menu_items $ui] 0] command", "NewGame");
     r = NULL;
     eval_ok(interp, "Lk::menu_close $ui", &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
 
     free(styles);
   }
@@ -4991,7 +5347,9 @@ static void test_list_binding(void) {
           "Lk::prop $t $l h 100\n"
           "Lk::prop $t $l padding 0",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_ok(interp,
           "foreach i [List::range 0 8] {\n"
@@ -5005,7 +5363,9 @@ static void test_list_binding(void) {
           "Lk::append_child $t $c $l\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "repr [Lk::list_range $ui files]", "()");
 
   ui = fetch_ui(interp);
@@ -5061,7 +5421,9 @@ static void test_list_value_prop(void) {
           "let l [Lk::node $t files list]\n"
           "Lk::prop $t $l rows 10",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
   eval_expect_err(interp, "Lk::prop $t $l value abc",
                   "list value expects an integer", NULL, NULL);
@@ -5071,7 +5433,9 @@ static void test_list_value_prop(void) {
           "Lk::append_child $t $w $l\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
@@ -5081,7 +5445,9 @@ static void test_list_value_prop(void) {
     lk_ix n = lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "files"));
 
     CHECK(n > 0);
-    if (n > 0) CHECK(lk_list_cursor(cur, n, lk_ui_state(ui)) == 3);
+    if (n > 0) {
+      CHECK(lk_list_cursor(cur, n, lk_ui_state(ui)) == 3);
+    }
   }
 
   lcl_interp_free(interp);
@@ -5098,7 +5464,9 @@ static void test_dsl_list_window(void) {
   dsl_begin(interp);
 
   /* No layout yet: the estimate, then rows built from it. */
-  check_str(interp, "repr [list_window files 100]", "(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31)");
+  check_str(
+      interp, "repr [list_window files 100]",
+      "(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31)");
   check_str(interp, "repr [list_window files 5]", "(0 1 2 3 4)");
   check_str(interp, "repr [list_window files 100 0 3]", "(0 1 2)");
   eval_ok(interp,
@@ -5108,7 +5476,9 @@ static void test_dsl_list_window(void) {
           "  }\n"
           "}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   t = dsl_tree(interp);
   CHECK(t != NULL);
 
@@ -5165,14 +5535,16 @@ static void test_screenshot_stop_errors(void) {
   interp = make_interp();
 
   eval_ok(interp, "let ui [Lk::ui_create]", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
-  eval_expect_err(interp, "Lk::window_screenshot $ui",
-                  "Lk::window_screenshot", "2 arguments", NULL);
+  eval_expect_err(interp, "Lk::window_screenshot $ui", "Lk::window_screenshot",
+                  "2 arguments", NULL);
   eval_expect_err(interp, "Lk::window_screenshot $ui \"x.png\"",
                   "expected lk_window opaque", NULL, NULL);
-  eval_expect_err(interp, "Lk::window_stop", "Lk::window_stop",
-                  "1 argument", NULL);
+  eval_expect_err(interp, "Lk::window_stop", "Lk::window_stop", "1 argument",
+                  NULL);
   eval_expect_err(interp, "Lk::window_stop $ui", "expected lk_window opaque",
                   NULL, NULL);
 
@@ -5198,7 +5570,9 @@ static void test_dsl_image_filter_prop(void) {
           "image soft #{image $img w 64 h 64 filter linear}\n"
           "image plain #{image $img w 64 h 64}\n",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -5265,14 +5639,17 @@ static void test_clear_translators(void) {
           "Lk::set_root $t $w\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
 
   if (ui) {
-    node = lk_tree_find_by_id(lk_ui_tree(ui), lk_intern_cid(ui->intern, "root"));
+    node =
+        lk_tree_find_by_id(lk_ui_tree(ui), lk_intern_cid(ui->intern, "root"));
     CHECK(node != 0);
 
     /* bound: fires */
@@ -5282,7 +5659,9 @@ static void test_clear_translators(void) {
 
     /* cleared: the same chord bubbles */
     eval_ok(interp, "Lk::clear_translators $ui", &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
     r = NULL;
     CHECK(route_key(ui, node, LKK_G, LK_MOD_CTRL) == 0);
     check_int(interp, "len $fired", 1);
@@ -5290,7 +5669,9 @@ static void test_clear_translators(void) {
     /* re-registered with a handler that rebinds from INSIDE dispatch */
     eval_ok(interp, "Lk::add_translator $ui key_down app \"\" g ctrl Rebind",
             &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
     r = NULL;
     CHECK(route_key(ui, node, LKK_G, LK_MOD_CTRL) == 1);
     check_int(interp, "len $fired", 2);
@@ -5322,16 +5703,19 @@ static void test_dsl_clear_translators(void) {
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp,
-          "var fired 0\n"
-          "Lk::set_command_handler $u [lambda {cmd} { set! fired [+ $fired 1] }]\n"
-          "let w [Lk::node $t root window]\n"
-          "Lk::present $t $w app (a)\n"
-          "Lk::set_root $t $w\n"
-          "Lk::end_frame $u\n"
-          "keybinding f2 \"\" app NewGame",
-          &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "var fired 0\n"
+      "Lk::set_command_handler $u [lambda {cmd} { set! fired [+ $fired 1] }]\n"
+      "let w [Lk::node $t root window]\n"
+      "Lk::present $t $w app (a)\n"
+      "Lk::set_root $t $w\n"
+      "Lk::end_frame $u\n"
+      "keybinding f2 \"\" app NewGame",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   ui = dsl_ui(interp);
@@ -5346,7 +5730,9 @@ static void test_dsl_clear_translators(void) {
     check_int(interp, "$fired", 1);
 
     eval_ok(interp, "clear_translators", &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
     r = NULL;
 
     CHECK(route_key(ui, node, LKK_F2, 0) == 0);
@@ -5377,7 +5763,9 @@ static void test_editor_keys(void) {
           "var left #{}\n"
           "var click #{}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp,
@@ -5391,17 +5779,22 @@ static void test_editor_keys(void) {
           "  }\n"
           "}",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
-  eval_ok(interp,
-          "foreach r $rows {\n"
-          "  if [== [get $r kind] key] { if [== [get $r chord] \"ctrl+d\"] { set! ctrl_d $r } }\n"
-          "  if [== [get $r kind] key] { if [== [get $r chord] left] { set! left $r } }\n"
-          "  if [== [get $r kind] pointer] { if [== [get $r gesture] click] { set! click $r } }\n"
-          "}",
-          &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "foreach r $rows {\n"
+      "  if [== [get $r kind] key] { if [== [get $r chord] \"ctrl+d\"] { set! ctrl_d $r } }\n"
+      "  if [== [get $r kind] key] { if [== [get $r chord] left] { set! left $r } }\n"
+      "  if [== [get $r kind] pointer] { if [== [get $r gesture] click] { set! click $r } }\n"
+      "}",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "> $nkey 20", 1);
   check_int(interp, "> $nptr 3", 1);
@@ -5428,23 +5821,26 @@ static void test_editor_keys(void) {
   /* every key command is a name Lk::editor_command accepts: an
    * unknown name errors listing the known ones, so a known name on a
    * real editor either runs or complains about ARGS, never the name */
-  eval_ok(interp,
-          "let ui [Lk::ui_create]\n"
-          "let d [Lk::doc_new \"ab\"]\n"
-          "let e [Lk::editor_new $ui $d]\n"
-          "var unknown 0\n"
-          "foreach r $rows {\n"
-          "  if [== [get $r kind] key] {\n"
-          "    let c [get $r command]\n"
-          "    if [not [== $c insert_text]] {\n"
-          "      if [catch { Lk::editor_command $e $c } _r err] {\n"
-          "        if [String::find $err \"unknown\"] { set! unknown [+ $unknown 1] }\n"
-          "      }\n"
-          "    }\n"
-          "  }\n"
-          "}",
-          &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "let d [Lk::doc_new \"ab\"]\n"
+      "let e [Lk::editor_new $ui $d]\n"
+      "var unknown 0\n"
+      "foreach r $rows {\n"
+      "  if [== [get $r kind] key] {\n"
+      "    let c [get $r command]\n"
+      "    if [not [== $c insert_text]] {\n"
+      "      if [catch { Lk::editor_command $e $c } _r err] {\n"
+      "        if [String::find $err \"unknown\"] { set! unknown [+ $unknown 1] }\n"
+      "      }\n"
+      "    }\n"
+      "  }\n"
+      "}",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "$unknown", 0);
 
   eval_expect_err(interp, "Lk::editor_keys 1", "Lk::editor_keys",
@@ -5479,7 +5875,9 @@ static void test_node_rect(void) {
           "Lk::append_child $t $c $h\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* no layout yet */
   check_int(interp, "len [Lk::node_rect $ui go]", 0);
@@ -5521,10 +5919,10 @@ static void test_node_rect(void) {
     check_int(interp, "len [Lk::node_rect $ui nope]", 0);
   }
 
-  eval_expect_err(interp, "Lk::node_rect $ui", "Lk::node_rect",
-                  "2 arguments", NULL);
-  eval_expect_err(interp, "Lk::node_rect $t go", "expected lk_ui opaque",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::node_rect $ui", "Lk::node_rect", "2 arguments",
+                  NULL);
+  eval_expect_err(interp, "Lk::node_rect $t go", "expected lk_ui opaque", NULL,
+                  NULL);
   eval_expect_err(interp, "Lk::node_rect $ui (a b)",
                   "must be a string or number", NULL, NULL);
 
@@ -5545,17 +5943,20 @@ static void test_add_translator_button_arg(void) {
   BEGIN_TEST("add_translator: optional 8th button arg");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    /* 7-arg form still works (examples run unmodified) */
-    "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C0\"\n"
-    "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C1\" \"primary\"\n"
-    "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"ctrl\" \"C2\" \"middle\"\n"
-    "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C3\" \"secondary\"\n"
-    "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C4\" \"\"\n"
-    "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C5\" 0",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      /* 7-arg form still works (examples run unmodified) */
+      "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C0\"\n"
+      "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C1\" \"primary\"\n"
+      "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"ctrl\" \"C2\" \"middle\"\n"
+      "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C3\" \"secondary\"\n"
+      "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C4\" \"\"\n"
+      "Lk::add_translator $ui \"pointer_down\" \"a\" \"\" \"\" \"\" \"C5\" 0",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);
@@ -5597,30 +5998,35 @@ static void test_lcl_presentation_pipeline(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let doc [Lk::doc_new \"hello file.c:12 world\"]\n"
-    "let ed [Lk::editor_new $ui $doc]\n"
-    "let s [Lk::annot_store_new]\n"
-    "Lk::annot_attach $s $doc\n"
-    "let a [Lk::annot_add $s 6 15 \"links\"]\n"
-    "Lk::annot_layer_priority $s \"links\" 3\n"
-    "Lk::annot_present $ui $s $a \"loc\" #{path \"file.c\" line 12}\n"
-    "Lk::editor_presentations $ed $s",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let doc [Lk::doc_new \"hello file.c:12 world\"]\n"
+          "let ed [Lk::editor_new $ui $doc]\n"
+          "let s [Lk::annot_store_new]\n"
+          "Lk::annot_attach $s $doc\n"
+          "let a [Lk::annot_add $s 6 15 \"links\"]\n"
+          "Lk::annot_layer_priority $s \"links\" 3\n"
+          "Lk::annot_present $ui $s $a \"loc\" #{path \"file.c\" line 12}\n"
+          "Lk::editor_presentations $ed $s",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
-  eval_ok(interp,
-    "Lk::add_translator $ui \"pointer_down\" \"loc\" \"\" \"\" \"\" \"Open\" \"middle\"\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let e [Lk::node $t \"ed\" \"editor\"]\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $e\n"
-    "Lk::prop $t $e \"editor\" $ed\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "Lk::add_translator $ui \"pointer_down\" \"loc\" \"\" \"\" \"\" \"Open\" \"middle\"\n"
+      "let t [Lk::begin_frame $ui]\n"
+      "let w [Lk::node $t \"w\" \"window\"]\n"
+      "let e [Lk::node $t \"ed\" \"editor\"]\n"
+      "Lk::set_root $t $w\n"
+      "Lk::append_child $t $w $e\n"
+      "Lk::prop $t $e \"editor\" $ed\n"
+      "Lk::end_frame $ui",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   ui = fetch_ui(interp);
@@ -5637,8 +6043,7 @@ static void test_lcl_presentation_pipeline(void) {
     cfg.state = lk_ui_state(ui);
     CHECK(lk_layout(lk_ui_tree(ui), &cfg, rects) == 1);
 
-    node = lk_tree_find_by_id(lk_ui_tree(ui),
-                              lk_intern_cid(ui->intern, "ed"));
+    node = lk_tree_find_by_id(lk_ui_tree(ui), lk_intern_cid(ui->intern, "ed"));
     CHECK(node != 0);
 
     /* middle-click at byte 8 (inside [6,15)): 8 px stub chars */
@@ -5654,12 +6059,14 @@ static void test_lcl_presentation_pipeline(void) {
 
   /* script-side assertions on the marshaled command */
   eval_ok(interp,
-    "let cmds [Lk::commands $ui]\n"
-    "let c [get $cmds 0]\n"
-    "let h [get $c hit]\n"
-    "let lc [get $h locus]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let cmds [Lk::commands $ui]\n"
+          "let c [get $cmds 0]\n"
+          "let h [get $c hit]\n"
+          "let lc [get $h locus]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   {
@@ -5667,20 +6074,20 @@ static void test_lcl_presentation_pipeline(void) {
       const char *src;
       const char *want;
     } checks[] = {
-      {"len $cmds", "1"},
-      {"get $c name", "Open"},
-      {"get $h ptype", "loc"},
-      {"get $h locus_kind", "editor-range"},
-      {"get [get $h value] path", "file.c"},
-      {"get [get $h value] line", "12"},
-      {"get $lc annot_id", "1"},
-      {"get $lc start", "6"},
-      {"get $lc end", "15"},
-      {"get $lc pos", "8"},
-      /* pinned: translated click moved no cursor */
-      {"Lk::editor_cursor $ed", "0"},
-      /* the hit's revision matches the doc now... */
-      {"== [get $lc rev] [Lk::doc_revision $doc]", "1"},
+        {"len $cmds",                                "1"           },
+        {"get $c name",                              "Open"        },
+        {"get $h ptype",                             "loc"         },
+        {"get $h locus_kind",                        "editor-range"},
+        {"get [get $h value] path",                  "file.c"      },
+        {"get [get $h value] line",                  "12"          },
+        {"get $lc annot_id",                         "1"           },
+        {"get $lc start",                            "6"           },
+        {"get $lc end",                              "15"          },
+        {"get $lc pos",                              "8"           },
+        /* pinned: translated click moved no cursor */
+        {"Lk::editor_cursor $ed",                    "0"           },
+        /* the hit's revision matches the doc now... */
+        {"== [get $lc rev] [Lk::doc_revision $doc]", "1"           },
     };
     size_t i;
 
@@ -5689,7 +6096,9 @@ static void test_lcl_presentation_pipeline(void) {
       if (r) {
         const char *got = lcl_value_to_string(r);
         if (strcmp(got, checks[i].want) != 0) {
-          if (g_cur_ok) printf("FAIL\n");
+          if (g_cur_ok) {
+            printf("FAIL\n");
+          }
           printf("    %s -> '%s', want '%s'\n", checks[i].src, got,
                  checks[i].want);
           g_cur_ok = 0;
@@ -5702,9 +6111,9 @@ static void test_lcl_presentation_pipeline(void) {
 
   /* ...and goes stale detectably after an edit (script-visible) */
   eval_ok(interp,
-    "Lk::doc_insert $doc 0 \"x\"\n"
-    "== [get $lc rev] [Lk::doc_revision $doc]",
-    &r);
+          "Lk::doc_insert $doc 0 \"x\"\n"
+          "== [get $lc rev] [Lk::doc_revision $doc]",
+          &r);
   if (r) {
     CHECK(strcmp(lcl_value_to_string(r), "0") == 0);
     lcl_ref_dec(r);
@@ -5714,7 +6123,9 @@ static void test_lcl_presentation_pipeline(void) {
   /* removing the annotation releases the wrapped value (hook path)
    * and ends the candidacy: the next click bubbles unhandled */
   eval_ok(interp, "Lk::clear_commands $ui\nLk::annot_remove $s $a", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   if (ui && node) {
@@ -5823,35 +6234,39 @@ static void test_focus_changed_marshal(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $ui]\n"
-    "let w [Lk::node $t \"w\" \"window\"]\n"
-    "let b1 [Lk::node $t \"b1\" \"button\"]\n"
-    "let b2 [Lk::node $t \"b2\" \"button\"]\n"
-    "Lk::prop $t $b1 \"focusable\" 1\n"
-    "Lk::prop $t $b2 \"focusable\" 1\n"
-    "Lk::set_root $t $w\n"
-    "Lk::append_child $t $w $b1\n"
-    "Lk::append_child $t $w $b2\n"
-    "Lk::end_frame $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $ui]\n"
+          "let w [Lk::node $t \"w\" \"window\"]\n"
+          "let b1 [Lk::node $t \"b1\" \"button\"]\n"
+          "let b2 [Lk::node $t \"b2\" \"button\"]\n"
+          "Lk::prop $t $b1 \"focusable\" 1\n"
+          "Lk::prop $t $b2 \"focusable\" 1\n"
+          "Lk::set_root $t $w\n"
+          "Lk::append_child $t $w $b1\n"
+          "Lk::append_child $t $w $b2\n"
+          "Lk::end_frame $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   eval_ok(interp,
-    "var g_prev \"-\"\n"
-    "var g_next \"-\"\n"
-    "var g_count 0\n"
-    "let h [lambda {ev node} {\n"
-    "  if [== [get $ev type] focus_changed] {\n"
-    "    set! g_prev [get $ev prev_id]\n"
-    "    set! g_next [get $ev next_id]\n"
-    "    set! g_count [+ $g_count 1]\n"
-    "  }\n"
-    "  return 0\n"
-    "}]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "var g_prev \"-\"\n"
+          "var g_next \"-\"\n"
+          "var g_count 0\n"
+          "let h [lambda {ev node} {\n"
+          "  if [== [get $ev type] focus_changed] {\n"
+          "    set! g_prev [get $ev prev_id]\n"
+          "    set! g_next [get $ev next_id]\n"
+          "    set! g_count [+ $g_count 1]\n"
+          "  }\n"
+          "  return 0\n"
+          "}]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
   ui = fetch_ui(interp);
@@ -5868,7 +6283,9 @@ static void test_focus_changed_marshal(void) {
 
     /* Focus via the script-facing proc, drain outside routing. */
     eval_ok(interp, "Lk::focus_set $ui \"b1\"", &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
     r = NULL;
     lk_ui_flush_events(ui, NULL);
 
@@ -5877,9 +6294,9 @@ static void test_focus_changed_marshal(void) {
         const char *src;
         const char *want;
       } checks[] = {
-        {"$g_count", "1"},
-        {"$g_prev", ""},
-        {"$g_next", "b1"},
+          {"$g_count", "1" },
+          {"$g_prev",  ""  },
+          {"$g_next",  "b1"},
       };
       size_t i;
 
@@ -5888,7 +6305,9 @@ static void test_focus_changed_marshal(void) {
         if (r) {
           const char *got = lcl_value_to_string(r);
           if (strcmp(got, checks[i].want) != 0) {
-            if (g_cur_ok) printf("FAIL\n");
+            if (g_cur_ok) {
+              printf("FAIL\n");
+            }
             printf("    %s -> '%s', want '%s'\n", checks[i].src, got,
                    checks[i].want);
             g_cur_ok = 0;
@@ -5901,7 +6320,9 @@ static void test_focus_changed_marshal(void) {
 
     /* Second change carries the old focus as prev_id. */
     eval_ok(interp, "Lk::focus_set $ui \"b2\"", &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
     r = NULL;
     lk_ui_flush_events(ui, NULL);
 
@@ -5921,7 +6342,9 @@ static void test_focus_changed_marshal(void) {
 
     /* focus_clear marshals next_id as the empty string. */
     eval_ok(interp, "Lk::focus_clear $ui", &r);
-    if (r) lcl_ref_dec(r);
+    if (r) {
+      lcl_ref_dec(r);
+    }
     r = NULL;
     lk_ui_flush_events(ui, NULL);
 
@@ -5951,11 +6374,14 @@ static void test_focus_changed_translator_name(void) {
   BEGIN_TEST("add_translator accepts focus_changed");
   interp = make_interp();
 
-  eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::add_translator $ui \"focus_changed\" \"\" \"\" \"\" \"\" \"Act\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "Lk::add_translator $ui \"focus_changed\" \"\" \"\" \"\" \"\" \"Act\"",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   CHECK(g_cur_ok);
 
   ui = fetch_ui(interp);
@@ -5978,13 +6404,15 @@ static void test_annot_present_errors(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let doc [Lk::doc_new \"hello\"]\n"
-    "let s [Lk::annot_store_new]\n"
-    "Lk::annot_attach $s $doc\n"
-    "let a [Lk::annot_add $s 0 5 \"l\"]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let doc [Lk::doc_new \"hello\"]\n"
+          "let s [Lk::annot_store_new]\n"
+          "Lk::annot_attach $s $doc\n"
+          "let a [Lk::annot_add $s 0 5 \"l\"]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   eval_expect_err(interp, "Lk::annot_present $ui $s 999 \"t\" 1",
                   "no such annotation", NULL, NULL);
@@ -5995,10 +6423,12 @@ static void test_annot_present_errors(void) {
 
   /* binding a second ui is rejected */
   eval_ok(interp,
-    "Lk::annot_present $ui $s $a \"t\" 1\n"
-    "let ui2 [Lk::ui_create]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "Lk::annot_present $ui $s $a \"t\" 1\n"
+          "let ui2 [Lk::ui_create]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   eval_expect_err(interp, "Lk::annot_present $ui2 $s $a \"t\" 2",
                   "bound to a different ui", NULL, NULL);
 
@@ -6018,35 +6448,41 @@ static void test_name_arg_strictness(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let u [Lk::ui_create]\n"
-    "let t [Lk::begin_frame $u]",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let u [Lk::ui_create]\n"
+          "let t [Lk::begin_frame $u]",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* A typed int is a fine node id — it renders to its canonical text. */
   eval_ok(interp,
-    "let n [Lk::node $t 42 label]\n"
-    "Lk::set_root $t $n",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let n [Lk::node $t 42 label]\n"
+          "Lk::set_root $t $n",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
-  eval_expect_err(interp, "Lk::node $t $u label",
-                  "Lk::node: id", "got opaque", NULL);
-  eval_expect_err(interp, "Lk::node $t (a b) label",
-                  "Lk::node: id", "got list", NULL);
-  eval_expect_err(interp, "Lk::tag $t 1 #{x 1}",
-                  "Lk::tag: tag", "got dict", NULL);
+  eval_expect_err(interp, "Lk::node $t $u label", "Lk::node: id", "got opaque",
+                  NULL);
+  eval_expect_err(interp, "Lk::node $t (a b) label", "Lk::node: id", "got list",
+                  NULL);
+  eval_expect_err(interp, "Lk::tag $t 1 #{x 1}", "Lk::tag: tag", "got dict",
+                  NULL);
   eval_expect_err(interp, "Lk::focus_set $u [lambda {x} {}]",
                   "Lk::focus_set: node id", "got proc", NULL);
   eval_expect_err(interp, "Lk::state_set $u #{a 1} 300 1",
                   "Lk::state_set: node id", "got dict", NULL);
 
   eval_ok(interp,
-    "let d [Lk::doc_new \"hello\"]\n"
-    "let s [Lk::annot_store_new]\n"
-    "Lk::annot_attach $s $d",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let d [Lk::doc_new \"hello\"]\n"
+          "let s [Lk::annot_store_new]\n"
+          "Lk::annot_attach $s $d",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   eval_expect_err(interp, "Lk::annot_add $s 0 2 (l1 l2)",
                   "Lk::annot_add: layer", "got list", NULL);
@@ -6064,12 +6500,15 @@ static void test_dsl_translator_matcher_dict(void) {
   interp = make_dsl_interp();
   dsl_begin(interp);
 
-  eval_ok(interp,
-    "translator pointer_down #{button middle} action Execute\n"
-    "translator pointer_down #{button secondary mods ctrl} loc button Look\n"
-    "translator pointer_down item Select",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "translator pointer_down #{button middle} action Execute\n"
+      "translator pointer_down #{button secondary mods ctrl} loc button Look\n"
+      "translator pointer_down item Select",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = dsl_ui(interp);
   CHECK(ui != NULL);
@@ -6096,12 +6535,11 @@ static void test_dsl_translator_matcher_dict(void) {
   }
 
   /* error paths: unknown matcher key, two dicts, bad shape */
-  eval_expect_err(interp,
-                  "translator pointer_down #{buttn middle} action Go",
+  eval_expect_err(interp, "translator pointer_down #{buttn middle} action Go",
                   "unknown matcher key 'buttn'", "button, mods", NULL);
-  eval_expect_err(interp,
-                  "translator pointer_down #{button middle} #{mods ctrl} action Go",
-                  "more than one matcher dict", NULL, NULL);
+  eval_expect_err(
+      interp, "translator pointer_down #{button middle} #{mods ctrl} action Go",
+      "more than one matcher dict", NULL, NULL);
   eval_expect_err(interp, "translator pointer_down action",
                   "expected ?matcher-dict? ptype ?kind? cmd", NULL, NULL);
 
@@ -6125,26 +6563,28 @@ static void test_dsl_split_controlled_command(void) {
   interp = make_dsl_interp();
 
   eval_ok(interp,
-    "let u [Lk::ui_create]\n"
-    "set! LkDsl::_ui $u\n"
-    "view {\n"
-    "    split_h sp #{split_controlled 1 present (pane 0)} {\n"
-    "        column c1\n"
-    "        column c2\n"
-    "    }\n"
-    "}\n"
-    "translator value_changed pane SplitMoved\n"
-    "on SplitMoved [lambda {cmd} {\n"
-    "    Lk::state_set $u sink 300 [get $cmd source_value]\n"
-    "}]\n"
-    "Lk::set_command_handler $u [lambda {cmd} {\n"
-    "    LkDsl::_dispatch_command $cmd\n"
-    "}]\n"
-    "let t [Lk::begin_frame $u]\n"
-    "LkDsl::_frame $t\n"
-    "Lk::end_frame $u",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let u [Lk::ui_create]\n"
+          "set! LkDsl::_ui $u\n"
+          "view {\n"
+          "    split_h sp #{split_controlled 1 present (pane 0)} {\n"
+          "        column c1\n"
+          "        column c2\n"
+          "    }\n"
+          "}\n"
+          "translator value_changed pane SplitMoved\n"
+          "on SplitMoved [lambda {cmd} {\n"
+          "    Lk::state_set $u sink 300 [get $cmd source_value]\n"
+          "}]\n"
+          "Lk::set_command_handler $u [lambda {cmd} {\n"
+          "    LkDsl::_dispatch_command $cmd\n"
+          "}]\n"
+          "let t [Lk::begin_frame $u]\n"
+          "LkDsl::_frame $t\n"
+          "Lk::end_frame $u",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = dsl_ui(interp);
   CHECK(ui != NULL);
@@ -6195,7 +6635,6 @@ static void test_dsl_split_controlled_command(void) {
   END_TEST();
 }
 
-
 /* ============================================================================
  * Forms widgets round (docs/forms-widgets.md): checkbox / radio / slider
  * / tabs / grid through the DSL, with C-routed events and the command
@@ -6216,20 +6655,22 @@ static void test_forms_prop_coercion(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "let cb [Lk::node $t cb checkbox]\n"
-    "Lk::prop $t $cb checked 1\n"
-    "Lk::prop $t $cb controlled 1\n"
-    "let sl [Lk::node $t sl slider]\n"
-    "Lk::prop $t $sl min 5\n"
-    "Lk::prop $t $sl max 50\n"
-    "Lk::prop $t $sl step 5\n"
-    "Lk::prop $t $sl value \"25\"\n"
-    "let g [Lk::node $t g grid]\n"
-    "Lk::prop $t $g columns 3\n"
-    "let dd [Lk::node $t dd dropdown]\n"
-    "Lk::prop $t $dd value 42",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let cb [Lk::node $t cb checkbox]\n"
+          "Lk::prop $t $cb checked 1\n"
+          "Lk::prop $t $cb controlled 1\n"
+          "let sl [Lk::node $t sl slider]\n"
+          "Lk::prop $t $sl min 5\n"
+          "Lk::prop $t $sl max 50\n"
+          "Lk::prop $t $sl step 5\n"
+          "Lk::prop $t $sl value \"25\"\n"
+          "let g [Lk::node $t g grid]\n"
+          "Lk::prop $t $g columns 3\n"
+          "let dd [Lk::node $t dd dropdown]\n"
+          "Lk::prop $t $dd value 42",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   t = dsl_tree(interp);
   CHECK(t != NULL);
@@ -6261,8 +6702,8 @@ static void test_forms_prop_coercion(void) {
   eval_expect_err(interp, "Lk::prop $t $cb checked x",
                   "bool prop expects integer", NULL, NULL);
   /* the DSL schema knows the new keys */
-  eval_expect_err(interp, "checkbox cb2 #{chekced 1}",
-                  "unknown prop 'chekced'", "checked", "columns");
+  eval_expect_err(interp, "checkbox cb2 #{chekced 1}", "unknown prop 'chekced'",
+                  "checked", "columns");
 
   lcl_interp_free(interp);
   END_TEST();
@@ -6281,42 +6722,47 @@ static void test_forms_dsl_events(void) {
   interp = make_dsl_interp();
 
   eval_ok(interp,
-    "let u [Lk::ui_create]\n"
-    "set! LkDsl::_ui $u\n"
-    "view {\n"
-    "column root {\n"
-    "checkbox cb #{text On present (flag 0) focusable 1}\n"
-    "slider sl #{min 0 max 100 value 10 present (vol 0) w 400}\n"
-    "tabs nb #{value two present (page 0) focusable 1} {\n"
-    "tab one #{text One} { label l1 #{text First} }\n"
-    "tab two #{text Two} { label l2 #{text Second} }\n"
-    "}\n"
-    "grid gr #{columns 2 gap 4} {\n"
-    "label g1 #{text aa}\n"
-    "label g2 #{text bbbb}\n"
-    "label g3 #{text c}\n"
-    "}\n"
-    "}\n"
-    "}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let u [Lk::ui_create]\n"
+          "set! LkDsl::_ui $u\n"
+          "view {\n"
+          "column root {\n"
+          "checkbox cb #{text On present (flag 0) focusable 1}\n"
+          "slider sl #{min 0 max 100 value 10 present (vol 0) w 400}\n"
+          "tabs nb #{value two present (page 0) focusable 1} {\n"
+          "tab one #{text One} { label l1 #{text First} }\n"
+          "tab two #{text Two} { label l2 #{text Second} }\n"
+          "}\n"
+          "grid gr #{columns 2 gap 4} {\n"
+          "label g1 #{text aa}\n"
+          "label g2 #{text bbbb}\n"
+          "label g3 #{text c}\n"
+          "}\n"
+          "}\n"
+          "}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   r = NULL;
 
-  eval_ok(interp,
-    "translator value_changed flag Flag\n"
-    "translator value_changed vol Vol\n"
-    "translator value_changed page Page\n"
-    "on Flag [lambda {cmd} { Lk::state_set $u sink 300 [get $cmd source_value] }]\n"
-    "on Vol [lambda {cmd} { Lk::state_set $u sink 301 [get $cmd source_value] }]\n"
-    "on Page [lambda {cmd} { Lk::state_set $u sink 302 [get $cmd source_value] }]\n"
-    "Lk::set_command_handler $u [lambda {cmd} {\n"
-    "    LkDsl::_dispatch_command $cmd\n"
-    "}]\n"
-    "let t [Lk::begin_frame $u]\n"
-    "LkDsl::_frame $t\n"
-    "Lk::end_frame $u",
-    &r);
-  if (r) lcl_ref_dec(r);
+  eval_ok(
+      interp,
+      "translator value_changed flag Flag\n"
+      "translator value_changed vol Vol\n"
+      "translator value_changed page Page\n"
+      "on Flag [lambda {cmd} { Lk::state_set $u sink 300 [get $cmd source_value] }]\n"
+      "on Vol [lambda {cmd} { Lk::state_set $u sink 301 [get $cmd source_value] }]\n"
+      "on Page [lambda {cmd} { Lk::state_set $u sink 302 [get $cmd source_value] }]\n"
+      "Lk::set_command_handler $u [lambda {cmd} {\n"
+      "    LkDsl::_dispatch_command $cmd\n"
+      "}]\n"
+      "let t [Lk::begin_frame $u]\n"
+      "LkDsl::_frame $t\n"
+      "Lk::end_frame $u",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = dsl_ui(interp);
   CHECK(ui != NULL);
@@ -6403,10 +6849,12 @@ static void test_forms_theme_accent(void) {
   dsl_begin(interp);
 
   eval_ok(interp,
-    "Lk::theme_rule $u checkbox \"\" \"\" #{accent (1 2 3)}\n"
-    "checkbox cb #{text x}",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "Lk::theme_rule $u checkbox \"\" \"\" #{accent (1 2 3)}\n"
+          "checkbox cb #{text x}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   {
     lk_ui *ui = dsl_ui(interp);
@@ -6419,7 +6867,9 @@ static void test_forms_theme_accent(void) {
 
       lk_tree_set_root(t, dsl_find(t, "cb"));
       eval_ok(interp, "Lk::end_frame $u", &r2);
-      if (r2) lcl_ref_dec(r2);
+      if (r2) {
+        lcl_ref_dec(r2);
+      }
       cb = lk_tree_find_by_id(lk_ui_tree(ui), lk_intern_cid(ui->intern, "cb"));
       lk_style_resolve(lk_ui_theme(ui), lk_ui_tree(ui), NULL, styles);
       CHECK(styles[cb].accent.r == 1 && styles[cb].accent.g == 2 &&
@@ -6459,8 +6909,9 @@ static char *read_text_file(const char *path) {
   lcl_int n;
   char *buf;
 
-  if (!f)
+  if (!f) {
     return NULL;
+  }
   fseek(f, 0, SEEK_END);
   n = ftell(f);
   fseek(f, 0, SEEK_SET);
@@ -6495,8 +6946,9 @@ static void test_lk_docs_doctests(void) {
   }
   if (rc != LCL_RC_OK) {
     const char *msg = lcl_interp_error_msg(interp);
-    if (g_cur_ok)
+    if (g_cur_ok) {
       printf("FAIL\n");
+    }
     printf("    Doc lib load error (%s): %s\n", TEST_DOC_LIB_PATH,
            msg ? msg : "(null)");
     g_cur_ok = 0;
@@ -6516,21 +6968,22 @@ static void test_lk_docs_doctests(void) {
 
     /* Coverage: every registered Lk:: name has a doc entry. */
     eval_ok(interp,
-      "let __lkents [get [get [get $__m entries] 0] entries]\n"
-      "let __names [List::map $__lkents [lambda {e} { get $e name }]]\n"
-      "var __missing ()\n"
-      "foreach __k [Ns::keys $Lk] {\n"
-      "  if [not [List::any? $__names [lambda {n} { == $n $__k }]]] {\n"
-      "    set! __missing [List::push $__missing $__k]\n"
-      "  }\n"
-      "}\n"
-      "String::join $__missing \", \"",
-      &r);
+            "let __lkents [get [get [get $__m entries] 0] entries]\n"
+            "let __names [List::map $__lkents [lambda {e} { get $e name }]]\n"
+            "var __missing ()\n"
+            "foreach __k [Ns::keys $Lk] {\n"
+            "  if [not [List::any? $__names [lambda {n} { == $n $__k }]]] {\n"
+            "    set! __missing [List::push $__missing $__k]\n"
+            "  }\n"
+            "}\n"
+            "String::join $__missing \", \"",
+            &r);
     if (r) {
       const char *missing = lcl_value_to_string(r);
       if (missing && missing[0] != '\0') {
-        if (g_cur_ok)
+        if (g_cur_ok) {
           printf("FAIL\n");
+        }
         printf("    undocumented Lk:: procs: %s\n", missing);
         g_cur_ok = 0;
       }
@@ -6566,24 +7019,26 @@ static void test_lk_docs_doctests(void) {
       r = NULL;
     }
 
-    eval_ok(interp,
-      "let __dents [get [get [get $__dm entries] 0] entries]\n"
-      "let __dnames [List::map $__dents [lambda {e} { get $e name }]]\n"
-      "var __dmissing ()\n"
-      "foreach __k [Ns::keys $LkDsl] {\n"
-      "  if [not [== [String::range $__k 0 1] \"_\"]] {\n"
-      "    if [not [List::any? $__dnames [lambda {n} { == $n $__k }]]] {\n"
-      "      set! __dmissing [List::push $__dmissing $__k]\n"
-      "    }\n"
-      "  }\n"
-      "}\n"
-      "String::join $__dmissing \", \"",
-      &r);
+    eval_ok(
+        interp,
+        "let __dents [get [get [get $__dm entries] 0] entries]\n"
+        "let __dnames [List::map $__dents [lambda {e} { get $e name }]]\n"
+        "var __dmissing ()\n"
+        "foreach __k [Ns::keys $LkDsl] {\n"
+        "  if [not [== [String::range $__k 0 1] \"_\"]] {\n"
+        "    if [not [List::any? $__dnames [lambda {n} { == $n $__k }]]] {\n"
+        "      set! __dmissing [List::push $__dmissing $__k]\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+        "String::join $__dmissing \", \"",
+        &r);
     if (r) {
       const char *missing = lcl_value_to_string(r);
       if (missing && missing[0] != '\0') {
-        if (g_cur_ok)
+        if (g_cur_ok) {
           printf("FAIL\n");
+        }
         printf("    undocumented LkDsl procs: %s\n", missing);
         g_cur_ok = 0;
       }
@@ -6621,7 +7076,9 @@ static void test_image_new_and_px(void) {
           "let ui [Lk::ui_create]\n"
           "let img [Lk::image_new $ui 4 3]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "opaque? $img", 1);
   check_str(interp, "repr [Lk::image_size $img]", "(4 3)");
@@ -6629,16 +7086,20 @@ static void test_image_new_and_px(void) {
 
   r = NULL;
   eval_ok(interp, "Lk::image_set_px $img 1 2 (10 20 30)", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "repr [Lk::image_get_px $img 1 2]", "(10 20 30 255)");
 
   r = NULL;
   eval_ok(interp, "Lk::image_set_px $img 0 0 (1 2 3 4)", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "repr [Lk::image_get_px $img 0 0]", "(1 2 3 4)");
 
-  eval_expect_err(interp, "Lk::image_new $ui 4", "Lk::image_new",
-                  "3 arguments", NULL);
+  eval_expect_err(interp, "Lk::image_new $ui 4", "Lk::image_new", "3 arguments",
+                  NULL);
   eval_expect_err(interp, "Lk::image_new $img 4 3", "expected lk_ui opaque",
                   NULL, NULL);
   eval_expect_err(interp, "Lk::image_new $ui 0 3", ">= 1", NULL, NULL);
@@ -6647,8 +7108,8 @@ static void test_image_new_and_px(void) {
                   NULL);
   eval_expect_err(interp, "Lk::image_get_px $ui 0 0",
                   "expected lk_image opaque", NULL, NULL);
-  eval_expect_err(interp, "Lk::image_set_px $img 0 0 (1 2)", "color list",
-                  NULL, NULL);
+  eval_expect_err(interp, "Lk::image_set_px $img 0 0 (1 2)", "color list", NULL,
+                  NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -6665,12 +7126,16 @@ static void test_image_bytes_hex(void) {
           "let ui [Lk::ui_create]\n"
           "let img [Lk::image_new $ui 2 2]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* whitespace + uppercase decode, lowercase re-encode */
   r = NULL;
   eval_ok(interp, "Lk::image_set_bytes $img 0 \"DE AD\nBE EF\"", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "Lk::image_bytes $img 0 4", "deadbeef");
   check_str(interp, "Lk::image_bytes $img 12 4", "00000000");
 
@@ -6711,17 +7176,19 @@ static void test_annot_present_ui_dies_first(void) {
    * longer reach the dead table, so ui teardown must sweep the
    * lcl-value boxes itself.  A leak here is caught by LSan in CI. */
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "let doc [Lk::doc_new \"hello world\"]\n"
-    "let s [Lk::annot_store_new]\n"
-    "Lk::annot_attach $s $doc\n"
-    "let a [Lk::annot_add $s 0 5 \"l\"]\n"
-    "let b [Lk::annot_add $s 6 11 \"l\"]\n"
-    "Lk::annot_present $ui $s $a \"t\" #{file \"x\" line 1}\n"
-    "Lk::annot_present $ui $s $b \"t\" (1 2 3)\n"
-    "Lk::annot_present $ui $s $a \"t\" \"replaced\"",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "let doc [Lk::doc_new \"hello world\"]\n"
+          "let s [Lk::annot_store_new]\n"
+          "Lk::annot_attach $s $doc\n"
+          "let a [Lk::annot_add $s 0 5 \"l\"]\n"
+          "let b [Lk::annot_add $s 6 11 \"l\"]\n"
+          "Lk::annot_present $ui $s $a \"t\" #{file \"x\" line 1}\n"
+          "Lk::annot_present $ui $s $b \"t\" (1 2 3)\n"
+          "Lk::annot_present $ui $s $a \"t\" \"replaced\"",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* two live boxes: the replace released a's first one through the
    * store's hook (LSan cannot see a missed release -- the binding's
@@ -6729,7 +7196,9 @@ static void test_annot_present_ui_dies_first(void) {
   CHECK(lcl_lk_debug_pres_boxes() == 2);
 
   eval_ok(interp, "Lk::ui_destroy $ui", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   CHECK(lcl_lk_debug_pres_boxes() == 0);
 
@@ -6749,12 +7218,14 @@ static void test_command_handler_released_on_ui_destroy(void) {
   interp = make_interp();
 
   eval_ok(interp,
-    "let ui [Lk::ui_create]\n"
-    "Lk::set_command_handler $ui [lambda {cmd} { 0 }]\n"
-    "Lk::set_command_handler $ui [lambda {cmd} { 1 }]\n"
-    "Lk::ui_destroy $ui",
-    &r);
-  if (r) lcl_ref_dec(r);
+          "let ui [Lk::ui_create]\n"
+          "Lk::set_command_handler $ui [lambda {cmd} { 0 }]\n"
+          "Lk::set_command_handler $ui [lambda {cmd} { 1 }]\n"
+          "Lk::ui_destroy $ui",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   lcl_interp_free(interp);
   END_TEST();
@@ -6773,7 +7244,9 @@ static void test_image_lifetime(void) {
           "Lk::image_set_px $img 0 0 (9 8 7)\n"
           "Lk::ui_destroy $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_str(interp, "repr [Lk::image_get_px $img 0 0]", "(9 8 7 255)");
 
@@ -6795,7 +7268,9 @@ static void test_canvas_new_and_ops(void) {
           "let c [Lk::canvas_new $ui 320 200]\n"
           "let c0 [Lk::canvas_new $ui]",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "opaque? $c", 1);
   check_str(interp, "repr [Lk::canvas_size $c]", "(320 200)");
@@ -6815,18 +7290,24 @@ static void test_canvas_new_and_ops(void) {
           "Lk::canvas_text $c 3 4 \"hi\" (1 1 1)\n"
           "Lk::canvas_text $c 3 4 42 (1 1 1)",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::canvas_op_count $c", 9);
 
   r = NULL;
   eval_ok(interp, "Lk::canvas_set_size $c 640 480", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_str(interp, "repr [Lk::canvas_size $c]", "(640 480)");
   check_int(interp, "Lk::canvas_op_count $c", 9); /* content untouched */
 
   r = NULL;
   eval_ok(interp, "Lk::canvas_clear $c", &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
   check_int(interp, "Lk::canvas_op_count $c", 0);
 
   /* Error paths: arity, wrong opaque, bad coords / colors / points /
@@ -6845,8 +7326,8 @@ static void test_canvas_new_and_ops(void) {
                   "6 or 7 arguments", NULL);
   eval_expect_err(interp, "Lk::canvas_line $c 0 0 1 x (1 2 3)",
                   "Lk::canvas_line", "must be numbers", NULL);
-  eval_expect_err(interp, "Lk::canvas_line $c 0 0 1 1 (1 2)",
-                  "Lk::canvas_line", "color list", NULL);
+  eval_expect_err(interp, "Lk::canvas_line $c 0 0 1 1 (1 2)", "Lk::canvas_line",
+                  "color list", NULL);
   eval_expect_err(interp, "Lk::canvas_line $c 0 0 1 1 (1 2 3) 300",
                   "Lk::canvas_line", "stroke", NULL);
   eval_expect_err(interp, "Lk::canvas_polyline $c (0 0 10) (1 2 3)",
@@ -6884,7 +7365,9 @@ static void test_canvas_lifetime(void) {
           "Lk::canvas_line $c 0 0 1 1 (9 8 7)\n"
           "Lk::ui_destroy $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   check_int(interp, "Lk::canvas_op_count $c", 1);
 
@@ -6912,7 +7395,9 @@ static void test_image_prop_bridge(void) {
           "Lk::set_root $t $w\n"
           "Lk::append_child $t $w $n",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   /* bad prop value first (the tree handle is only valid pre-swap) */
   eval_expect_err(interp, "Lk::prop $t $n image 42",
@@ -6923,7 +7408,9 @@ static void test_image_prop_bridge(void) {
           "Lk::prop $t $n image $img\n"
           "Lk::end_frame $ui",
           &r);
-  if (r) lcl_ref_dec(r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
 
   ui = fetch_ui(interp);
   CHECK(ui != NULL);

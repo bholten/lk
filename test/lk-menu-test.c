@@ -76,19 +76,18 @@ static void build_frame(lk_ui *ui, int disable_cell, int with_cell) {
 /* Minesweeper's table plus a reaction translator and a foreign ptype. */
 static void add_translators(lk_ui *ui) {
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "cell", 0, 0, 0,
-                          LK_POINTER_BUTTON_PRIMARY, "Reveal");
+                         LK_POINTER_BUTTON_PRIMARY, "Reveal");
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "cell", 0, 0, 0,
-                          LK_POINTER_BUTTON_SECONDARY, "Flag");
+                         LK_POINTER_BUTTON_SECONDARY, "Flag");
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "cell", 0, 0, 0,
-                          LK_POINTER_BUTTON_MIDDLE, "Chord");
+                         LK_POINTER_BUTTON_MIDDLE, "Chord");
   lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "cell", 0, 0, 0, 0,
-                          "Ignore");
+                         "Ignore");
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "other", 0, 0, 0, 0,
-                          "Foreign");
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "", 0, LKK_F2, 0, 0,
-                          "NewGame");
+                         "Foreign");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "", 0, LKK_F2, 0, 0, "NewGame");
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "", 0, LKK_Q, LK_MOD_CTRL, 0,
-                          "Quit");
+                         "Quit");
 }
 
 /* Lay out into the ui-owned rects with resolved styles; returns the
@@ -150,8 +149,7 @@ static void test_candidates_order(void) {
 
   add_translators(ui);
   build_frame(ui, 0, 1);
-  n = lk_menu_candidates(ui, lk_ui_tree(ui), find(ui, "cell"), 0, 0, items,
-                         16);
+  n = lk_menu_candidates(ui, lk_ui_tree(ui), find(ui, "cell"), 0, 0, items, 16);
 
   CHECK_EQ(n, 6);
 
@@ -182,8 +180,7 @@ static void test_candidates_order(void) {
 
   /* Disabled: the cell's own commands vanish, globals stay. */
   build_frame(ui, 1, 1);
-  n = lk_menu_candidates(ui, lk_ui_tree(ui), find(ui, "cell"), 0, 0, items,
-                         16);
+  n = lk_menu_candidates(ui, lk_ui_tree(ui), find(ui, "cell"), 0, 0, items, 16);
   CHECK_EQ(n, 2);
 
   END_TEST();
@@ -214,8 +211,8 @@ static void test_activation_equals_gesture(void) {
 
   /* The menu's second item is Flag. */
   CHECK_EQ(lk_menu_candidates(ui, lk_ui_tree(ui), cell, 0, 0, items, 16), 6);
-  CHECK(lk_menu_open(ui, lk_intern_cid(ui->intern, "cell"),
-                     LK_ANCHOR_AT_CURSOR, 50, 50, items, 6) == 1);
+  CHECK(lk_menu_open(ui, lk_intern_cid(ui->intern, "cell"), LK_ANCHOR_AT_CURSOR,
+                     50, 50, items, 6) == 1);
   CHECK(lk_menu_is_open(ui));
   CHECK_EQ(lk_menu_count(ui), 6);
   CHECK_EQ(lk_menu_activate(ui, 1), 1);
@@ -235,8 +232,8 @@ static void test_activation_equals_gesture(void) {
 
   /* A global: the key translator emits with the root as source. */
   lk_ui_clear_commands(ui);
-  CHECK(lk_menu_open(ui, lk_intern_cid(ui->intern, "cell"),
-                     LK_ANCHOR_AT_CURSOR, 50, 50, items, 6) == 1);
+  CHECK(lk_menu_open(ui, lk_intern_cid(ui->intern, "cell"), LK_ANCHOR_AT_CURSOR,
+                     50, 50, items, 6) == 1);
   CHECK_EQ(lk_menu_activate(ui, 3), 0); /* the separator */
   CHECK(lk_menu_is_open(ui));
   CHECK_EQ(lk_menu_activate(ui, 5), 1);
@@ -246,8 +243,8 @@ static void test_activation_equals_gesture(void) {
 
   /* Cleared translators under an open menu: activation refuses. */
   lk_ui_clear_commands(ui);
-  CHECK(lk_menu_open(ui, lk_intern_cid(ui->intern, "cell"),
-                     LK_ANCHOR_AT_CURSOR, 50, 50, items, 6) == 1);
+  CHECK(lk_menu_open(ui, lk_intern_cid(ui->intern, "cell"), LK_ANCHOR_AT_CURSOR,
+                     50, 50, items, 6) == 1);
   lk_ui_clear_translators(ui);
   CHECK_EQ(lk_menu_activate(ui, 0), 0);
   CHECK_EQ(lk_ui_commands(ui)->count, 0u);
@@ -283,12 +280,12 @@ static void test_popup_open_geometry_keys(void) {
   CHECK(!lk_menu_is_open(ui));
 
   /* On the cell: six items, an overlay, first item hovered. */
-  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5,
-                                cell_r.y + 5),
+  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5, cell_r.y + 5),
            6);
   CHECK(lk_menu_is_open(ui));
   CHECK_EQ(lk_overlay_count(ui), 1);
-  CHECK_EQ((unsigned)lk_overlay_top(ui)->kind, (unsigned)LK_OVERLAY_CONTEXT_MENU);
+  CHECK_EQ((unsigned)lk_overlay_top(ui)->kind,
+           (unsigned)LK_OVERLAY_CONTEXT_MENU);
   CHECK_EQ(lk_menu_hover(ui), 0);
 
   /* Rendering the overlays resolves the popup at the cursor. */
@@ -304,12 +301,10 @@ static void test_popup_open_geometry_keys(void) {
   CHECK(mr.w > 100);
 
   /* Hit-testing inside the popup answers the owner. */
-  CHECK_EQ(lk_hit_test_overlay(ui, lk_ui_rects(ui), &cfg, mr.x + 5,
-                               mr.y + 5),
+  CHECK_EQ(lk_hit_test_overlay(ui, lk_ui_rects(ui), &cfg, mr.x + 5, mr.y + 5),
            cell);
-  CHECK_EQ(lk_hit_test_overlay(ui, lk_ui_rects(ui), &cfg, mr.x + mr.w + 5,
-                               mr.y),
-           0);
+  CHECK_EQ(
+      lk_hit_test_overlay(ui, lk_ui_rects(ui), &cfg, mr.x + mr.w + 5, mr.y), 0);
 
   /* Keys walk, skipping the separator; letters jump. */
   route_key(ui, LKK_DOWN, 0);
@@ -342,8 +337,7 @@ static void test_popup_open_geometry_keys(void) {
 
   /* Return activates the hovered item. */
   lk_ui_clear_commands(ui);
-  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5,
-                                cell_r.y + 5),
+  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5, cell_r.y + 5),
            6);
   route_key(ui, LKK_DOWN, 0);
   route_key(ui, LKK_DOWN, 0);
@@ -380,8 +374,7 @@ static void test_popup_dismissal(void) {
   lk_node_rect(ui, lk_intern_cid(ui->intern, "cell"), &cell_r);
 
   /* ESC (the generic overlay pre-step). */
-  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5,
-                                cell_r.y + 5),
+  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5, cell_r.y + 5),
            6);
   route_key(ui, LKK_ESCAPE, 0);
   CHECK(!lk_menu_is_open(ui));
@@ -390,24 +383,22 @@ static void test_popup_dismissal(void) {
   route_key(ui, LKK_DOWN, 0);
 
   /* Outside click through the host's dismiss pass. */
-  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5,
-                                cell_r.y + 5),
+  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5, cell_r.y + 5),
            6);
   memset(&rl, 0, sizeof(rl));
   lk_render_build_overlays(ui, lk_ui_rects(ui), &cfg, &rl);
   lk_render_list_destroy(&rl);
   mr = lk_menu_rect(ui);
-  CHECK_EQ(lk_overlay_dismiss_outside(ui, lk_ui_rects(ui), &cfg, mr.x + 2,
-                                      mr.y + 2),
-           LK_DISMISS_NONE); /* inside: nothing dismissed */
+  CHECK_EQ(
+      lk_overlay_dismiss_outside(ui, lk_ui_rects(ui), &cfg, mr.x + 2, mr.y + 2),
+      LK_DISMISS_NONE); /* inside: nothing dismissed */
   CHECK(lk_menu_is_open(ui));
   CHECK_EQ(lk_overlay_dismiss_outside(ui, lk_ui_rects(ui), &cfg, 600, 400),
            LK_DISMISS_DISMISSED);
   CHECK(!lk_menu_is_open(ui));
 
   /* Owner leaves the tree: end_frame pops the overlay. */
-  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5,
-                                cell_r.y + 5),
+  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 5, cell_r.y + 5),
            6);
   build_frame(ui, 0, 0);
   CHECK(!lk_menu_is_open(ui));
@@ -489,13 +480,13 @@ static void test_interior_candidates(void) {
   BEGIN_TEST("menu: interior (styled text) candidates come first, with hits");
 
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "loc", 0, 0, 0,
-                          LK_POINTER_BUTTON_PRIMARY, "Open");
+                         LK_POINTER_BUTTON_PRIMARY, "Open");
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "loc", 0, 0, 0,
-                          LK_POINTER_BUTTON_MIDDLE, "Copy");
+                         LK_POINTER_BUTTON_MIDDLE, "Copy");
   lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "para", 0, 0, 0, 0,
-                          "Select");
+                         "Select");
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "", 0, LKK_Q, LK_MOD_CTRL, 0,
-                          "Quit");
+                         "Quit");
 
   {
     lk_tree *t = lk_ui_begin_frame(ui);
@@ -524,8 +515,7 @@ static void test_interior_candidates(void) {
   st = find(ui, "st");
 
   /* Over the location: Open, Copy (interior), Select (node), sep, Quit. */
-  n = lk_menu_candidates(ui, lk_ui_tree(ui), st, 10 + 5 * 8, 10 + 4, items,
-                         16);
+  n = lk_menu_candidates(ui, lk_ui_tree(ui), st, 10 + 5 * 8, 10 + 4, items, 16);
   CHECK_EQ(n, 5);
 
   if (n == 5) {
@@ -540,8 +530,7 @@ static void test_interior_candidates(void) {
   }
 
   /* Over plain text: no interior items. */
-  n = lk_menu_candidates(ui, lk_ui_tree(ui), st, 10 + 1 * 8, 10 + 4, items,
-                         16);
+  n = lk_menu_candidates(ui, lk_ui_tree(ui), st, 10 + 1 * 8, 10 + 4, items, 16);
   CHECK_EQ(n, 3);
   CHECK(n == 3 && is(ui, items[0].command_name, "Select"));
 

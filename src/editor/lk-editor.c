@@ -48,7 +48,7 @@
 #define ED_FALLBACK_BASELINE 12
 #define ED_FALLBACK_PAGE_LINES 20
 #define ED_TAB_SIZE 4
-#define ED_SCROLL_BAR_W 6   /* the lk-scroll.c SCROLL_BAR_W convention */
+#define ED_SCROLL_BAR_W 6 /* the lk-scroll.c SCROLL_BAR_W convention */
 #define ED_SCROLL_THUMB_MIN 8
 
 /* One visible VISUAL ROW extracted into the vis scratch (a whole
@@ -334,8 +334,7 @@ static int ed_cursor_xy_reserve(lk_editor *e, lk_u32 pairs) {
 
   nc = ed_grow_cap(e->cursor_xy_cap, pairs, 4);
   nb = (lk_i32 *)ed_grow_buf(e, e->cursor_xy,
-                             e->geom.cursor_count * 2u *
-                                 (lk_u32)sizeof(lk_i32),
+                             e->geom.cursor_count * 2u * (lk_u32)sizeof(lk_i32),
                              nc * 2u * (lk_u32)sizeof(lk_i32));
 
   if (!nb) {
@@ -397,8 +396,7 @@ static int ed_segs_reserve(lk_editor *e, lk_u32 needed) {
   }
 
   nc = ed_grow_cap(e->seg_cap, needed, 16);
-  nb = (ed_seg *)ed_grow_buf(e, e->segs,
-                             e->seg_count * (lk_u32)sizeof(ed_seg),
+  nb = (ed_seg *)ed_grow_buf(e, e->segs, e->seg_count * (lk_u32)sizeof(ed_seg),
                              nc * (lk_u32)sizeof(ed_seg));
 
   if (!nb) {
@@ -521,9 +519,7 @@ static lk_u32 ed_cp_at(const lk_document *d, lk_u32 pos, lk_u32 doc_len) {
     cp |= (lk_u32)lk_doc_get_byte(d, pos + 3) & 0x3Fu;
     break;
 
-  default:
-    cp = b;
-    break;
+  default: cp = b; break;
   }
 
   return cp;
@@ -645,8 +641,7 @@ static int ed_word_at(const lk_document *d, lk_u32 pos, lk_u32 *out_lo,
   lk_u32 hi;
 
   if (!ed_is_word_cp(ed_cp_at(d, pos, doc_len))) {
-    if (pos == 0 ||
-        !ed_is_word_cp(ed_cp_at(d, ed_prev_cp(d, pos), doc_len))) {
+    if (pos == 0 || !ed_is_word_cp(ed_cp_at(d, ed_prev_cp(d, pos), doc_len))) {
       return 0;
     }
 
@@ -851,9 +846,8 @@ static lk_u32 ed_line_ix_from_x(const lk_editor *e, const lk_text_backend *tb,
 
 /* ---- Segment emission (tab runs, span-split into sub-pieces) ---- */
 
-static int ed_push_seg(lk_editor *e, lk_u32 off, lk_u32 len, lk_i32 x,
-                       lk_i32 y, lk_i32 w, lk_u8 flags, lk_color fg,
-                       lk_color bg) {
+static int ed_push_seg(lk_editor *e, lk_u32 off, lk_u32 len, lk_i32 x, lk_i32 y,
+                       lk_i32 w, lk_u8 flags, lk_color fg, lk_color bg) {
   ed_seg seg;
 
   if (!ed_segs_reserve(e, e->seg_count + 1)) {
@@ -894,10 +888,9 @@ static lk_u32 ed_snap_run_ix(const char *run, lk_u32 len, lk_u32 ix) {
  * at vis_off), doc_off its document byte offset, x/y/w its absolute
  * pixel geometry, spans_on the layout-time staleness verdict.
  * Returns 0 only on allocation failure. */
-static int ed_emit_run(lk_editor *e, const lk_text_backend *tb,
-                       const char *run, lk_u32 run_len, lk_u32 vis_off,
-                       lk_u32 doc_off, lk_i32 x, lk_i32 y, lk_i32 w,
-                       int spans_on) {
+static int ed_emit_run(lk_editor *e, const lk_text_backend *tb, const char *run,
+                       lk_u32 run_len, lk_u32 vis_off, lk_u32 doc_off, lk_i32 x,
+                       lk_i32 y, lk_i32 w, int spans_on) {
   lk_color none;
   lk_u32 pos;
   lk_u32 si;
@@ -946,8 +939,8 @@ static int ed_emit_run(lk_editor *e, const lk_text_backend *tb,
       lk_i32 x0 = x + ed_run_x(e, tb, run, run_len, a);
       lk_i32 x1 = x + ed_run_x(e, tb, run, run_len, b);
 
-      if (!ed_push_seg(e, vis_off + a, b - a, x0, y, x1 - x0, sp->flags,
-                       sp->fg, sp->bg)) {
+      if (!ed_push_seg(e, vis_off + a, b - a, x0, y, x1 - x0, sp->flags, sp->fg,
+                       sp->bg)) {
         return 0;
       }
     }
@@ -1199,8 +1192,7 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
 /* Ensure the line's wrap entry is valid at the current generation,
  * measuring lazily on demand.  NULL when wrapping is off (every line
  * is one row). */
-static const ed_line_wrap *ed_wrap_line(lk_editor *e,
-                                        const lk_text_backend *tb,
+static const ed_line_wrap *ed_wrap_line(lk_editor *e, const lk_text_backend *tb,
                                         lk_u32 line) {
   ed_line_wrap *w;
   lk_u32 ls;
@@ -1338,10 +1330,9 @@ static lk_u32 ed_rows_back_n(lk_editor *e, const lk_text_backend *tb,
  * the walked rows' lines get measured -- this is both the bottom
  * scroll clamp and the distant scroll-to-cursor placement, so it is
  * viewport-bounded by construction. */
-static void ed_bottom_anchor(lk_editor *e, const lk_text_backend *tb,
-                             lk_u32 bl, lk_u32 br, lk_i32 line_h,
-                             lk_i32 view_h, lk_u32 *al, lk_u32 *ar,
-                             lk_i32 *ay) {
+static void ed_bottom_anchor(lk_editor *e, const lk_text_backend *tb, lk_u32 bl,
+                             lk_u32 br, lk_i32 line_h, lk_i32 view_h,
+                             lk_u32 *al, lk_u32 *ar, lk_i32 *ay) {
   lk_u32 q = (lk_u32)(view_h / line_h);
   lk_i32 r = view_h % line_h;
   lk_u32 need = (r == 0) ? (q ? q - 1 : 0) : q;
@@ -1422,8 +1413,7 @@ static int ed_wrap_reserve(lk_editor *e, lk_u32 needed) {
 
   nc = ed_grow_cap(e->wrap_cap, needed, 64);
   nb = (ed_line_wrap *)ed_grow_buf(e, e->wrap,
-                                   e->wrap_count *
-                                       (lk_u32)sizeof(ed_line_wrap),
+                                   e->wrap_count * (lk_u32)sizeof(ed_line_wrap),
                                    nc * (lk_u32)sizeof(ed_line_wrap));
 
   if (!nb) {
@@ -1737,8 +1727,7 @@ static void ed_snap_slot_free(lk_editor *e, ed_caret_snap *s) {
   memset(s, 0, sizeof(*s));
 }
 
-static ed_caret *ed_carets_copy(lk_editor *e, const ed_caret *src,
-                                lk_u32 n) {
+static ed_caret *ed_carets_copy(lk_editor *e, const ed_caret *src, lk_u32 n) {
   ed_caret *c = (ed_caret *)e->alloc(e->ud, n * (lk_u32)sizeof(ed_caret));
 
   if (c) {
@@ -1751,9 +1740,8 @@ static ed_caret *ed_carets_copy(lk_editor *e, const ed_caret *src,
 /* Record {serial -> before/after caret sets} in the ring, evicting
  * the oldest slot.  All-or-nothing on allocation failure (a snapshot
  * with only one side would restore garbage). */
-static void ed_snap_record(lk_editor *e, lk_u32 serial,
-                           const ed_caret *before, lk_u32 before_count,
-                           lk_u32 before_primary) {
+static void ed_snap_record(lk_editor *e, lk_u32 serial, const ed_caret *before,
+                           lk_u32 before_count, lk_u32 before_primary) {
   ed_caret_snap *s = &e->snaps[e->snap_head];
 
   ed_snap_slot_free(e, s);
@@ -1896,10 +1884,8 @@ static void ed_on_doc(void *ud, const lk_document *d,
 
     for (di = 0; di < n; di++) {
       lk_u32 line = lk_doc_pos_to_line(d, deltas[di].start);
-      lk_u32 del_nl = ed_count_nl(deltas[di].deleted,
-                                  deltas[di].deleted_len);
-      lk_u32 ins_nl = ed_count_nl(deltas[di].inserted,
-                                  deltas[di].inserted_len);
+      lk_u32 del_nl = ed_count_nl(deltas[di].deleted, deltas[di].deleted_len);
+      lk_u32 ins_nl = ed_count_nl(deltas[di].inserted, deltas[di].inserted_len);
 
       if (line >= e->wrap_count) {
         line = e->wrap_count ? e->wrap_count - 1 : 0;
@@ -1935,8 +1921,7 @@ static void ed_on_doc(void *ud, const lk_document *d,
    * run stays styled instead of blinking unstyled.  The producer
    * still re-stamps truth next frame.  A copy that was already stale
    * stays stale (transforming from a wrong base would be wrong). */
-  if (e->span_count > 0 &&
-      lk_revision_equal(e->span_rev, deltas[0].before)) {
+  if (e->span_count > 0 && lk_revision_equal(e->span_rev, deltas[0].before)) {
     lk_u32 di;
     lk_u32 si;
     lk_u32 w;
@@ -1950,10 +1935,10 @@ static void ed_on_doc(void *ud, const lk_document *d,
         lk_edit_span *sp = &e->spans[si];
 
         if (dl > 0) {
-          sp->start = sp->start <= p     ? sp->start
+          sp->start = sp->start <= p        ? sp->start
                       : sp->start >= p + dl ? sp->start - dl
                                             : p;
-          sp->end = sp->end <= p     ? sp->end
+          sp->end = sp->end <= p        ? sp->end
                     : sp->end >= p + dl ? sp->end - dl
                                         : p;
         }
@@ -2364,9 +2349,8 @@ void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap) {
 
   if (snap->count > e->span_cap) {
     lk_u32 nc = ed_grow_cap(e->span_cap, snap->count, 8);
-    lk_edit_span *nb =
-        (lk_edit_span *)ed_grow_buf(e, e->spans, 0,
-                                    nc * (lk_u32)sizeof(lk_edit_span));
+    lk_edit_span *nb = (lk_edit_span *)ed_grow_buf(
+        e, e->spans, 0, nc * (lk_u32)sizeof(lk_edit_span));
 
     if (!nb) {
       return; /* allocation failure degrades to "no spans" */
@@ -2483,9 +2467,9 @@ typedef struct ed_plan {
  *
  * Returns 1 when any document mutation ran; 0 leaves the caret set
  * untouched. */
-static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd,
-                          ed_plan *plans, lk_u32 nplans, const char *ins,
-                          lk_u32 ins_len, int do_insert) {
+static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd, ed_plan *plans,
+                          lk_u32 nplans, const char *ins, lk_u32 ins_len,
+                          int do_insert) {
   lk_u32 i;
   lk_u32 w;
   lk_u32 del_total = 0;
@@ -2518,8 +2502,7 @@ static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd,
     lk_u32 j = i;
 
     while (j > 0 && (plans[j - 1].lo > key.lo ||
-                     (plans[j - 1].lo == key.lo &&
-                      plans[j - 1].hi > key.hi))) {
+                     (plans[j - 1].lo == key.lo && plans[j - 1].hi > key.hi))) {
       plans[j] = plans[j - 1];
       j--;
     }
@@ -2647,8 +2630,8 @@ static ed_plan *ed_plans_new(lk_editor *e) {
 
 /* Insert bytes at every caret, replacing active selections, as ONE
  * transaction. */
-static int ed_edit_insert(lk_editor *e, lk_editor_cmd_id cmd,
-                          const char *ptr, lk_u32 len) {
+static int ed_edit_insert(lk_editor *e, lk_editor_cmd_id cmd, const char *ptr,
+                          lk_u32 len) {
   ed_plan *plans;
   int did;
 
@@ -2671,8 +2654,8 @@ static int ed_edit_insert(lk_editor *e, lk_editor_cmd_id cmd,
 /* Per-caret delete: the selection when active, else the range
  * derive(doc, cursor) -> [lo, hi) (empty at a document edge). */
 static int ed_edit_delete(lk_editor *e, lk_editor_cmd_id cmd,
-                          void (*derive)(const lk_document *, lk_u32,
-                                         lk_u32 *, lk_u32 *)) {
+                          void (*derive)(const lk_document *, lk_u32, lk_u32 *,
+                                         lk_u32 *)) {
   ed_plan *plans = ed_plans_new(e);
   lk_u32 i;
   int did;
@@ -2705,8 +2688,8 @@ static void ed_derive_fwd_cp(const lk_document *d, lk_u32 pos, lk_u32 *lo,
   *hi = ed_next_cp(d, pos);
 }
 
-static void ed_derive_back_word(const lk_document *d, lk_u32 pos,
-                                lk_u32 *lo, lk_u32 *hi) {
+static void ed_derive_back_word(const lk_document *d, lk_u32 pos, lk_u32 *lo,
+                                lk_u32 *hi) {
   *lo = ed_word_left(d, pos);
   *hi = pos;
 }
@@ -2778,8 +2761,7 @@ static int ed_copy(lk_editor *e, lk_ui *ui) {
 }
 
 static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
-                             lk_i32 *track_h, lk_i32 *thumb_y,
-                             lk_i32 *thumb_h);
+                             lk_i32 *track_h, lk_i32 *thumb_y, lk_i32 *thumb_h);
 
 /* Lines per page from the last layout; 20 when no layout ran yet. */
 static lk_i32 ed_page_size(const lk_editor *e) {
@@ -2788,9 +2770,9 @@ static lk_i32 ed_page_size(const lk_editor *e) {
 
 /* Bounds of visual row (line, row): absolute start byte, byte length
  * (no \n), and whether it is the line's final row. */
-static void ed_row_bounds(lk_editor *e, const lk_text_backend *tb,
-                          lk_u32 line, lk_u32 row, lk_u32 *out_start,
-                          lk_u32 *out_len, int *out_final) {
+static void ed_row_bounds(lk_editor *e, const lk_text_backend *tb, lk_u32 line,
+                          lk_u32 row, lk_u32 *out_start, lk_u32 *out_len,
+                          int *out_final) {
   const ed_line_wrap *w = ed_wrap_line(e, tb, line);
   lk_u32 ls = lk_doc_line_start(e->doc, line);
   lk_u32 llen = lk_doc_line_end(e->doc, line) - ls;
@@ -2822,8 +2804,8 @@ static int ed_move_vert(lk_editor *e, lk_ui *ui, ed_caret *c, lk_i32 delta,
   int at_last;
 
   ed_pos_to_row(e, tb, c->cursor, &cl, &cr);
-  at_last = cl >= lcount - 1 &&
-            cr + 1 >= ed_row_count_of(ed_wrap_line(e, tb, cl));
+  at_last =
+      cl >= lcount - 1 && cr + 1 >= ed_row_count_of(ed_wrap_line(e, tb, cl));
   ed_motion_begin(c, select);
 
   if (delta < 0 && cl == 0 && cr == 0) {
@@ -2867,8 +2849,7 @@ static int ed_move_vert(lk_editor *e, lk_ui *ui, ed_caret *c, lk_i32 delta,
       return 0;
     }
 
-    ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen,
-                           c->sticky_x);
+    ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen, c->sticky_x);
 
     /* A non-final row's end position IS the wrap break, which the
      * NEXT row owns -- clamp inside the row so the caret lands where
@@ -2925,10 +2906,8 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
     case LK_ED_CUT:
     case LK_ED_PASTE:
     case LK_ED_UNDO:
-    case LK_ED_REDO:
-      return 0;
-    default:
-      break;
+    case LK_ED_REDO: return 0;
+    default: break;
     }
   }
 
@@ -2943,11 +2922,9 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
     return ed_edit_insert(e, cmd, arg->text.ptr, arg->text.len);
 
-  case LK_ED_DELETE_BACKWARD:
-    return ed_edit_delete(e, cmd, ed_derive_back_cp);
+  case LK_ED_DELETE_BACKWARD: return ed_edit_delete(e, cmd, ed_derive_back_cp);
 
-  case LK_ED_DELETE_FORWARD:
-    return ed_edit_delete(e, cmd, ed_derive_fwd_cp);
+  case LK_ED_DELETE_FORWARD: return ed_edit_delete(e, cmd, ed_derive_fwd_cp);
 
   case LK_ED_DELETE_WORD_BACKWARD:
     return ed_edit_delete(e, cmd, ed_derive_back_word);
@@ -3072,8 +3049,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       ed_caret *c = &e->carets[i];
 
       changed |= ed_move_to(
-          e, c,
-          lk_doc_line_end(e->doc, lk_doc_pos_to_line(e->doc, c->cursor)),
+          e, c, lk_doc_line_end(e->doc, lk_doc_pos_to_line(e->doc, c->cursor)),
           select);
     }
 
@@ -3097,8 +3073,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
        * NEXT row per the pinned rule -- the caret renders at its
        * start), the line end for the final row. */
       changed |= ed_move_to(
-          e, c, cmd == LK_ED_MOVE_ROW_START ? rstart : rstart + rlen,
-          select);
+          e, c, cmd == LK_ED_MOVE_ROW_START ? rstart : rstart + rlen, select);
     }
 
     ed_normalize(e);
@@ -3120,8 +3095,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
   case LK_ED_MOVE_PAGE_UP:
   case LK_ED_MOVE_PAGE_DOWN: {
-    lk_i32 d = cmd == LK_ED_MOVE_PAGE_UP ? -ed_page_size(e)
-                                         : ed_page_size(e);
+    lk_i32 d = cmd == LK_ED_MOVE_PAGE_UP ? -ed_page_size(e) : ed_page_size(e);
 
     for (i = 0; i < e->caret_count; i++) {
       changed |= ed_move_vert(e, ui, &e->carets[i], d, select);
@@ -3143,8 +3117,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
     return 1;
 
-  case LK_ED_COPY:
-    return ed_copy(e, ui);
+  case LK_ED_COPY: return ed_copy(e, ui);
 
   case LK_ED_CUT:
     if (!ed_copy(e, ui)) {
@@ -3458,8 +3431,8 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
             lk_u32 clo;
             lk_u32 chi;
 
-            if (ed_caret_sel_range(&e->carets[i], &clo, &chi) &&
-                mpos < chi && clo < mpos + nlen) {
+            if (ed_caret_sel_range(&e->carets[i], &clo, &chi) && mpos < chi &&
+                clo < mpos + nlen) {
               overlaps = 1;
               break;
             }
@@ -3611,9 +3584,8 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
         }
       }
 
-      e->vp.top_byte =
-          lk_doc_line_start(e->doc, al) +
-          ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
+      e->vp.top_byte = lk_doc_line_start(e->doc, al) +
+                       ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
     }
 
     /* Precise bottom clamping happens at the next layout, which knows
@@ -3621,8 +3593,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
     return e->vp.top_byte != old_top || e->vp.y_offset != old_off;
   }
 
-  default:
-    return 0;
+  default: return 0;
   }
 }
 
@@ -3817,8 +3788,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
         }
 
         below = ed_rowpos_cmp(l, r, cl, cr) == 0
-                    ? ((lk_i32)rel * line_h - e->vp.y_offset + line_h) >
-                          view_h
+                    ? ((lk_i32)rel * line_h - e->vp.y_offset + line_h) > view_h
                     : 1;
       }
 
@@ -3854,8 +3824,8 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
       sb_total += rows_n;
     }
 
-    sb_top = (sb_rows_before + (lk_u64)ar) * (lk_u64)line_h +
-             (lk_u64)e->vp.y_offset;
+    sb_top =
+        (sb_rows_before + (lk_u64)ar) * (lk_u64)line_h + (lk_u64)e->vp.y_offset;
     e->geom.sb_total_rows = sb_total;
     e->geom.sb_top_px = (lk_u32)sb_top;
   }
@@ -3881,8 +3851,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
 
         if (cx < e->scroll_x + margin) {
           e->scroll_x = cx > margin ? cx - margin : 0;
-        } else if (content->w > 0 &&
-                   cx > e->scroll_x + content->w - margin) {
+        } else if (content->w > 0 && cx > e->scroll_x + content->w - margin) {
           e->scroll_x = cx - content->w + margin;
         }
       }
@@ -3891,8 +3860,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     if (e->scroll_x > 0 && view_h > 0) {
       lk_i32 widest = 0;
       lk_i32 cap;
-      lk_u32 nvis = (lk_u32)((view_h + e->vp.y_offset + line_h - 1) /
-                             line_h);
+      lk_u32 nvis = (lk_u32)((view_h + e->vp.y_offset + line_h - 1) / line_h);
 
       if (nvis > lcount - al) {
         nvis = lcount - al;
@@ -3932,10 +3900,9 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   /* Visible rows: rows intersecting [0, view_h), walked forward from
    * the anchor (virtualization: cost is viewport-, never document-,
    * proportional). */
-  vis_needed =
-      view_h > 0
-          ? (lk_u32)((view_h + e->vp.y_offset + line_h - 1) / line_h)
-          : 0;
+  vis_needed = view_h > 0
+                   ? (lk_u32)((view_h + e->vp.y_offset + line_h - 1) / line_h)
+                   : 0;
   e->vis_len = 0;
   e->seg_count = 0;
   vis_count = 0;
@@ -4036,9 +4003,8 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
         const ed_line *ln = &e->lines[k];
 
         if (ln->line == cl && ln->row == cr) {
-          lk_i32 cx =
-              ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
-                                e->carets[ci].cursor - ln->doc_start);
+          lk_i32 cx = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                        e->carets[ci].cursor - ln->doc_start);
 
           if (ed_cursor_xy_reserve(e, e->geom.cursor_count + 1)) {
             e->cursor_xy[e->geom.cursor_count * 2] =
@@ -4082,16 +4048,15 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
           const ed_line *ln = &e->lines[k];
 
           if (ln->line == ll && ln->row == lr) {
-            lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
-                                          ln->doc_len, lo - ln->doc_start);
-            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
-                                          ln->doc_len, hi - ln->doc_start);
+            lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                          lo - ln->doc_start);
+            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                          hi - ln->doc_start);
 
             if (x1 > x0) {
-              ed_sel_rect_push(
-                  e, content->x + x0 - e->scroll_x,
-                  content->y + (lk_i32)k * line_h - e->vp.y_offset, x1 - x0,
-                  line_h);
+              ed_sel_rect_push(e, content->x + x0 - e->scroll_x,
+                               content->y + (lk_i32)k * line_h - e->vp.y_offset,
+                               x1 - x0, line_h);
             }
 
             break;
@@ -4109,16 +4074,15 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
 
           if (c_lo == 0) {
             /* head */
-            lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
-                                          ln->doc_len, lo - ln->doc_start);
-            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
-                                          ln->doc_len, ln->doc_len);
+            lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                          lo - ln->doc_start);
+            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                          ln->doc_len);
 
             if (x1 > x0) {
-              ed_sel_rect_push(
-                  e, content->x + x0 - e->scroll_x,
-                  content->y + (lk_i32)k * line_h - e->vp.y_offset, x1 - x0,
-                  line_h);
+              ed_sel_rect_push(e, content->x + x0 - e->scroll_x,
+                               content->y + (lk_i32)k * line_h - e->vp.y_offset,
+                               x1 - x0, line_h);
             }
           } else if (c_lo > 0 && c_hi < 0) {
             /* body row (fully covered) */
@@ -4133,8 +4097,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
 
         if (have_body) {
           ed_sel_rect_push(e, content->x,
-                           content->y + (lk_i32)b0 * line_h -
-                               e->vp.y_offset,
+                           content->y + (lk_i32)b0 * line_h - e->vp.y_offset,
                            content->w, (lk_i32)(b1 - b0 + 1) * line_h);
         }
 
@@ -4143,14 +4106,13 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
 
           if (ln->line == hl && ln->row == hr) {
             /* tail */
-            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off,
-                                          ln->doc_len, hi - ln->doc_start);
+            lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
+                                          hi - ln->doc_start);
 
             if (x1 > 0) {
-              ed_sel_rect_push(
-                  e, content->x - e->scroll_x,
-                  content->y + (lk_i32)k * line_h - e->vp.y_offset, x1,
-                  line_h);
+              ed_sel_rect_push(e, content->x - e->scroll_x,
+                               content->y + (lk_i32)k * line_h - e->vp.y_offset,
+                               x1, line_h);
             }
 
             break;
@@ -4245,8 +4207,7 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
       continue;
     }
 
-    if (!lk_render_list_push_run(out, e->vis + seg->off, seg->len,
-                                 &run_off)) {
+    if (!lk_render_list_push_run(out, e->vis + seg->off, seg->len, &run_off)) {
       continue;
     }
 
@@ -4358,8 +4319,7 @@ static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
                              lk_i32 *thumb_h) {
   lk_i32 line_h = e->geom.line_h;
   lk_i32 th = e->geom.rect.h;
-  lk_u64 total_px =
-      (lk_u64)e->geom.sb_total_rows * (lk_u64)line_h;
+  lk_u64 total_px = (lk_u64)e->geom.sb_total_rows * (lk_u64)line_h;
   lk_u64 top_px;
   lk_u64 max_top;
   lk_i32 h;
@@ -4389,8 +4349,7 @@ static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
   *track_y = e->geom.rect.y;
   *track_h = th;
   *thumb_h = h;
-  *thumb_y = e->geom.rect.y +
-             (lk_i32)((top_px * (lk_u64)(th - h)) / max_top);
+  *thumb_y = e->geom.rect.y + (lk_i32)((top_px * (lk_u64)(th - h)) / max_top);
 
   return 1;
 }
@@ -4564,9 +4523,9 @@ int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
   }
 
   ln = &e->lines[k];
-  *out_pos = ln->doc_start +
-             ed_line_ix_from_x(e, tb, e->vis + ln->off, ln->doc_len,
-                               x - e->geom.rect.x + e->geom.scroll_x);
+  *out_pos =
+      ln->doc_start + ed_line_ix_from_x(e, tb, e->vis + ln->off, ln->doc_len,
+                                        x - e->geom.rect.x + e->geom.scroll_x);
 
   return 1;
 }
@@ -4613,8 +4572,8 @@ static int ed_box_point(const lk_editor *e, lk_i32 x, lk_i32 y,
  * rows nearest the active end -- is the natural truncation.  The
  * anchor triple is viewport-independent: the walk keeps working
  * after the viewport scrolls away from it. */
-static void ed_box_rebuild(lk_editor *e, const lk_text_backend *tb,
-                           lk_u32 cl, lk_u32 cr, lk_i32 cx) {
+static void ed_box_rebuild(lk_editor *e, const lk_text_backend *tb, lk_u32 cl,
+                           lk_u32 cr, lk_i32 cx) {
   lk_u32 l = cl;
   lk_u32 r = cr;
   int toward_next = ed_rowpos_cmp(cl, cr, e->box_line, e->box_row) < 0;
@@ -4640,8 +4599,7 @@ static void ed_box_rebuild(lk_editor *e, const lk_text_backend *tb,
       break;
     }
 
-    a_ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen,
-                             e->box_x);
+    a_ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen, e->box_x);
     c_ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen, cx);
 
     e->carets[n].cursor = rstart + c_ix;

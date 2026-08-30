@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <lk.h>
 #include "core/lk-dropdown.h" /* lk_dropdown_popup_rect (geometry tests) */
 #include "core/lk-memory.h"
 #include "core/lk-tooltip.h" /* lk_tooltip_rect (geometry tests) */
+#include <lk.h>
 
 /* ---- minimal test harness (macros in lk-test-harness.h) ---- */
 
@@ -2553,7 +2553,8 @@ static void test_render_larger_tree(void) {
   if (r) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, r, NULL, NULL, NULL, &rl);
-    /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT + CLIP_END = 7 */
+    /* 1 window FILL + CLIP_BEGIN + 2 label TEXT + 1 btn FILL + 1 btn TEXT +
+     * CLIP_END = 7 */
     CHECK_EQ(rl.count, 7u);
     lk_render_list_destroy(&rl);
     free(r);
@@ -3093,7 +3094,7 @@ static int route_log_handler(lk_event *event, lk_ix node_ix, void *ud) {
 }
 
 static int route_stop_capture_handler(lk_event *event, lk_ix node_ix,
-                                       void *ud) {
+                                      void *ud) {
   route_log *log = (route_log *)ud;
   if (log->count < ROUTE_LOG_CAP) {
     log->entries[log->count].node_ix = node_ix;
@@ -3106,8 +3107,7 @@ static int route_stop_capture_handler(lk_event *event, lk_ix node_ix,
   return 0;
 }
 
-static int route_stop_target_handler(lk_event *event, lk_ix node_ix,
-                                      void *ud) {
+static int route_stop_target_handler(lk_event *event, lk_ix node_ix, void *ud) {
   route_log *log = (route_log *)ud;
   if (log->count < ROUTE_LOG_CAP) {
     log->entries[log->count].node_ix = node_ix;
@@ -3120,8 +3120,7 @@ static int route_stop_target_handler(lk_event *event, lk_ix node_ix,
   return 0;
 }
 
-static int route_stop_bubble_handler(lk_event *event, lk_ix node_ix,
-                                      void *ud) {
+static int route_stop_bubble_handler(lk_event *event, lk_ix node_ix, void *ud) {
   route_log *log = (route_log *)ud;
   if (log->count < ROUTE_LOG_CAP) {
     log->entries[log->count].node_ix = node_ix;
@@ -3732,7 +3731,8 @@ static void test_pres_multi_arg_cmd(void) {
 
   BEGIN_TEST("pres: multi-arg pres emits multi-arg command");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "action", 0, 0, 0, 0, "DoIt");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "action", 0, 0, 0, 0,
+                         "DoIt");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3750,7 +3750,7 @@ static void test_pres_multi_arg_cmd(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-                                  lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
@@ -3821,7 +3821,8 @@ static void test_translator_fires_command(void) {
   BEGIN_TEST("translator: fires command on match");
 
   /* Register translator: POINTER_DOWN + ptype "item" -> "Select" */
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
+                         "Select");
 
   /* Build tree with presented button */
   t = lk_ui_begin_frame(ui);
@@ -3839,7 +3840,8 @@ static void test_translator_fires_command(void) {
   /* Route pointer_down to the button */
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
-  ev.target = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
+  ev.target =
+      lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
@@ -3847,8 +3849,7 @@ static void test_translator_fires_command(void) {
   CHECK(q != NULL);
   CHECK_EQ(q->count, 1);
   if (q->count >= 1) {
-    CHECK_EQ(q->cmds[0].name,
-             lk_intern_id(ui->intern, lk_str_c("Select")));
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("Select")));
     CHECK_EQ(q->cmds[0].args[0].tag, UIV_I32);
     CHECK_EQ(q->cmds[0].args[0].as.i, 7);
     CHECK_EQ(q->cmds[0].source_ptype,
@@ -3884,7 +3885,7 @@ static void test_translator_no_match(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
@@ -3905,7 +3906,8 @@ static void test_translator_walks_ancestors(void) {
 
   BEGIN_TEST("translator: walks ancestors for pres");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, 0, 0, 0, "ListClick");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "list", 0, 0, 0, 0,
+                         "ListClick");
 
   /* Presentation is on parent column, event targets child button */
   t = lk_ui_begin_frame(ui);
@@ -3921,7 +3923,7 @@ static void test_translator_walks_ancestors(void) {
   lk_ui_end_frame(ui);
 
   btn_ix = lk_tree_find_by_id(lk_ui_tree(ui),
-            lk_intern_id(ui->intern, lk_str_c("btn")));
+                              lk_intern_id(ui->intern, lk_str_c("btn")));
 
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
@@ -3949,7 +3951,8 @@ static void test_translator_ptype_and_kind(void) {
   BEGIN_TEST("translator: match ptype + node_kind");
 
   /* Only match BUTTON nodes with ptype "action" */
-  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, 0, 0, 0, "DoAction");
+  lk_ui_add_translator_s(ui, 0, "action", (lk_u16)UIK_BUTTON, 0, 0, 0,
+                         "DoAction");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -3964,15 +3967,14 @@ static void test_translator_ptype_and_kind(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
   q = lk_ui_commands(ui);
   CHECK_EQ(q->count, 1);
   if (q->count >= 1) {
-    CHECK_EQ(q->cmds[0].name,
-             lk_intern_id(ui->intern, lk_str_c("DoAction")));
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("DoAction")));
   }
 
   END_TEST();
@@ -3988,8 +3990,8 @@ static void test_translator_keycode_match(void) {
   BEGIN_TEST("translator: keycode+mods match Ctrl+S");
 
   /* Ctrl+S -> "Save" */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0, (lk_u16)LKK_S,
+                         LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4006,15 +4008,14 @@ static void test_translator_keycode_match(void) {
   ev.data.key.keycode = LKK_S;
   ev.mods = LK_MOD_CTRL;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("lbl")));
+                                 lk_intern_id(ui->intern, lk_str_c("lbl")));
 
   lk_event_route(ui, &ev);
 
   q = lk_ui_commands(ui);
   CHECK_EQ(q->count, 1);
   if (q->count >= 1) {
-    CHECK_EQ(q->cmds[0].name,
-             lk_intern_id(ui->intern, lk_str_c("Save")));
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("Save")));
   }
   CHECK_EQ(ev.handled, 1);
 
@@ -4030,8 +4031,8 @@ static void test_translator_keycode_wrong_key(void) {
 
   BEGIN_TEST("translator: keycode mismatch = no command");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0, (lk_u16)LKK_S,
+                         LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4049,7 +4050,7 @@ static void test_translator_keycode_wrong_key(void) {
   ev.data.key.keycode = LKK_F;
   ev.mods = LK_MOD_CTRL;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("lbl")));
+                                 lk_intern_id(ui->intern, lk_str_c("lbl")));
 
   lk_event_route(ui, &ev);
 
@@ -4070,8 +4071,8 @@ static void test_translator_keycode_wrong_mods(void) {
   BEGIN_TEST("translator: wrong mods = no command");
 
   /* Ctrl+S translator */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "doc", 0, (lk_u16)LKK_S,
+                         LK_MOD_CTRL, 0, "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4089,7 +4090,7 @@ static void test_translator_keycode_wrong_mods(void) {
   ev.data.key.keycode = LKK_S;
   ev.mods = LK_MOD_CTRL | LK_MOD_SHIFT;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("lbl")));
+                                 lk_intern_id(ui->intern, lk_str_c("lbl")));
 
   lk_event_route(ui, &ev);
 
@@ -4110,8 +4111,8 @@ static void test_translator_keycode_no_pres_required(void) {
   BEGIN_TEST("translator: keycode+mods with ptype=0 needs pres");
 
   /* Ctrl+F -> "Find", ptype=0 (match any presentation) */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0,
-                          (lk_u16)LKK_F, LK_MOD_CTRL, 0, "Find");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, (lk_u16)LKK_F,
+                         LK_MOD_CTRL, 0, "Find");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4129,15 +4130,14 @@ static void test_translator_keycode_no_pres_required(void) {
   ev.data.key.keycode = LKK_F;
   ev.mods = LK_MOD_CTRL;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("lbl")));
+                                 lk_intern_id(ui->intern, lk_str_c("lbl")));
 
   lk_event_route(ui, &ev);
 
   q = lk_ui_commands(ui);
   CHECK_EQ(q->count, 1);
   if (q->count >= 1) {
-    CHECK_EQ(q->cmds[0].name,
-             lk_intern_id(ui->intern, lk_str_c("Find")));
+    CHECK_EQ(q->cmds[0].name, lk_intern_id(ui->intern, lk_str_c("Find")));
   }
   CHECK_EQ(ev.handled, 1);
 
@@ -4154,8 +4154,8 @@ static void test_translator_keycode_on_pointer_event(void) {
   BEGIN_TEST("translator: keycode filter skips non-key events");
 
   /* Translator with keycode set — should not match pointer events */
-  lk_ui_add_translator_s(ui, 0, "item", 0,
-                          (lk_u16)LKK_S, LK_MOD_CTRL, 0, "Save");
+  lk_ui_add_translator_s(ui, 0, "item", 0, (lk_u16)LKK_S, LK_MOD_CTRL, 0,
+                         "Save");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4170,7 +4170,7 @@ static void test_translator_keycode_on_pointer_event(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
@@ -4191,8 +4191,8 @@ static void test_translator_keycode_zero_mods(void) {
   BEGIN_TEST("translator: keycode with zero mods matches bare key");
 
   /* Return key with no modifiers -> "Confirm" */
-  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "form", 0,
-                          (lk_u16)LKK_RETURN, 0, 0, "Confirm");
+  lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "form", 0, (lk_u16)LKK_RETURN,
+                         0, 0, "Confirm");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4210,7 +4210,7 @@ static void test_translator_keycode_zero_mods(void) {
   ev.data.key.keycode = LKK_RETURN;
   ev.mods = 0;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
@@ -4226,7 +4226,7 @@ static void test_translator_keycode_zero_mods(void) {
   ev.data.key.keycode = LKK_RETURN;
   ev.mods = LK_MOD_CTRL;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
@@ -4273,13 +4273,12 @@ static void test_command_handler_fires(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
 
   lk_event_route(ui, &ev);
 
   CHECK_EQ(g_handler_called, 1);
-  CHECK_EQ(g_handler_cmd_name,
-           lk_intern_id(ui->intern, lk_str_c("Pick")));
+  CHECK_EQ(g_handler_cmd_name, lk_intern_id(ui->intern, lk_str_c("Pick")));
 
   END_TEST();
   lk_ui_destroy(ui);
@@ -4298,7 +4297,8 @@ static void test_command_log_accumulates(void) {
 
   BEGIN_TEST("introspect: command log accumulates");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
+                         "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4317,7 +4317,7 @@ static void test_command_log_accumulates(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("b1")));
+                                 lk_intern_id(ui->intern, lk_str_c("b1")));
   lk_event_route(ui, &ev);
 
   /* Clear queue between events (simulate frame boundary) */
@@ -4327,7 +4327,7 @@ static void test_command_log_accumulates(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("b2")));
+                                 lk_intern_id(ui->intern, lk_str_c("b2")));
   lk_event_route(ui, &ev);
 
   log = lk_ui_command_log(ui, &log_count);
@@ -4367,7 +4367,8 @@ static void test_dump_commands_output(void) {
 
   BEGIN_TEST("introspect: dump_commands output");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
+                         "Select");
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, NULL, 0, 0, 0, 0, "Activate");
 
   memset(&buf, 0, sizeof(buf));
@@ -4497,7 +4498,8 @@ static void test_accessor_command_fields(void) {
 
   BEGIN_TEST("accessor: command name/arg_count/arg/source");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
+                         "Select");
   select_id = lk_intern_id(ui->intern, lk_str_c("Select"));
   item_id = lk_intern_id(ui->intern, lk_str_c("item"));
 
@@ -4514,7 +4516,7 @@ static void test_accessor_command_fields(void) {
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
   ev.target = lk_tree_find_by_id(lk_ui_tree(ui),
-               lk_intern_id(ui->intern, lk_str_c("btn")));
+                                 lk_intern_id(ui->intern, lk_str_c("btn")));
   lk_event_route(ui, &ev);
 
   q = lk_ui_commands(ui);
@@ -4638,7 +4640,8 @@ static void test_command_arg_typed(void) {
 
   BEGIN_TEST("command: typed arg accessors");
 
-  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0, "Select");
+  lk_ui_add_translator_s(ui, LK_EVENT_POINTER_DOWN, "item", 0, 0, 0, 0,
+                         "Select");
 
   t = lk_ui_begin_frame(ui);
   {
@@ -4653,8 +4656,7 @@ static void test_command_arg_typed(void) {
   cur = lk_ui_tree(ui);
   memset(&ev, 0, sizeof(ev));
   ev.type = LK_EVENT_POINTER_DOWN;
-  ev.target = lk_tree_find_by_id(cur,
-               lk_intern_cid(ui->intern, "btn"));
+  ev.target = lk_tree_find_by_id(cur, lk_intern_cid(ui->intern, "btn"));
   lk_event_route(ui, &ev);
 
   q = lk_ui_commands(ui);
@@ -4934,7 +4936,6 @@ static void test_state_remove_node_manual(void) {
   lk_ui_destroy(ui);
   END_TEST();
 }
-
 
 /* ================================================================
  * Style system tests
@@ -5220,7 +5221,8 @@ static void test_layout_with_resolved_styles(void) {
   th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.padding = 20;
-  s.bg.r = 60; s.bg.a = 255;
+  s.bg.r = 60;
+  s.bg.a = 255;
   lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_PADDING | LK_SF_BG);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
@@ -5300,7 +5302,8 @@ static void test_layout_style_tree_prop_override(void) {
   th = lk_theme_new(NULL, NULL, NULL);
   memset(&s, 0, sizeof(s));
   s.padding = 10;
-  s.bg.r = 60; s.bg.a = 255;
+  s.bg.r = 60;
+  s.bg.a = 255;
   lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_PADDING | LK_SF_BG);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
@@ -5426,9 +5429,8 @@ static void test_style_resolve_with_tag(void) {
   s.bg.r = 200;
   s.bg.g = 50;
   s.bg.a = 255;
-  lk_theme_add_rule(th, UIK_BUTTON,
-                    lk_intern_cid(t->intern, "danger"),
-                    0, &s, LK_SF_BG);
+  lk_theme_add_rule(th, UIK_BUTTON, lk_intern_cid(t->intern, "danger"), 0, &s,
+                    LK_SF_BG);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
   if (styles) {
@@ -5792,8 +5794,7 @@ static void test_style_state_requires_all_bits(void) {
   memset(&s, 0, sizeof(s));
   s.bg.r = 200;
   s.bg.a = 255;
-  lk_theme_add_rule(th, UIK_BUTTON, 0,
-                    LK_NSTATE_FOCUSED | LK_NSTATE_HOVERED,
+  lk_theme_add_rule(th, UIK_BUTTON, 0, LK_NSTATE_FOCUSED | LK_NSTATE_HOVERED,
                     &s, LK_SF_BG);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
@@ -5848,9 +5849,8 @@ static void test_style_tag_no_match_untagged(void) {
   memset(&s, 0, sizeof(s));
   s.bg.r = 150;
   s.bg.a = 255;
-  lk_theme_add_rule(th, UIK_BUTTON,
-                    lk_intern_cid(t->intern, "primary"),
-                    0, &s, LK_SF_BG);
+  lk_theme_add_rule(th, UIK_BUTTON, lk_intern_cid(t->intern, "primary"), 0, &s,
+                    LK_SF_BG);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
@@ -5923,8 +5923,7 @@ static void test_style_align_justify_prop_override(void) {
   memset(&s, 0, sizeof(s));
   s.align = LK_ALIGN_START;
   s.justify = LK_ALIGN_START;
-  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s,
-                    LK_SF_ALIGN | LK_SF_JUSTIFY);
+  lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_ALIGN | LK_SF_JUSTIFY);
 
   styles = (lk_style *)malloc(sizeof(lk_style) * t->node_count);
 
@@ -5970,8 +5969,7 @@ static void test_render_uses_style_colors(void) {
   s.bg.b = 100;
   s.bg.a = 255;
   s.padding = 4;
-  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s,
-                    LK_SF_BG | LK_SF_PADDING);
+  lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
   /* fg for text */
   memset(&s, 0, sizeof(s));
   s.fg.r = 255;
@@ -5999,8 +5997,7 @@ static void test_render_uses_style_colors(void) {
     /* Find the button FILL_RECT — should have our custom green bg */
     found_btn_fill = 0;
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
-          rl.cmds[i].color.g == 200 &&
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.g == 200 &&
           rl.cmds[i].color.b == 100) {
         found_btn_fill = 1;
         break;
@@ -6063,8 +6060,8 @@ static void test_layout_style_gap(void) {
     /* With stub text measurer: label height = 16.
      * lbl2.y should be lbl1.y + lbl1.h + gap(20) = 0 + 16 + 20 = 36 */
     CHECK_EQ((unsigned)rects[lbl1].y, 0u);
-    CHECK_EQ((unsigned)rects[lbl2].y, (unsigned)(rects[lbl1].y +
-                                                  rects[lbl1].h + 20));
+    CHECK_EQ((unsigned)rects[lbl2].y,
+             (unsigned)(rects[lbl1].y + rects[lbl1].h + 20));
   }
 
   free(rects);
@@ -6302,8 +6299,7 @@ static void test_text_input_empty_height(void) {
 /* Helper: build a UI with a focused text input, run one frame, return
  * the current tree.  Caller must destroy ui.
  */
-static lk_ui *make_text_input_ui(const char *initial_text,
-                                  lk_ix *out_ti) {
+static lk_ui *make_text_input_ui(const char *initial_text, lk_ix *out_ti) {
   lk_ui *ui = lk_ui_create(NULL);
   lk_tree *t;
   lk_ix w, ti;
@@ -6313,8 +6309,7 @@ static lk_ui *make_text_input_ui(const char *initial_text,
   t = lk_ui_begin_frame(ui);
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
-  lk_tree_add_prop(t, ti, UIP_TEXT,
-                   lk_v_cstr(t->intern, initial_text));
+  lk_tree_add_prop(t, ti, UIP_TEXT, lk_v_cstr(t->intern, initial_text));
   lk_tree_add_prop(t, ti, UIP_FOCUSABLE, lk_v_bool(1));
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, ti);
@@ -6454,7 +6449,7 @@ static void test_text_input_emits_value_changed(void) {
 
   /* Translator: value_changed + ptype "field" -> "FieldEdit" */
   lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
-                          "FieldEdit");
+                         "FieldEdit");
 
   /* Attach presentation (arg = the field id) to text_input */
   {
@@ -6480,7 +6475,7 @@ static void test_text_input_emits_value_changed(void) {
     lk_ui_end_frame(ui);
   }
   ti = lk_tree_find_by_id(lk_ui_tree(ui),
-                           lk_intern_id(ui->intern, lk_str_c("ti")));
+                          lk_intern_id(ui->intern, lk_str_c("ti")));
 
   /* Re-set cursor (state is preserved but rebuild can reset it) */
   lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(1));
@@ -6550,7 +6545,7 @@ static void test_text_input_backspace_emits_value_changed(void) {
     lk_ui_end_frame(ui);
   }
   ti = lk_tree_find_by_id(lk_ui_tree(ui),
-                           lk_intern_id(ui->intern, lk_str_c("ti")));
+                          lk_intern_id(ui->intern, lk_str_c("ti")));
   lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(2));
 
   memset(&ev, 0, sizeof(ev));
@@ -6822,8 +6817,7 @@ static void test_text_input_select_all(void) {
  * A value_changed translator on a "field" presentation turns each
  * candidate into a command whose source_value we can read back. */
 
-static void build_controlled_frame(lk_ui *ui, const char *text,
-                                   lk_ix *out_ti) {
+static void build_controlled_frame(lk_ui *ui, const char *text, lk_ix *out_ti) {
   lk_tree *t = lk_ui_begin_frame(ui);
   lk_ix w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
   lk_ix ti = lk_tree_add_node_s(t, lk_str_c("ti"), UIK_TEXT_INPUT);
@@ -6846,7 +6840,7 @@ static lk_ui *make_controlled_text_input_ui(const char *text, lk_ix *out_ti) {
   lk_ui *ui = lk_ui_create(NULL);
 
   lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
-                          "FieldEdit");
+                         "FieldEdit");
   build_controlled_frame(ui, text, out_ti);
   lk_focus_set(ui, lk_ui_tree(ui), lk_intern_id(ui->intern, lk_str_c("ti")));
   return ui;
@@ -7104,7 +7098,8 @@ static void test_text_align_label(void) {
    * default START keeps the leaf at its own W/H. */
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
-  lk_tree_append_child(t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), l);
+  lk_tree_append_child(
+      t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), l);
   sid = lk_node_text_id(t, l);
 
   /* Theme rule: every LABEL aligns END. */
@@ -7172,7 +7167,8 @@ static void test_text_align_button_both_axes(void) {
   lk_tree_add_prop(t, b, UIP_TEXT_VALIGN, lk_v_i32(LK_ALIGN_CENTER));
   lk_tree_set_root(t, w);
   lk_tree_append_child(t, w, lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
-  lk_tree_append_child(t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), b);
+  lk_tree_append_child(
+      t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), b);
   sid = lk_node_text_id(t, b);
 
   r = layout_styled(t, th, NULL, 800, 600, &styles, &geom);
@@ -7221,15 +7217,16 @@ static void test_text_align_text_input_cursor_origin(void) {
     lk_tree_add_prop(t, n, UIP_W, lk_v_i32(200));
     lk_tree_add_prop(t, n, UIP_TEXT_ALIGN, lk_v_i32(LK_ALIGN_END));
     lk_tree_set_root(t, w);
-    lk_tree_append_child(t, w, lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
-    lk_tree_append_child(t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), n);
+    lk_tree_append_child(t, w,
+                         lk_tree_add_node_s(t, lk_str_c("c"), UIK_COLUMN));
+    lk_tree_append_child(
+        t, lk_tree_find_by_id(t, lk_intern_id(t->intern, lk_str_c("c"))), n);
     lk_ui_end_frame(ui);
   }
   cur = lk_ui_tree(ui);
   ti = lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("ti")));
   sid = lk_node_text_id(cur, ti);
-  lk_state_set(lk_ui_state(ui), cur->nodes[ti].id, LKS_CURSOR_POS,
-               lk_v_i32(2));
+  lk_state_set(lk_ui_state(ui), cur->nodes[ti].id, LKS_CURSOR_POS, lk_v_i32(2));
 
   r = layout_styled(cur, th, lk_ui_state(ui), 800, 600, &styles, &geom);
   CHECK(r != NULL);
@@ -7322,16 +7319,17 @@ static void test_text_input_controlled_candidate_before_focus(void) {
   const lk_command_queue *q;
   int i, vc_at = -1, fc_at = -1;
 
-  BEGIN_TEST("text_input controlled: candidate lands before Enter's focus move");
+  BEGIN_TEST(
+      "text_input controlled: candidate lands before Enter's focus move");
 
   memset(&rec, 0, sizeof(rec));
   rec.ui = ui;
   rec.other = lk_intern_id(ui->intern, lk_str_c("ti2"));
 
   lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "field", 0, 0, 0, 0,
-                          "FieldEdit");
+                         "FieldEdit");
   lk_ui_add_translator_s(ui, LK_EVENT_KEY_DOWN, "field", 0, LKK_RETURN, 0, 0,
-                          "Commit");
+                         "Commit");
   lk_ui_set_command_handler(ui, order_cmd_handler, &rec);
   lk_ui_set_event_handler(ui, order_ev_handler, &rec);
 
@@ -7690,8 +7688,12 @@ static void test_scroll_render_clips(void) {
     lk_render_build(cur, r, NULL, NULL, NULL, &rl);
 
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) found_clip_begin++;
-      if (rl.cmds[i].op == LK_ROP_CLIP_END) found_clip_end++;
+      if (rl.cmds[i].op == LK_ROP_CLIP_BEGIN) {
+        found_clip_begin++;
+      }
+      if (rl.cmds[i].op == LK_ROP_CLIP_END) {
+        found_clip_end++;
+      }
     }
     /* At least 2 CLIP_BEGIN: one for window, one for scroll */
     CHECK(found_clip_begin >= 2);
@@ -7886,7 +7888,9 @@ static void test_scroll_bar_rendered(void) {
      * (plus DRAW_TEXT for labels, CLIPs for window and scroll)
      */
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT) fill_count++;
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT) {
+        fill_count++;
+      }
     }
     CHECK(fill_count >= 4);
 
@@ -7990,9 +7994,13 @@ static void test_border_render_four_fill_rects(void) {
     /* window style */
     styles[w].bg.a = 255;
     /* button style with border */
-    styles[btn].bg.r = 60; styles[btn].bg.g = 60; styles[btn].bg.b = 60;
+    styles[btn].bg.r = 60;
+    styles[btn].bg.g = 60;
+    styles[btn].bg.b = 60;
     styles[btn].bg.a = 255;
-    styles[btn].fg.r = 255; styles[btn].fg.g = 255; styles[btn].fg.b = 255;
+    styles[btn].fg.r = 255;
+    styles[btn].fg.g = 255;
+    styles[btn].fg.b = 255;
     styles[btn].fg.a = 255;
     styles[btn].padding = 4;
     styles[btn].border_width = 2;
@@ -8014,10 +8022,8 @@ static void test_border_render_four_fill_rects(void) {
     /* Count FILL_RECTs with border color */
     border_count = 0;
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
-          rl.cmds[i].color.r == 100 &&
-          rl.cmds[i].color.g == 150 &&
-          rl.cmds[i].color.b == 200) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.r == 100 &&
+          rl.cmds[i].color.g == 150 && rl.cmds[i].color.b == 200) {
         border_count++;
       }
     }
@@ -8191,10 +8197,8 @@ static void test_border_theme_integration(void) {
     /* Should find 4 FILL_RECTs with the theme border color */
     border_count = 0;
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT &&
-          rl.cmds[i].color.r == 80 &&
-          rl.cmds[i].color.g == 140 &&
-          rl.cmds[i].color.b == 220) {
+      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.r == 80 &&
+          rl.cmds[i].color.g == 140 && rl.cmds[i].color.b == 220) {
         border_count++;
       }
     }
@@ -8565,7 +8569,7 @@ static void test_dropdown_return_commits(void) {
 
   /* Register translator so commit emits a command we can inspect */
   lk_ui_add_translator_s(ui, LK_EVENT_VALUE_CHANGED, "picker", 0, 0, 0, 0,
-                          "Selected");
+                         "Selected");
 
   /* Open + navigate to index 1 */
   lk_state_set(st, dd_id, LKS_EXPANDED, lk_v_i32(1));
@@ -8658,16 +8662,17 @@ static void test_dropdown_overlay_hit_test(void) {
   /* Popup starts below trigger. Click on row 1 (second option). */
   {
     lk_rect tr = rects[dd];
-    lk_i32 row_h = 20 + 4 * 2; /* DROPDOWN_MIN_OPTION_H is 20, pad 4 each side */
-    lk_i32 click_y = tr.y + tr.h + 7 + row_h + row_h / 2; /* inset + 1 row + middle */
+    lk_i32 row_h =
+        20 + 4 * 2; /* DROPDOWN_MIN_OPTION_H is 20, pad 4 each side */
+    lk_i32 click_y =
+        tr.y + tr.h + 7 + row_h + row_h / 2; /* inset + 1 row + middle */
     lk_i32 click_x = tr.x + tr.w / 2;
 
     hit = lk_hit_test_overlay(ui, rects, &cfg, click_x, click_y);
     /* Expect an option node ix (one of o1/o2/o3). */
     CHECK(hit > 0);
     if (hit > 0) {
-      CHECK_EQ((unsigned)lk_ui_tree(ui)->nodes[hit].kind,
-               (unsigned)UIK_OPTION);
+      CHECK_EQ((unsigned)lk_ui_tree(ui)->nodes[hit].kind, (unsigned)UIK_OPTION);
     }
   }
 
@@ -9310,8 +9315,8 @@ static void test_container_bg_renders(void) {
   for (i = 0; i < rl.count; i++) {
     const lk_render_cmd *c = &rl.cmds[i];
 
-    if (c->op == LK_ROP_FILL_RECT && c->color.r == 40 &&
-        c->color.g == 45 && c->color.b == 58 && c->color.a == 255) {
+    if (c->op == LK_ROP_FILL_RECT && c->color.r == 40 && c->color.g == 45 &&
+        c->color.b == 58 && c->color.a == 255) {
       found = 1;
     }
   }
@@ -9363,14 +9368,14 @@ static void test_hidden_subtree_layout(void) {
 
   {
     const lk_tree *cur = lk_ui_tree(ui);
-    lk_ix ila = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("la")));
-    lk_ix ihid = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                      lk_str_c("hid")));
-    lk_ix ilb = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("lb")));
-    lk_ix ilc = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("lc")));
+    lk_ix ila =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("la")));
+    lk_ix ihid =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("hid")));
+    lk_ix ilb =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("lb")));
+    lk_ix ilc =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("lc")));
 
     /* la at y=0 h=16; lc packs directly under it (hidden col skipped,
      * contributes no height and no gap). */
@@ -9426,12 +9431,12 @@ static void test_hidden_subtree_render_hit(void) {
 
   {
     const lk_tree *cur = lk_ui_tree(ui);
-    lk_ix ila = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("la")));
-    lk_ix ihid = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                      lk_str_c("hid")));
-    lk_ix ilb = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("lb")));
+    lk_ix ila =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("la")));
+    lk_ix ihid =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("hid")));
+    lk_ix ilb =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("lb")));
 
     /* Render: only the visible label's text is emitted. */
     memset(&rl, 0, sizeof(rl));
@@ -9450,8 +9455,7 @@ static void test_hidden_subtree_render_hit(void) {
      * hidden nodes are never returned. */
     rects[ihid] = rects[ila];
     rects[ilb] = rects[ila];
-    CHECK_EQ(lk_hit_test(cur, rects,
-                         rects[ila].x + 1, rects[ila].y + 1), ila);
+    CHECK_EQ(lk_hit_test(cur, rects, rects[ila].x + 1, rects[ila].y + 1), ila);
 
     lk_render_list_destroy(&rl);
   }
@@ -9517,12 +9521,12 @@ static void test_layout_subtree_positions(void) {
 
   {
     const lk_tree *cur = lk_ui_tree(ui);
-    lk_ix iov = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("ov")));
-    lk_ix il1 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("l1")));
-    lk_ix il2 = lk_tree_find_by_id(cur, lk_intern_id(ui->intern,
-                                                     lk_str_c("l2")));
+    lk_ix iov =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("ov")));
+    lk_ix il1 =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("l1")));
+    lk_ix il2 =
+        lk_tree_find_by_id(cur, lk_intern_id(ui->intern, lk_str_c("l2")));
 
     CHECK_EQ(lk_layout_subtree(cur, &cfg, iov, 100, 50, rects), 1);
 
@@ -9742,7 +9746,8 @@ static void test_tooltip_passive(void) {
   tip = lk_tooltip_rect(lk_ui_tree(ui), b1, lk_overlay_top(ui), rects, &cfg);
   CHECK(tip.w > 0 && tip.h > 0);
   CHECK_EQ(lk_hit_test_overlay(ui, rects, &cfg, tip.x + tip.w / 2,
-                               tip.y + tip.h / 2), 0u);
+                               tip.y + tip.h / 2),
+           0u);
 
   free(rects);
   END_TEST();
@@ -10022,8 +10027,7 @@ static void test_text_input_cursor_only_when_focused(void) {
 
   /* Focused: render list contains the 1px cursor bar */
   memset(&rl, 0, sizeof(rl));
-  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom,
-                  &rl);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom, &rl);
   focused_count = rl.count;
   cursor_found = 0;
   for (i = 0; i < rl.count; i++) {
@@ -10035,8 +10039,7 @@ static void test_text_input_cursor_only_when_focused(void) {
 
   /* Unfocused: exactly the cursor command disappears */
   lk_focus_clear(ui);
-  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom,
-                  &rl);
+  lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom, &rl);
   CHECK_EQ(rl.count + 1, focused_count);
   cursor_found = 0;
   for (i = 0; i < rl.count; i++) {
@@ -10135,8 +10138,8 @@ static void test_dropdown_hover_follows_pointer(void) {
   lk_event ev;
   lk_rect tr;
   lk_ix hit;
-  lk_i32 row_h = 24;   /* stub text height 16 + option pad 4*2 */
-  lk_i32 inset = 7;    /* dropdown default padding 6 + border 1 */
+  lk_i32 row_h = 24; /* stub text height 16 + option pad 4*2 */
+  lk_i32 inset = 7;  /* dropdown default padding 6 + border 1 */
 
   BEGIN_TEST("dropdown: pointer move updates hover index");
 
@@ -10462,8 +10465,7 @@ static lk_u32 dropdown_rendered_text_id(lk_ui *ui, lk_ix dd) {
 
   for (i = 0; i < rl.count; i++) {
     if (rl.cmds[i].op == LK_ROP_DRAW_TEXT && rl.cmds[i].rect.x >= r[dd].x &&
-        rl.cmds[i].rect.x < r[dd].x + r[dd].w &&
-        rl.cmds[i].rect.y >= r[dd].y &&
+        rl.cmds[i].rect.x < r[dd].x + r[dd].w && rl.cmds[i].rect.y >= r[dd].y &&
         rl.cmds[i].rect.y < r[dd].y + r[dd].h) {
       found = rl.cmds[i].str_id;
     }
@@ -10938,7 +10940,7 @@ static void test_text_stub_index_from_x_rounding(void) {
   CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 3), 0u);
   CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 4), 1u); /* tie rounds up */
   CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 11), 1u);
-  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 12), 2u); /* tie rounds up */
+  CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 12), 2u);  /* tie rounds up */
   CHECK_EQ(tb->index_from_x(tb->ud, run, 0, 0, 100), 2u); /* clamp high */
 
   /* Multibyte: e-acute [0..1], CJK [2..4]; boundaries at bytes 0, 2, 5 */
@@ -10989,8 +10991,7 @@ static void test_render_text_carries_font(void) {
   memset(&s, 0, sizeof(s));
   s.font_id = 3;
   s.font_size = 24;
-  lk_theme_add_rule(th, UIK_LABEL, 0, 0, &s,
-                    LK_SF_FONT_ID | LK_SF_FONT_SIZE);
+  lk_theme_add_rule(th, UIK_LABEL, 0, 0, &s, LK_SF_FONT_ID | LK_SF_FONT_SIZE);
 
   tree = lk_ui_begin_frame(ui);
   w = lk_tree_add_node_s(tree, lk_str_c("w"), UIK_WINDOW);

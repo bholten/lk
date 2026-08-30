@@ -9,7 +9,6 @@
  * rs, and are never NULL); 0 for a NULL table, null ref, out-of-range
  * id, or stale generation. */
 int lk_resources_lookup_names(const lk_resources *rs, lk_resource_ref ref,
-                              const char **type_name,
-                              const char **debug_name);
+                              const char **type_name, const char **debug_name);
 
 #endif /* LK_RESOURCES_H */

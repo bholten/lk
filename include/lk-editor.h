@@ -93,8 +93,7 @@ void lk_editor_set_cursor(lk_editor *e, lk_u32 pos);
 /* 1 if the primary caret has a selection (writes the normalized
  * [start, end) range), 0 otherwise (out params untouched).  Out
  * pointers may be NULL. */
-int lk_editor_selection(const lk_editor *e, lk_u32 *out_start,
-                        lk_u32 *out_end);
+int lk_editor_selection(const lk_editor *e, lk_u32 *out_start, lk_u32 *out_end);
 
 /* Number of carets (>= 1). */
 lk_u32 lk_editor_caret_count(const lk_editor *e);
@@ -162,9 +161,9 @@ typedef lk_text_span lk_edit_span;
 /* Viewport-scoped span delivery: coordinates are valid at exactly one
  * document revision, and the producer says which range it resolved. */
 typedef struct lk_edit_span_snapshot {
-  lk_revision revision;           /* coordinates valid at this revision */
-  lk_u32 range_start, range_end;  /* range the producer resolved */
-  const lk_edit_span *spans;      /* sorted by start, non-overlapping */
+  lk_revision revision;          /* coordinates valid at this revision */
+  lk_u32 range_start, range_end; /* range the producer resolved */
+  const lk_edit_span *spans;     /* sorted by start, non-overlapping */
   lk_u32 count;
 } lk_edit_span_snapshot;
 
@@ -303,9 +302,9 @@ typedef struct lk_editor_cmd_arg {
   struct {
     lk_u32 pos;
     int extend;
-  } set_cursor;  /* SET_CURSOR */
-  lk_i32 lines;  /* SCROLL_LINES */
-  int select;    /* motion commands: 1 extends the selection */
+  } set_cursor; /* SET_CURSOR */
+  lk_i32 lines; /* SCROLL_LINES */
+  int select;   /* motion commands: 1 extends the selection */
 } lk_editor_cmd_arg;
 
 /* Execute a command.  arg may be NULL for arg-less commands.  ui
@@ -346,12 +345,12 @@ const lk_widget_def *lk_editor_widget(void);
 #define LK_EDITOR_MODS_ALL (LK_MOD_SHIFT | LK_MOD_CTRL | LK_MOD_ALT)
 
 typedef enum lk_editor_key_action {
-  LK_EDK_COMMAND = 0,       /* run cmd; a shift_extends row passes
-                               select = SHIFT held */
-  LK_EDK_INSERT_NEWLINE,    /* cmd is INSERT_TEXT with "\n" */
-  LK_EDK_INSERT_TAB,        /* cmd is INSERT_TEXT with tab_size spaces */
-  LK_EDK_COLLAPSE_IF_MULTI  /* cmd only when > 1 caret; else the key
-                               bubbles (ESC) */
+  LK_EDK_COMMAND = 0,      /* run cmd; a shift_extends row passes
+                              select = SHIFT held */
+  LK_EDK_INSERT_NEWLINE,   /* cmd is INSERT_TEXT with "\n" */
+  LK_EDK_INSERT_TAB,       /* cmd is INSERT_TEXT with tab_size spaces */
+  LK_EDK_COLLAPSE_IF_MULTI /* cmd only when > 1 caret; else the key
+                              bubbles (ESC) */
 } lk_editor_key_action;
 
 typedef struct lk_editor_key_binding {
@@ -380,13 +379,13 @@ typedef enum lk_editor_pointer_action {
 } lk_editor_pointer_action;
 
 typedef struct lk_editor_pointer_binding {
-  lk_u8 gesture;   /* lk_editor_gesture */
-  lk_u8 button;    /* lk_pointer_button (0 for wheel rows) */
+  lk_u8 gesture; /* lk_editor_gesture */
+  lk_u8 button;  /* lk_pointer_button (0 for wheel rows) */
   lk_u8 mods;
   lk_u8 mods_mask;
-  lk_u8 action;    /* lk_editor_pointer_action */
-  lk_u8 has_cmd;   /* 1 when the action is a command; cmd valid */
-  lk_u8 cmd;       /* lk_editor_cmd_id when has_cmd */
+  lk_u8 action;  /* lk_editor_pointer_action */
+  lk_u8 has_cmd; /* 1 when the action is a command; cmd valid */
+  lk_u8 cmd;     /* lk_editor_cmd_id when has_cmd */
   const char *doc;
 } lk_editor_pointer_binding;
 
@@ -400,9 +399,8 @@ const lk_editor_pointer_binding *lk_editor_pointer_bindings(lk_u32 *count);
  * whose button equals `button` (LK_POINTER_BUTTON_ANY on an event is
  * treated as PRIMARY by the widget before asking). */
 const lk_editor_key_binding *lk_editor_key_lookup(lk_u16 key, lk_u8 mods);
-const lk_editor_pointer_binding *lk_editor_pointer_lookup(lk_u8 gesture,
-                                                          lk_u8 button,
-                                                          lk_u8 mods);
+const lk_editor_pointer_binding *
+lk_editor_pointer_lookup(lk_u8 gesture, lk_u8 button, lk_u8 mods);
 
 /**
  ** Internal: widget integration (called by the UIK_EDITOR vtable in

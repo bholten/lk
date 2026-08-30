@@ -21,28 +21,24 @@ void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
  * lk_anchor_resolve (BELOW, flipping above near the bottom edge and
  * clamping to cfg->viewport_w/h).  cfg->text is used to measure
  * option heights. */
-lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n,
-                               const lk_rect *rects,
+lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n, const lk_rect *rects,
                                const lk_style *styles,
                                const lk_layout_cfg *cfg);
 
 /* Internal: compute the rect of option index `opt_ix_in_parent`
  * within the popup.  (0 = first option.)  Returns a zero-rect for
  * out-of-range indices. */
-lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix dd,
-                                 lk_u32 opt_index,
-                                 const lk_rect *rects,
-                                 const lk_style *styles,
-                                 const lk_layout_cfg *cfg);
+lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix dd, lk_u32 opt_index,
+                                const lk_rect *rects, const lk_style *styles,
+                                const lk_layout_cfg *cfg);
 
 /* Internal: per-overlay dispatch targets called by lk-overlay.c for
  * LK_OVERLAY_DROPDOWN_POPUP overlays (procedural content). */
 
 /* Emit the popup (background, border, hover highlight, option text)
  * for the expanded dropdown at index n. */
-void lk_dropdown_render_popup(const lk_tree *t, lk_ix n,
-                              const lk_rect *rects, const lk_style *styles,
-                              const lk_state *state,
+void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
+                              const lk_style *styles, const lk_state *state,
                               const lk_layout_cfg *cfg, lk_render_list *out);
 
 /* Hit-test the expanded dropdown's popup.  Returns the option index

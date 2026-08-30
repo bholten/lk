@@ -110,7 +110,8 @@ lk_str lk_command_text(const lk_ui *ui, const lk_command *cmd, lk_value v) {
     count = ui->cmd_queue.bytes_count;
   }
 
-  if (!bytes || v.as.text.off > count || v.as.text.len > count - v.as.text.off) {
+  if (!bytes || v.as.text.off > count ||
+      v.as.text.len > count - v.as.text.off) {
     return s;
   }
 
@@ -284,9 +285,8 @@ void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
 
   /* Treat NULL or empty-string ptype as "any" (matches Lcl-binding
    * convention, so both layers agree). */
-  pt = (ptype && ptype[0] != '\0')
-           ? lk_intern_id(ui->intern, lk_str_c(ptype))
-           : 0;
+  pt = (ptype && ptype[0] != '\0') ? lk_intern_id(ui->intern, lk_str_c(ptype))
+                                   : 0;
   cn = lk_intern_id(ui->intern, lk_str_c(command_name));
 
   lk_ui_add_translator(ui, event_type, pt, node_kind, keycode, mods, button,
@@ -447,8 +447,8 @@ void lk_ui_dump_commands(const lk_ui *ui, lk_write_fn wr, void *wr_ud) {
       case UIV_BOOL: wr_cstr(wr, wr_ud, v->as.b ? "true" : "false"); break;
       case UIV_I32: wr_u32(wr, wr_ud, (lk_u32)v->as.i); break;
       case UIV_STR: {
-        lk_str s = ui->intern ? lk_intern_str(ui->intern, v->as.str_id)
-                              : lk_str_c("");
+        lk_str s =
+            ui->intern ? lk_intern_str(ui->intern, v->as.str_id) : lk_str_c("");
 
         wr_cstr(wr, wr_ud, "\"");
 
@@ -611,10 +611,8 @@ static int translator_menuable(const lk_translator *tr) {
   case LK_EVENT_POINTER_DOWN:
   case LK_EVENT_POINTER_UP:
   case LK_EVENT_KEY_DOWN:
-  case LK_EVENT_KEY_UP:
-    return 1;
-  default:
-    return 0;
+  case LK_EVENT_KEY_UP: return 1;
+  default: return 0;
   }
 }
 
@@ -625,9 +623,8 @@ static int translator_is_key(const lk_translator *tr) {
 
 static const char *menu_key_name(lk_u16 kc, char *buf) {
   static const char *named[] = {
-      "",        "tab",   "return", "escape", "backspace", "delete",
-      "space",   "left",  "right",  "up",     "down",      "home",
-      "end"};
+      "",     "tab",   "return", "escape", "backspace", "delete", "space",
+      "left", "right", "up",     "down",   "home",      "end"};
 
   if (kc < sizeof(named) / sizeof(named[0])) {
     return named[kc];
@@ -722,16 +719,15 @@ static void menu_item_init(lk_menu_item *it, lk_ui *ui, lk_u32 ti,
   it->ptype = ptype;
 }
 
-lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target,
-                          lk_i32 x, lk_i32 y, lk_menu_item *out, lk_u32 cap) {
+lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
+                          lk_i32 y, lk_menu_item *out, lk_u32 cap) {
   lk_u32 n = 0;
   lk_ix node;
   lk_ix top_disabled = 0;
   int suppressed;
   lk_u32 ti;
 
-  if (!ui || !t || !out || cap == 0 || target == 0 ||
-      target >= t->node_count) {
+  if (!ui || !t || !out || cap == 0 || target == 0 || target >= t->node_count) {
     return 0;
   }
 
@@ -763,8 +759,7 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target,
 
           if (!translator_menuable(tr) || translator_is_key(tr) ||
               (tr->ptype != 0 && tr->ptype != hits[hi].type_id) ||
-              (tr->node_kind != 0 &&
-               tr->node_kind != t->nodes[target].kind)) {
+              (tr->node_kind != 0 && tr->node_kind != t->nodes[target].kind)) {
             continue;
           }
 
@@ -834,7 +829,8 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target,
     for (ti = 0; ti < ui->translator_count && n < cap; ti++) {
       const lk_translator *tr = &ui->translators[ti];
 
-      if (tr->ptype != 0 || !translator_menuable(tr) || !translator_is_key(tr)) {
+      if (tr->ptype != 0 || !translator_menuable(tr) ||
+          !translator_is_key(tr)) {
         continue;
       }
 
@@ -900,11 +896,11 @@ int lk_menu_emit(lk_ui *ui, const lk_tree *t, const lk_menu_item *it) {
 
     if (translator_is_key(tr)) {
       ev.type = tr->event_type == LK_EVENT_KEY_UP ? LK_EVENT_KEY_UP
-                                                    : LK_EVENT_KEY_DOWN;
+                                                  : LK_EVENT_KEY_DOWN;
       ev.data.key.keycode = tr->keycode;
     } else {
       ev.type = tr->event_type == LK_EVENT_POINTER_UP ? LK_EVENT_POINTER_UP
-                                                        : LK_EVENT_POINTER_DOWN;
+                                                      : LK_EVENT_POINTER_DOWN;
       ev.data.pointer.button = tr->button;
     }
 
@@ -920,8 +916,8 @@ int lk_menu_emit(lk_ui *ui, const lk_tree *t, const lk_menu_item *it) {
 
     memset(&cmd, 0, sizeof(cmd));
     cmd.name = it->command_name;
-    cmd.arg_count = it->arg_count > LK_CMD_MAX_ARGS ? LK_CMD_MAX_ARGS
-                                                     : it->arg_count;
+    cmd.arg_count =
+        it->arg_count > LK_CMD_MAX_ARGS ? LK_CMD_MAX_ARGS : it->arg_count;
 
     for (ai = 0; ai < cmd.arg_count; ai++) {
       cmd.args[ai] = it->args[ai];

@@ -53,8 +53,8 @@ static lk_u32 stub_cp_to_byte(lk_str run, lk_u32 cp_count) {
   return i;
 }
 
-static void stub_measure(void *ud, lk_str run, lk_u16 font_id,
-                         lk_u16 font_size, lk_text_metrics *out) {
+static void stub_measure(void *ud, lk_str run, lk_u16 font_id, lk_u16 font_size,
+                         lk_text_metrics *out) {
   (void)ud;
   (void)font_id;
   (void)font_size;
@@ -131,8 +131,13 @@ static lk_u16 stub_register_font(void *ud, const char *path) {
   return g_next_font++;
 }
 
-static const lk_text_backend g_stub_backend = {
-    NULL,          stub_measure,     stub_x_from_index,
-    stub_index_from_x, stub_line_height, stub_register_font};
+static const lk_text_backend g_stub_backend = {NULL,
+                                               stub_measure,
+                                               stub_x_from_index,
+                                               stub_index_from_x,
+                                               stub_line_height,
+                                               stub_register_font};
 
-const lk_text_backend *lk_text_backend_stub(void) { return &g_stub_backend; }
+const lk_text_backend *lk_text_backend_stub(void) {
+  return &g_stub_backend;
+}
