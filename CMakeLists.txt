@@ -308,6 +308,14 @@ if(LK_BUILD_LCL)
     set(LCL_BUILD_RANDOM OFF CACHE BOOL "" FORCE)
   endif()
 
+  if(EMSCRIPTEN)
+    # Lcl's own browser host (lcl.mjs, Js::, Dom) is a separate product;
+    # lk wants the interpreter and the portable packages only.
+    set(LCL_BUILD_WASM OFF CACHE BOOL "" FORCE)
+    set(LCL_BUILD_JS OFF CACHE BOOL "" FORCE)
+    set(LCL_BUILD_DOM_LIB OFF CACHE BOOL "" FORCE)
+  endif()
+
   include(FetchContent)
   FetchContent_Declare(
     lcl
@@ -398,4 +406,43 @@ if(LK_BUILD_LCL)
       C_CLANG_TIDY "${LK_CLANG_TIDY_EXE}")
   endif()
 
+endif()
+
+# ---- Emscripten -------------------------------------------------------
+#
+#   tools/emcc-deps.sh                      # SDL3 + SDL3_ttf -> build-emcc/sdl-prefix
+#   emcmake cmake -S . -B build-emcc -DCMAKE_BUILD_TYPE=Release -DLK_BUILD_LCL=ON \
+#       -DCMAKE_PREFIX_PATH="$PWD/build-emcc/sdl-prefix" \
+#       -DCMAKE_FIND_ROOT_PATH="$PWD/build-emcc/sdl-prefix"
+#   cmake --build build-emcc
+#   node build-emcc/lk_test.js && node build-emcc/lcl_lk_test.js
+#
+# (Both PREFIX_PATH and FIND_ROOT_PATH: the Emscripten toolchain
+# cross-compiles, so find_package only looks inside its root paths.
+# Without the prefix SDL3 is simply not found and the core, the Lcl
+# bindings and both test programs still build.)
+#
+# Executables come out as <name>.js + <name>.wasm.  The test programs
+# run under node against the host filesystem (NODERAWFS), the same
+# way they run natively.  lcl_lk_main links but wants a browser: SDL's
+# Emscripten video driver draws to a canvas, and a page cannot block
+# in lk_window_run -- the browser runner drives lk_window_step from
+# the frame callback instead.  The flags mirror Lcl's: lcl_int is a
+# wasm i64 (WASM_BIGINT), and the interpreter's recursion wants the
+# native-sized stack rather than Emscripten's 64 KiB default.
+if(EMSCRIPTEN)
+  set(_lk_wasm_link -sALLOW_MEMORY_GROWTH=1 -sWASM_BIGINT=1 -sSTACK_SIZE=8388608)
+
+  foreach(_t lk_test lcl_lk_test)
+    if(TARGET ${_t})
+      target_link_options(${_t} PRIVATE ${_lk_wasm_link} -sNODERAWFS=1
+        -sEXIT_RUNTIME=1)
+    endif()
+  endforeach()
+
+  foreach(_t lk_demo lcl_lk_main)
+    if(TARGET ${_t})
+      target_link_options(${_t} PRIVATE ${_lk_wasm_link})
+    endif()
+  endforeach()
 endif()

@@ -10,6 +10,10 @@ on:
         description: "Also build SDL3 from source and run the offscreen example smoke + Tour snapshots"
         type: boolean
         default: false
+      wasm-sdl:
+        description: "Also build SDL3 for Emscripten and link lcl_lk_main.wasm"
+        type: boolean
+        default: false
 
 jobs:
   core:
@@ -75,6 +79,57 @@ jobs:
         run: cmake -B build-fmt -DLK_BUILD_LCL=OFF
       - name: format-check
         run: cmake --build build-fmt --target format-check
+
+  wasm:
+    # Emscripten build of the core, the Lcl bindings and both test
+    # programs, run under node.  No SDL: that is what makes it cheap
+    # enough for every push, and it is the real check that nothing
+    # depends on a 64-bit `long` (wasm32 has none).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.69
+      - name: Configure
+        run: emcmake cmake -S . -B build-emcc -DCMAKE_BUILD_TYPE=Release -DLK_BUILD_LCL=ON
+      - name: Build
+        run: cmake --build build-emcc -j
+      - name: Core tests (node)
+        run: node build-emcc/lk_test.js
+      - name: Lcl binding tests + doctests (node)
+        run: node --stack-size=8000 build-emcc/lcl_lk_test.js
+
+  wasm-sdl:
+    # Optional (manual dispatch): SDL3 + SDL3_ttf for Emscripten via
+    # tools/emcc-deps.sh, then the full link including lcl_lk_main.wasm.
+    if: github.event_name == 'workflow_dispatch' && inputs.wasm-sdl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.69
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Cache wasm SDL prefix
+        id: wasm-sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: build-emcc/sdl-prefix
+          key: wasm-sdl-release-3.2.20-ttf-3.2.2-emsdk-3.1.69
+      - name: Build SDL3 + SDL3_ttf for Emscripten
+        if: steps.wasm-sdl-cache.outputs.cache-hit != 'true'
+        run: tools/emcc-deps.sh
+      - name: Configure + build
+        run: |
+          emcmake cmake -S . -B build-emcc -DCMAKE_BUILD_TYPE=Release -DLK_BUILD_LCL=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/build-emcc/sdl-prefix" \
+            -DCMAKE_FIND_ROOT_PATH="$PWD/build-emcc/sdl-prefix"
+          cmake --build build-emcc -j
+          test -f build-emcc/lcl_lk_main.wasm
+      - name: Tests (node, SDL linked)
+        run: node build-emcc/lk_test.js && node --stack-size=8000 build-emcc/lcl_lk_test.js
 
   sdl:
     # Optional (manual dispatch): builds SDL3 / SDL3_ttf / SDL3_image
