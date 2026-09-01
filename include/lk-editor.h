@@ -336,9 +336,12 @@ const lk_widget_def *lk_editor_widget(void);
  ** mask, i.e. (mods & mods_mask) == mods.  A mask that covers every
  ** modifier bit (LK_EDITOR_MODS_ALL, less SHIFT for a shift-extends
  ** motion) means the chord is exact: extra modifiers fall through to
- ** the application (the ctrl+D rule).  No matching row = the event
- ** bubbles.  Rebinding and per-editor tables are a later topic; these
- ** describe the default keymap.
+ ** the application (the ctrl+D rule).  Every key row's mask includes
+ ** LK_MOD_ALT: the keyboard tables bind no Alt chords, so a chord
+ ** holding Alt always bubbles (only the pointer table uses Alt, for
+ ** box select).  No matching row = the event bubbles.  Rebinding and
+ ** per-editor tables are a later topic; these describe the default
+ ** keymap.
  **/
 
 /* Modifier bits a binding can discriminate on (GUI is never bound). */
