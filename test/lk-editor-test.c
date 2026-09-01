@@ -3957,8 +3957,8 @@ static void test_keymap_tables_valid(void) {
 
 static void test_keymap_dispatch_is_the_table(void) {
   /* The widget routes through the same tables: a chord the table
-   * reserves bubbles (ctrl+alt+d now, like ctrl+shift+d), and an
-   * extra modifier on a non-exact row still fires (alt+left). */
+   * reserves bubbles (ctrl+alt+d now, like ctrl+shift+d), and a
+   * modifier outside a row's mask still fires (ctrl+pageup pages). */
   ed_fix f;
   lk_u32 s;
   lk_u32 e;
@@ -3971,15 +3971,66 @@ static void test_keymap_dispatch_is_the_table(void) {
   CHECK(send_key(&f, LKK_D, LK_MOD_CTRL | LK_MOD_ALT) == 0);
   CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
 
-  CHECK(send_key(&f, LKK_LEFT, LK_MOD_ALT) == 1);
-  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+  CHECK(send_key(&f, LKK_PAGEUP, LK_MOD_CTRL) == 1);
+  cmd_setcur(&f, 1, 0);
 
   CHECK(send_key(&f, LKK_RIGHT, LK_MOD_SHIFT) == 1);
   CHECK(lk_editor_selection(f.ed, &s, &e) == 1);
-  CHECK_EQ(s, 0);
-  CHECK_EQ(e, 1);
+  CHECK_EQ(s, 1);
+  CHECK_EQ(e, 2);
 
   CHECK(send_key(&f, LKK_F5, 0) == 0);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_keymap_alt_chords_bubble(void) {
+  /* No key row claims a chord holding Alt: the app owns alt+arrows,
+   * ctrl+alt+arrows, ctrl+alt+shift+arrows (spatial navigation in
+   * weft), and alt on any other bound key.  The table pins it. */
+  ed_fix f;
+  const lk_editor_key_binding *k;
+  lk_u32 nk;
+  lk_u32 i;
+  lk_u32 s;
+  lk_u32 e;
+
+  BEGIN_TEST("keymap: every Alt chord bubbles to the app");
+
+  k = lk_editor_key_bindings(&nk);
+  for (i = 0; i < nk; i++) {
+    CHECK((k[i].mods_mask & LK_MOD_ALT) != 0);
+    CHECK((k[i].mods & LK_MOD_ALT) == 0);
+  }
+
+  fix_init(&f, "ab ab\ncd", 400, 80);
+  cmd_setcur(&f, 7, 0);
+
+  /* alt+left / ctrl+alt+left: bubble, cursor holds */
+  CHECK(send_key(&f, LKK_LEFT, LK_MOD_ALT) == 0);
+  CHECK_EQ(lk_editor_cursor(f.ed), 7);
+  CHECK(send_key(&f, LKK_LEFT, LK_MOD_CTRL | LK_MOD_ALT) == 0);
+  CHECK_EQ(lk_editor_cursor(f.ed), 7);
+
+  /* ctrl+alt+up and ctrl+alt+shift+up: bubble, no move, no caret */
+  CHECK(send_key(&f, LKK_UP, LK_MOD_CTRL | LK_MOD_ALT) == 0);
+  CHECK(send_key(&f, LKK_UP, LK_MOD_CTRL | LK_MOD_ALT | LK_MOD_SHIFT) == 0);
+  CHECK_EQ(lk_editor_caret_count(f.ed), 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 7);
+
+  /* the non-Alt neighbours still fire: ctrl+shift+up adds a caret,
+   * ctrl+left word-moves */
+  CHECK(send_key(&f, LKK_UP, LK_MOD_CTRL | LK_MOD_SHIFT) == 1);
+  CHECK_EQ(lk_editor_caret_count(f.ed), 2);
+  CHECK(send_key(&f, LKK_ESCAPE, 0) == 1);
+  cmd_setcur(&f, 1, 0);
+  CHECK(send_key(&f, LKK_LEFT, LK_MOD_CTRL) == 1);
+  CHECK_EQ(lk_editor_cursor(f.ed), 0);
+
+  /* alt+letter bubbles even where ctrl+letter is bound */
+  CHECK(send_key(&f, LKK_A, LK_MOD_CTRL | LK_MOD_ALT) == 0);
+  CHECK(lk_editor_selection(f.ed, &s, &e) == 0);
 
   fix_destroy(&f);
   END_TEST();
@@ -4490,4 +4541,5 @@ void lk_editor_run_tests(void) {
   printf("\nlk editor keymap reflection tests:\n");
   test_keymap_tables_valid();
   test_keymap_dispatch_is_the_table();
+  test_keymap_alt_chords_bubble();
 }

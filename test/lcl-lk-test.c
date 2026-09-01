@@ -5840,7 +5840,9 @@ static void test_editor_keys(void) {
 
   check_int(interp, "== [get $left command] move_left", 1);
   check_int(interp, "get $left extend_with_shift", 1);
-  check_int(interp, "get $left mods_exact", 0);
+  /* the Alt-always-bubbles rule made the plain-move rows exact:
+   * ctrl and alt are both masked, shift is read by extend */
+  check_int(interp, "get $left mods_exact", 1);
   check_int(interp, "== [get $left mods] \"\"", 1);
 
   check_int(interp, "== [get $click action] place_cursor", 1);
