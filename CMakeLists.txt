@@ -282,6 +282,8 @@ if(LK_BUILD_LCL)
   option(LK_LCL_IO "Register the Lcl IO package (Io::*) in lcl_lk_main" ON)
   option(LK_LCL_REGEX "Register the Lcl regex package (Regex::*) in lcl_lk_main" ON)
   option(LK_LCL_RANDOM "Register the Lcl random package (Xoshiro::*) in lcl_lk_main" ON)
+  option(LK_LCL_JSON "Register the Lcl JSON package (Json::*) in lcl_lk_main" ON)
+  option(LK_LCL_MATH "Register the Lcl math package (Math::*) in lcl_lk_main" ON)
 
   # Lcl's build options must be forced into the cache BEFORE
   # FetchContent_MakeAvailable -- it configures the subproject
@@ -306,6 +308,18 @@ if(LK_BUILD_LCL)
     set(LCL_BUILD_RANDOM ON CACHE BOOL "" FORCE)
   else()
     set(LCL_BUILD_RANDOM OFF CACHE BOOL "" FORCE)
+  endif()
+
+  if(LK_LCL_JSON)
+    set(LCL_BUILD_JSON ON CACHE BOOL "" FORCE)
+  else()
+    set(LCL_BUILD_JSON OFF CACHE BOOL "" FORCE)
+  endif()
+
+  if(LK_LCL_MATH)
+    set(LCL_BUILD_MATH ON CACHE BOOL "" FORCE)
+  else()
+    set(LCL_BUILD_MATH OFF CACHE BOOL "" FORCE)
   endif()
 
   if(EMSCRIPTEN)
@@ -365,7 +379,11 @@ if(LK_BUILD_LCL)
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
 
     # The optional Lcl packages a runner registers (Io::, Regex::,
-    # Xoshiro::), shared by the native and the browser runner.
+    # Xoshiro::, Json::, Math::), shared by the native and the browser
+    # runner.  Data-driven apps (a crafting simulator reading Core3
+    # tables) need Json:: and Math:: as much as a file explorer needs
+    # Io::; a UI library still owns none of them, so they stay runner
+    # packages that scripts probe with catch.
     function(lk_runner_packages target)
       if(LK_LCL_IO)
         target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_IO)
@@ -380,6 +398,16 @@ if(LK_BUILD_LCL)
       if(LK_LCL_RANDOM)
         target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_RANDOM)
         target_link_libraries(${target} PRIVATE lcl_random)
+      endif()
+
+      if(LK_LCL_JSON)
+        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_JSON)
+        target_link_libraries(${target} PRIVATE lcl_json)
+      endif()
+
+      if(LK_LCL_MATH)
+        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_MATH)
+        target_link_libraries(${target} PRIVATE lcl_math)
       endif()
 
       target_compile_options(${target} PRIVATE -Wall -Wextra)
