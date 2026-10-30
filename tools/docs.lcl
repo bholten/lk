@@ -1,0 +1,389 @@
+;; Documentation tooling for the repository. Run from the repo root
+;; with a CLI built with the doc, io, posix, process, and sh pieces
+;; (the full build):
+;;
+;;   lcl tools/docs.lcl doctest ?file ...?
+;;   lcl tools/docs.lcl build ?outdir?
+;;
+;; `doctest` runs every `>>` example in the given doc sources (all of
+;; them by default) and exits non-zero if any fails. `build` renders
+;; the sources to markdown and, when pandoc is on PATH, to HTML under
+;; `outdir` (default `site/`), laid out for static hosting:
+;;
+;;   index.html            docs/index.{lcl,md} + a generated page list
+;;   core/<Name>.html      docs/<Name>.{lcl,md}
+;;   packages/<Name>.html  packages/*/docs/<Name>.{lcl,md}
+;;   lib/<Name>.html       lib/*/docs/<Name>.{lcl,md} and lib/*/src/<Name>.lcl
+;;
+;; `.lcl` sources are extracted with `Doc::extract` (`;;;` comments and
+;; `proc` stubs); `.md` sources are passed through. In both, `[Name]`
+;; outside code spans becomes a link when Name is a documented symbol
+;; (qualified, or unqualified and unique across the site).
+
+namespace DocSite {
+    proc _ends? {s suf} {
+        let n [String::length $s]
+        let m [String::length $suf]
+
+        and [>= $n $m] [String::eq? [String::range $s [- $n $m] $n] $suf]
+    }
+
+    proc _stem {path} {
+        let b [Posix::basename $path]
+
+        if [_ends? $b ".lcl"] {
+            return [String::range $b 0 [- [String::length $b] 4]]
+        }
+
+        if [_ends? $b ".md"] {
+            return [String::range $b 0 [- [String::length $b] 3]]
+        }
+
+        $b
+    }
+
+    proc _page {src dir} {
+        let name [_stem $src]
+        var kind "md"
+
+        if [_ends? $src ".lcl"] {
+            set! kind "lcl"
+        }
+
+        if [and [== $dir "core"] [== $name "index"]] {
+            return #{src $src dir {} name $name kind $kind href "index.html"}
+        }
+
+        #{src $src dir $dir name $name kind $kind href "$dir/$name.html"}
+    }
+
+    ;; Every documentation source, in site order. Sections are fixed
+    ;; here; nothing else in the tree is scanned. A lib's `docs/` page
+    ;; shadows a `src/` file of the same name, so a curated companion
+    ;; doc can replace extraction from source.
+    proc pages {} {
+        var out ()
+        var seen #{}
+
+        foreach f [Posix::glob docs/*.lcl docs/*.md] {
+            List::push! out [_page $f core]
+        }
+
+        foreach f [Posix::glob packages/*/docs/*.lcl packages/*/docs/*.md] {
+            List::push! out [_page $f packages]
+        }
+
+        foreach f [Posix::glob lib/*/docs/*.lcl lib/*/docs/*.md lib/*/src/*.lcl] {
+            let p [_page $f lib]
+
+            if [== [get $seen [get $p href] 0] 0] {
+                put! seen [get $p href] 1
+                List::push! out $p
+            }
+        }
+
+        $out
+    }
+
+    ;; ---- doctest --------------------------------------------------
+
+    ;; Run the doctests of the given files (all `.lcl` pages when the
+    ;; list is empty); returns the total number of failures.
+    proc doctest {files} {
+        var srcs $files
+
+        if [== [len $srcs] 0] {
+            set! srcs ()
+
+            foreach p [pages] {
+                if [== [get $p kind] "lcl"] {
+                    List::push! srcs [get $p src]
+                }
+            }
+        }
+
+        var fails 0
+        var passes 0
+
+        foreach f $srcs {
+            let r [Doc::doctest_file $f]
+            let nf [get $r fail]
+
+            set! fails [+ $fails $nf]
+            set! passes [+ $passes [get $r pass]]
+
+            if [> $nf 0] {
+                puts "== $f"
+                Doc::report $r
+            }
+        }
+
+        puts "doctest: $passes passed, $fails failed across [len $srcs] files"
+        $fails
+    }
+
+    ;; ---- site -----------------------------------------------------
+
+    ;; URL of `href` (a root-relative page path, e.g. core/String.html)
+    ;; as seen from a page in directory `dir` ({} for the root).
+    proc _rel {dir href} {
+        if [== $dir {}] {
+            return $href
+        }
+
+        let pre "$dir/"
+
+        if [and [> [String::length $href] [String::length $pre]] [== [String::find $href $pre] 0]] {
+            return [String::range $href [String::length $pre] [String::length $href]]
+        }
+
+        "../$href"
+    }
+
+    ;; Index of documented symbols across all `.lcl` pages:
+    ;; `#{by_qname #{qname href} by_name #{name href|""}}` (an
+    ;; unqualified name maps to "" when it is ambiguous).
+    proc _index {pgs} {
+        var by_file #{}
+        var by_qname #{}
+        var by_name #{}
+
+        foreach p $pgs {
+            if [== [get $p kind] "lcl"] {
+                Doc::register_file [get $p src]
+                put! by_file [get $p src] [get $p href]
+            }
+        }
+
+        foreach e [Doc::entries] {
+            let href [get $by_file [get $e file] {}]
+
+            if [!= $href {}] {
+                let q [get $e qname]
+                let target "$href#[Doc::anchor $q]"
+
+                put! by_qname $q $target
+
+                if [== [get $by_name [get $e name] "none"] "none"] {
+                    put! by_name [get $e name] $target
+                } else {
+                    put! by_name [get $e name] ""
+                }
+            }
+        }
+
+        #{by_qname $by_qname by_name $by_name}
+    }
+
+    ;; The resolver `Doc::markdown` calls for a page in `dir`.
+    proc _linker {idx dir} {
+        lambda {name} {
+            var t [get [get $idx by_qname] $name {}]
+
+            if [and [== $t {}] [< [String::find $name "::"] 0]] {
+                set! t [get [get $idx by_name] $name {}]
+            }
+
+            if [== $t {}] {
+                return {}
+            }
+
+            let hash [String::find $t "#"]
+
+            "[_rel $dir [String::range $t 0 $hash]][String::range $t $hash [String::length $t]]"
+        }
+    }
+
+    proc _nav {dir} {
+        let ix [_rel $dir index.html]
+
+        "\[Lcl\]($ix) · \[Core\]($ix#sec-core) · \[Packages\]($ix#sec-packages) · \[Libraries\]($ix#sec-lib)\n\n---\n\n"
+    }
+
+    ;; One-line blurb for the index: the first sentence of the first
+    ;; paragraph that is not a markdown heading (a page that opens with
+    ;; `# Title` is summarized by the text after it).
+    proc _summary {prose} {
+        var para {}
+
+        foreach ln [String::split $prose "\n"] {
+            let t [String::trim $ln]
+
+            if [== $t {}] {
+                if [!= $para {}] { break }
+            } else {
+                if [or [!= $para {}] [!= [String::find $t "#"] 0]] {
+                    if [== $para {}] { set! para $t } else { set! para "$para $t" }
+                }
+            }
+        }
+
+        let stop [String::find $para ". "]
+
+        if [>= $stop 0] {
+            return [String::range $para 0 [+ $stop 1]]
+        }
+
+        $para
+    }
+
+    ;; Markdown body of one page (no nav), plus its one-line summary.
+    proc _render {p link} {
+        if [== [get $p kind] "md"] {
+            let text [Io::read_file [get $p src]]
+
+            return #{md [Doc::link_text $text $link] summary [_summary [get [Doc::parse $text] body]]}
+        }
+
+        let model [Doc::extract_file [get $p src]]
+        let mdoc [String::trim [get $model doc]]
+        var summary [_summary [get [Doc::parse $mdoc] body]]
+
+        ;; no module prose: summarize by the first documented entry
+        ;; (typically the namespace the file documents)
+        if [and [== $summary {}] [> [len [get $model entries]] 0]] {
+            set! summary [_summary [get [Doc::parse [get [get [get $model entries] 0] doc]] body]]
+        }
+        var title [get $p name]
+
+        ;; a module doc that opens with its own `# ` heading is the title
+        if [== [String::find $mdoc "# "] 0] {
+            set! title {}
+        }
+
+        #{md [Doc::markdown $model $title $link] summary $summary}
+    }
+
+    proc _mkdir_p {path} {
+        var acc {}
+
+        if [== [String::find $path "/"] 0] {
+            set! acc "/"
+        }
+
+        foreach seg [String::split $path "/"] {
+            if [!= $seg {}] {
+                if [or [== $acc {}] [== $acc "/"]] { set! acc "$acc$seg" } else { set! acc "$acc/$seg" }
+
+                if [not [Posix::exists? $acc]] {
+                    Posix::mkdir $acc
+                }
+            }
+        }
+    }
+
+    proc _section_list {pgs dir summaries} {
+        var out {}
+        let sorted [List::sort_by $pgs [lambda {p} { String::lower [get $p name] }]]
+
+        foreach p $sorted {
+            if [== [get $p dir] $dir] {
+                let s [get $summaries [get $p src] {}]
+                var line "- \[[get $p name]\]([get $p href])"
+
+                if [!= $s {}] {
+                    set! line "$line — $s"
+                }
+
+                set! out "$out$line\n"
+            }
+        }
+
+        $out
+    }
+
+    proc _write_html {md_path html_path title} {
+        Sh::run (pandoc -s -f markdown -t html --metadata "pagetitle=$title" -o $html_path $md_path)
+    }
+
+    proc _emit {out p md html} {
+        let dir [get $p dir]
+        let name [get $p name]
+        var base $out
+
+        if [!= $dir {}] {
+            set! base "$out/$dir"
+            _mkdir_p $base
+        }
+
+        let md_path "$base/$name.md"
+        let html_path "$base/$name.html"
+
+        Io::write_file $md_path "[_nav $dir][String::trim $md]\n"
+
+        if $html {
+            _write_html $md_path $html_path $name
+            puts "wrote $html_path"
+        } else {
+            puts "wrote $md_path"
+        }
+    }
+    ;; Remove pages left by an earlier build so a renamed or deleted
+    ;; source cannot leave a stale page behind. Only rendered files are
+    ;; touched, never the directory itself.
+    proc _clean {out} {
+        foreach f [Posix::glob "$out/*.md" "$out/*.html" "$out/core/*.md" "$out/core/*.html" "$out/packages/*.md" "$out/packages/*.html" "$out/lib/*.md" "$out/lib/*.html"] {
+            Io::remove $f
+        }
+    }
+
+    ;; Render every page under `out`; returns the number of pages.
+    proc build {out} {
+        let pgs [pages]
+        let idx [_index $pgs]
+        let html [Sh::exists? pandoc]
+        var summaries #{}
+        var index_md {}
+        var n 0
+
+        if [not $html] {
+            puts "warning: pandoc not found; writing markdown only"
+        }
+
+        _mkdir_p $out
+        _clean $out
+        Io::write_file "$out/.nojekyll" ""
+
+        foreach p $pgs {
+            let r [_render $p [_linker $idx [get $p dir]]]
+
+            put! summaries [get $p src] [get $r summary]
+
+            if [== [get $p href] "index.html"] {
+                set! index_md [get $r md]
+            } else {
+                _emit $out $p [get $r md] $html
+                set! n [+ $n 1]
+            }
+        }
+
+        if [== $index_md {}] {
+            set! index_md "# Lcl\n\n"
+        }
+
+        set! index_md "$index_md\n\n<a id=\"sec-core\"></a>\n\n## Core\n\n[_section_list $pgs core $summaries]"
+        set! index_md "$index_md\n<a id=\"sec-packages\"></a>\n\n## Packages\n\n[_section_list $pgs packages $summaries]"
+        set! index_md "$index_md\n<a id=\"sec-lib\"></a>\n\n## Libraries\n\n[_section_list $pgs lib $summaries]"
+
+        _emit $out #{dir {} name index href "index.html"} $index_md $html
+        + $n 1
+    }
+
+}
+
+let cmd [get $argv 0 {}]
+
+if [== $cmd "doctest"] {
+    exit [> [DocSite::doctest [List::slice $argv 1 [len $argv]]] 0]
+}
+
+if [== $cmd "build"] {
+    let out [get $argv 1 "site"]
+    let n [DocSite::build $out]
+    puts "built $n pages under $out/"
+    exit 0
+}
+
+puts "usage: lcl tools/docs.lcl doctest ?file ...?"
+puts "       lcl tools/docs.lcl build ?outdir?"
+exit 2
