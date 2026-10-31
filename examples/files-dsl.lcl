@@ -49,40 +49,11 @@ let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 
 var has_posix 0
 var has_io 0
+
 if [== 0 [catch { Posix::getcwd } _r _e]] { set! has_posix 1 }
 if [== 0 [catch { Io::getenv HOME } _r _e]] { set! has_io 1 }
 
-let KNOWN (
-    CLAUDE.md CMakeLists.txt LICENSE README.md
-    docs/TODO.md docs/canvas.md docs/context-menu.md docs/dsl-v2.md
-    docs/editor-keys-reflection.md docs/editor-multicursor.md docs/editor-wrap.md
-    docs/editor.md docs/forms-widgets.md docs/grow-layout.md docs/image-widget.md
-    docs/layers.md docs/lk.lcl docs/overlays.md docs/release.md docs/styled-text.md
-    docs/styles.md docs/table.md docs/text-contract.md docs/weft-gap-analysis.md
-    docs/weft-surface.md
-    examples/README.md examples/budget-dsl.lcl examples/editor-dsl.lcl
-    examples/files-dsl.lcl examples/forms-dsl.lcl examples/hello-dsl.lcl
-    examples/hello.lcl examples/listener-dsl.lcl examples/log-dsl.lcl
-    examples/minesweeper-dsl.lcl examples/modal-dsl.lcl examples/paint-dsl.lcl
-    examples/plotter-dsl.lcl examples/sheet-dsl.lcl examples/split-dsl.lcl
-    examples/stego-dsl.lcl examples/tour-dsl.lcl examples/weft-mini.lcl
-    include/lcl-lk.h include/lk-annot-store.h include/lk-document.h
-    include/lk-editor.h include/lk.h
-    lib/lk-dsl.lcl
-    src/core/lk-canvas.c src/core/lk-command.c src/core/lk-dropdown.c
-    src/core/lk-event.c src/core/lk-layout.c src/core/lk-list.c src/core/lk-menu.c
-    src/core/lk-overlay.c src/core/lk-render.c src/core/lk-scroll.c
-    src/core/lk-spans.c src/core/lk-style.c src/core/lk-styled-text.c
-    src/core/lk-text-input.c src/core/lk-tree.c src/core/lk-ui.c src/core/lk-widget.c
-    src/editor/lk-annot-store.c src/editor/lk-document.c src/editor/lk-edit-history.c
-    src/editor/lk-editor-widget.c src/editor/lk-editor.c
-    src/lcl/lcl-lk-main.c src/lcl/lcl-lk.c
-    src/sdl/demo.c src/sdl/lk-sdl.c src/sdl/lk-sdl.h
-    test/lcl-lk-test.c test/lk-list-test.c test/lk-menu-test.c
-    test/lk-styled-text-test.c test/lk-test.c
-    tools/autoquit.lcl tools/leakcheck.sh tools/plotter-harness.lcl
-    tools/sheet-harness.lcl tools/smoke.sh
-)
+puts "Trying getcwd [Posix::getcwd]"
 
 ;; A row is #{name path size kind}: name = the path shown, size in
 ;; bytes (-1 = unknown, dirs 0), kind = "dir" or the extension.
@@ -148,44 +119,12 @@ proc size_by_reading {path} {
     return -1
 }
 
-;; Known-files model: every directory prefix becomes a dir row the
-;; first time it is seen, so the listing reads like a tree.
-proc known_rows {} {
-    var out ()
-    var seen #{}
-
-    foreach path $KNOWN {
-        let parts [String::split $path "/"]
-        var prefix ""
-        var k 0
-
-        while [< $k [- [len $parts] 1]] {
-            if [empty? $prefix] {
-                set! prefix [get $parts $k]
-            } else {
-                set! prefix "$prefix/[get $parts $k]"
-            }
-            if [not [has? $seen $prefix]] {
-                set! seen [Dict::merge $seen #{$prefix 1}]
-                set! out [List::push $out [dir_row $prefix]]
-            }
-            set! k [+ $k 1]
-        }
-
-        set! out [List::push $out [file_row $path [size_by_reading $path]]]
-    }
-
-    return $out
-}
-
 var source "known files"
 var files ()
 
 if $has_posix {
     set! source "Posix::readdir"
     set! files [walk "."]
-} else {
-    set! files [known_rows]
 }
 
 ;; ---- the synthetic model: 50 000 rows, computed per row ----

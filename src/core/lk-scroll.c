@@ -83,6 +83,11 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     sum_h += gap * (count - 1);
   }
 
+  if (lk_node_has_prop(t, n, UIP_GROW) &&
+      lk_node_prop_i32(t, n, UIP_GROW, 0) > 0) {
+    sum_h = LK_SCROLL_GROW_FLOOR_H;
+  }
+
   *out_w = max_w + inset * 2;
   *out_h = sum_h + inset * 2;
 }

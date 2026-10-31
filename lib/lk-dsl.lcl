@@ -240,7 +240,12 @@ namespace LkDsl {
     }
 
     ;;; Vertical scroll container: clips children, wheel-scrolls, and
-    ;;; shows a scrollbar when content overflows.
+    ;;; shows a scrollbar when content overflows.  Unconstrained it
+    ;;; measures at its content height (so it shows everything); give
+    ;;; it `grow 1` in a column (or a split pane, or `h`) to make it a
+    ;;; viewport whose content scrolls:
+    ;;;
+    ;;;   column "page" { label "title" ...; scroll "body" #{grow 1} { ... } }
     proc scroll {id *rest} {
         _make_node scroll $id $rest
     }
@@ -412,7 +417,11 @@ namespace LkDsl {
     }
 
     ;;; One page of a `tabs` widget: `text` is the header title; the
-    ;;; body lays out like a column.
+    ;;; body lays out like a column.  A page holding a greedy leaf
+    ;;; (`editor`, `canvas`: intrinsic 0x0, sized by the container)
+    ;;; wants `align stretch`, or the leaf is laid out zero wide:
+    ;;;
+    ;;;   tab "src" #{text "Source" align stretch} { editor "ed" #{editor $ed grow 1} }
     proc tab {id *rest} {
         _make_node tab $id $rest
     }
