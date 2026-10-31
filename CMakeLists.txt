@@ -277,6 +277,7 @@ install(FILES
 
 # ---- Lcl scripting bindings ----
 option(LK_BUILD_LCL "Build Lcl scripting bindings" OFF)
+option(LK_BUILD_LCL_POSIX "Build Lcl POSIX bindings" OFF)
 
 if(LK_BUILD_LCL)
   option(LK_LCL_IO "Register the Lcl IO package (Io::*) in lcl_lk_main" ON)
@@ -284,6 +285,10 @@ if(LK_BUILD_LCL)
   option(LK_LCL_RANDOM "Register the Lcl random package (Xoshiro::*) in lcl_lk_main" ON)
   option(LK_LCL_JSON "Register the Lcl JSON package (Json::*) in lcl_lk_main" ON)
   option(LK_LCL_MATH "Register the Lcl math package (Math::*) in lcl_lk_main" ON)
+
+  if (LK_BUILD_LCL_POSIX)
+    option(LK_LCL_POSIX "Register the Lcl POSIX package (Posix::*) in lcl_lk_main" ON)
+  endif()
 
   # Lcl's build options must be forced into the cache BEFORE
   # FetchContent_MakeAvailable -- it configures the subproject
@@ -320,6 +325,12 @@ if(LK_BUILD_LCL)
     set(LCL_BUILD_MATH ON CACHE BOOL "" FORCE)
   else()
     set(LCL_BUILD_MATH OFF CACHE BOOL "" FORCE)
+  endif()
+
+  if (LK_LCL_POSIX)
+    set(LCL_BUILD_POSIX ON CACHE BOOL "" FORCE)
+  else()
+    set(LCL_BUILD_POSIX OFF CACHE BOOL "" FORCE)
   endif()
 
   if(EMSCRIPTEN)
@@ -408,6 +419,11 @@ if(LK_BUILD_LCL)
       if(LK_LCL_MATH)
         target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_MATH)
         target_link_libraries(${target} PRIVATE lcl_math)
+      endif()
+
+      if (LK_LCL_POSIX)
+        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_POSIX)
+        target_link_libraries(${target} PRIVATE lcl_posix)
       endif()
 
       target_compile_options(${target} PRIVATE -Wall -Wextra)

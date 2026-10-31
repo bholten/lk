@@ -23,6 +23,10 @@
 #include <lcl-math.h>
 #endif
 
+#ifdef LK_HAVE_LCL_POSIX
+#include <lcl-posix.h>
+#endif
+
 #include "lcl-lk.h"
 #include "lk-sdl.h"
 
@@ -71,6 +75,10 @@ int main(int argc, char **argv) {
 
 #ifdef LK_HAVE_LCL_MATH
   lcl_register_math(interp);
+#endif
+
+#ifdef LK_HAVE_LCL_POSIX
+  lcl_register_posix(interp);
 #endif
 
   /* The DSL prelude ships inside lcl_lk.  LK_DSL_FILE=<path> evaluates

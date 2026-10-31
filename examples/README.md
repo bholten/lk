@@ -21,7 +21,7 @@ Run one with `build/lcl_lk_main examples/<name>.lcl` (needs
 | `plotter-dsl.lcl` | Plotter: the vector `canvas` display list, rebuilt when dirty; pan/zoom/crosshair |
 | `tour-dsl.lcl` | Widget Tour: every kind on a tab; `--snap DIR` photographs itself headless |
 | `sheet-dsl.lcl` | Cells: a mini spreadsheet of *controlled* `text_input`s — the app owns every cell's text; formulas, cycles, `text_align end` |
-| `files-dsl.lcl` | File Explorer: a `listview` that builds only the rows on screen — 50 000 synthetic rows at O(visible); table as sugar (header buttons sort), cursor vs selection, right-click menu |
+| `files-dsl.lcl` | File Explorer: a `listview` that builds only the rows on screen — 50 000 synthetic rows at O(visible); table as sugar (header buttons sort), cursor vs selection, right-click menu; **requires POSIX bindings** for file handling |
 | `log-dsl.lcl` | Log Lens: `styled_text` lines wrapping at the pane width, spans for colour/underline, `path:line` ranges presented — click opens the file in an editor pane; right-click lists what applies |
 
 Recipes that recur across them: global chords are plain 3-arg
