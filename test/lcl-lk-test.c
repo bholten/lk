@@ -6467,6 +6467,74 @@ static void test_annot_present_errors(void) {
   END_TEST();
 }
 
+/* annot_presentation: the inverse of annot_present -- the wrapped Lcl
+ * value comes back live; no presentation reads as ""; errors mirror
+ * annot_present's. */
+static void test_annot_presentation_get(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot_presentation: reads back what annot_present set");
+  interp = make_interp();
+
+  eval_ok(interp,
+          "let ui [Lk::ui_create]\n"
+          "let doc [Lk::doc_new \"hello world\"]\n"
+          "let s [Lk::annot_store_new]\n"
+          "Lk::annot_attach $s $doc\n"
+          "let a [Lk::annot_add $s 0 5 \"l\"]\n"
+          "let b [Lk::annot_add $s 6 11 \"l\"]\n"
+          "Lk::annot_present $ui $s $a \"qjump\" #{buffer \"b1\" start 4 end 9}",
+          &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  eval_ok(interp, "get [Lk::annot_presentation $ui $s $a] ptype", &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "qjump") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  eval_ok(interp, "get [get [Lk::annot_presentation $ui $s $a] value] end",
+          &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "9") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  /* no presentation -> "" */
+  eval_ok(interp, "Lk::annot_presentation $ui $s $b", &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  /* a replaced presentation reads back the new value */
+  eval_ok(interp,
+          "Lk::annot_present $ui $s $a \"loc\" 42\n"
+          "let p [Lk::annot_presentation $ui $s $a]\n"
+          "\"[get $p ptype]/[get $p value]\"",
+          &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "loc/42") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  eval_expect_err(interp, "Lk::annot_presentation $ui $s 999",
+                  "no such annotation", NULL, NULL);
+  eval_expect_err(interp, "Lk::annot_presentation $ui $s",
+                  "expected 3 arguments", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
 /* Name-shaped args (node ids, tags, ptypes, layers) accept strings
  * and typed numbers (which render), but hard-error on structured
  * values — a dict or opaque passed where a name was meant is a
@@ -7642,6 +7710,7 @@ int main(void) {
   test_focus_changed_marshal();
   test_focus_changed_translator_name();
   test_annot_present_errors();
+  test_annot_presentation_get();
   test_annot_present_ui_dies_first();
   test_command_handler_released_on_ui_destroy();
   test_name_arg_strictness();

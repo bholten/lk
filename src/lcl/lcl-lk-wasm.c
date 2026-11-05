@@ -28,6 +28,14 @@
 #include <lcl-random.h>
 #endif
 
+#ifdef LK_HAVE_LCL_JSON
+#include <lcl-json.h>
+#endif
+
+#ifdef LK_HAVE_LCL_MATH
+#include <lcl-math.h>
+#endif
+
 #include "lcl-lk.h"
 
 #define LK_WASM_SCRIPT "/app.lcl"
@@ -88,6 +96,14 @@ int main(void) {
 
 #ifdef LK_HAVE_LCL_RANDOM
   lcl_register_random(g_interp);
+#endif
+
+#ifdef LK_HAVE_LCL_JSON
+  lcl_register_json(g_interp);
+#endif
+
+#ifdef LK_HAVE_LCL_MATH
+  lcl_register_math(g_interp);
 #endif
 
   if (lcl_lk_load_dsl(g_interp) != LCL_RC_OK) {

@@ -7619,6 +7619,94 @@ static void test_scroll_measure(void) {
   lk_tree_destroy(t);
 }
 
+static void test_scroll_grow_in_column(void) {
+  /* window > column > [label, scroll(grow 1) > 20 labels].  The scroll
+   * measures at a one-row floor because it grows, so the column's
+   * leftover (viewport minus the label) becomes its height and the
+   * 320px of content overflows it -- a bar, not a column taller than
+   * the window. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, hdr, sc, first = 0;
+  lk_rect *r;
+  int i;
+
+  BEGIN_TEST("scroll: grow in a column takes the leftover");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  hdr = lk_tree_add_node_s(t, lk_str_c("hdr"), UIK_LABEL);
+  sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  lk_tree_add_prop(t, hdr, UIP_TEXT, lk_v_cstr(t->intern, "Title"));
+  lk_tree_add_prop(t, sc, UIP_GROW, lk_v_i32(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, hdr);
+  lk_tree_append_child(t, col, sc);
+
+  for (i = 0; i < 20; i++) {
+    char name[32];
+    lk_ix lbl;
+    sprintf(name, "lbl%d", i);
+    lbl = lk_tree_add_node_s(t, lk_str_c(name), UIK_LABEL);
+    lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, name));
+    lk_tree_append_child(t, sc, lbl);
+
+    if (i == 0) {
+      first = lbl;
+    }
+  }
+
+  r = run_layout(t, 800, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_EQ((unsigned)r[hdr].h, 16u);
+    /* the leftover: 300 - 16 (label), no gap, no padding */
+    CHECK_EQ((unsigned)r[sc].y, 16u);
+    CHECK_EQ((unsigned)r[sc].h, 284u);
+    /* content still starts at the top and is laid out in full */
+    CHECK_EQ((unsigned)r[first].y, 16u);
+    CHECK_EQ((unsigned)r[first].h, 16u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_scroll_grow_zero_measures_content(void) {
+  /* An explicit `grow 0` pins: the scroll keeps measuring at its
+   * content height, as it does without the prop. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sc, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("scroll: grow 0 still measures content");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "World!"));
+  lk_tree_add_prop(t, sc, UIP_GROW, lk_v_i32(0));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sc);
+  lk_tree_append_child(t, sc, l1);
+  lk_tree_append_child(t, sc, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_EQ((unsigned)r[sc].h, 32u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
 static void test_scroll_layout_no_offset(void) {
   /* No scroll offset: children start at top of content area. */
   lk_ix sc;
@@ -13078,6 +13166,8 @@ int main(void) {
   /* scroll widget */
   printf("\nlk scroll tests:\n");
   test_scroll_measure();
+  test_scroll_grow_in_column();
+  test_scroll_grow_zero_measures_content();
   test_scroll_layout_no_offset();
   test_scroll_layout_with_offset();
   test_scroll_render_clips();

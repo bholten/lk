@@ -1413,6 +1413,24 @@ namespace Lk {
     ;;; >> Lk::annot_present $ui $s $a "file-ref" #{file "file.c" line 12}
     proc annot_present {ui s id ptype value} {}
 
+    ;;; Read an annotation's presentation back: `#{ptype .. value ..}`
+    ;;; (the value `Lk::annot_present` wrapped, live), or "" when the
+    ;;; annotation carries none.  The inverse of annot_present, so a
+    ;;; caller can copy presentations between stores.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> let d [Lk::doc_new "see file.c:12"]
+    ;;; >> Lk::annot_attach $s $d
+    ;;; >> let a [Lk::annot_add $s 4 13 "links"]
+    ;;; >> Lk::annot_present $ui $s $a "file-ref" #{file "file.c" line 12}
+    ;;; >> get [Lk::annot_presentation $ui $s $a] ptype
+    ;;; "file-ref"
+    ;;; >> Lk::annot_presentation $ui $s [Lk::annot_add $s 0 3 "links"]
+    ;;; ""
+    proc annot_presentation {ui s id} {}
+
     ;;; Map window coordinates to a byte position in the editor's
     ;;; last completed layout; -1 before first layout, after
     ;;; invalidating edits, or outside the laid-out rect (never
