@@ -9236,6 +9236,90 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
+/* Lk::annot_presentation [ui, store, id] -> #{ptype <name> value <v>}
+ * or "" when the annotation carries no presentation.  The inverse of
+ * annot_present: a value wrapped by annot_present comes back as the
+ * retained Lcl value itself; any other lk_value marshals context-free.
+ * Lets a caller copy presentations between stores (weft's derivation
+ * publish: staged rows -> output buffer) without re-deriving them. */
+static lcl_return_code c_lk_annot_presentation(lcl_interp *interp, int argc,
+                                               lcl_value **argv,
+                                               lcl_value **out) {
+  lk_ui *ui = NULL;
+  struct lcl_lk_annot *aw;
+  lk_u32 id;
+  const lk_annot_record *rec;
+  const char *pt;
+  lcl_value *dict;
+  lcl_value *v;
+
+  if (argc != 3) {
+    lcl_set_error(interp, "Lk::annot_presentation: expected 3 arguments "
+                          "(ui, store, id)");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lcl_opaque_get(argv[0], LK_UI_TYPE, (void **)&ui) != LCL_OK || !ui) {
+    lcl_set_error(interp, "Lk::annot_presentation: expected lk_ui opaque");
+
+    return LCL_RC_ERR;
+  }
+
+  aw = get_annot(interp, argv[1]);
+
+  if (!aw) {
+    return LCL_RC_ERR;
+  }
+
+  if (!to_u32(argv[2], &id) || id == 0) {
+    lcl_set_error(interp,
+                  "Lk::annot_presentation: id must be a positive integer");
+
+    return LCL_RC_ERR;
+  }
+
+  rec = lk_annot_get(aw->store, id);
+
+  if (!rec) {
+    lcl_set_error(interp, "Lk::annot_presentation: no such annotation");
+
+    return LCL_RC_ERR;
+  }
+
+  if (rec->pres_type == 0) {
+    *out = lcl_string_new("");
+
+    return LCL_RC_OK;
+  }
+
+  pt = lk_intern_cstr(ui->intern, rec->pres_type);
+  dict = lcl_dict_new();
+
+  v = lcl_string_new(pt ? pt : "");
+  lcl_dict_put(&dict, "ptype", v);
+  lcl_ref_dec(v);
+
+  if (rec->pres_value.tag == UIV_RESOURCE) {
+    struct lcl_pres_box *box = (struct lcl_pres_box *)lk_resource_get(
+        ui->resources, lk_v_resource_ref(rec->pres_value), &g_lcl_value_type);
+
+    if (box && box->val) {
+      v = lcl_ref_inc(box->val);
+    } else {
+      v = lcl_string_new("<resource>");
+    }
+  } else {
+    v = lk_value_to_lcl(&rec->pres_value, ui->intern);
+  }
+
+  lcl_dict_put(&dict, "value", v);
+  lcl_ref_dec(v);
+  *out = dict;
+
+  return LCL_RC_OK;
+}
+
 /* Lk::editor_pos_at [editor, x, y] -> byte position, or -1 when the
  * point is outside the editor's laid-out rect or no layout snapshot
  * exists (docs/weft-surface.md section 1.5 pinned contract). */
@@ -9547,6 +9631,9 @@ void lcl_register_lk(lcl_interp *interp) {
   /* Range presentations (weft-surface S1) */
   lcl_ns_def_take(ns, "annot_present",
                   lcl_c_proc_new("Lk::annot_present", c_lk_annot_present));
+  lcl_ns_def_take(
+      ns, "annot_presentation",
+      lcl_c_proc_new("Lk::annot_presentation", c_lk_annot_presentation));
   lcl_ns_def_take(ns, "editor_pos_at",
                   lcl_c_proc_new("Lk::editor_pos_at", c_lk_editor_pos_at));
   lcl_ns_def_take(

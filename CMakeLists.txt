@@ -277,7 +277,6 @@ install(FILES
 
 # ---- Lcl scripting bindings ----
 option(LK_BUILD_LCL "Build Lcl scripting bindings" OFF)
-option(LK_BUILD_LCL_POSIX "Build Lcl POSIX bindings" OFF)
 
 if(LK_BUILD_LCL)
   option(LK_LCL_IO "Register the Lcl IO package (Io::*) in lcl_lk_main" ON)
@@ -286,13 +285,13 @@ if(LK_BUILD_LCL)
   option(LK_LCL_JSON "Register the Lcl JSON package (Json::*) in lcl_lk_main" ON)
   option(LK_LCL_MATH "Register the Lcl math package (Math::*) in lcl_lk_main" ON)
 
-  if (LK_BUILD_LCL_POSIX)
-    option(LK_LCL_POSIX "Register the Lcl POSIX package (Posix::*) in lcl_lk_main" ON)
+  if(EMSCRIPTEN)
+    set(LK_LCL_POSIX_DEFAULT OFF)
+  else()
+    set(LK_LCL_POSIX_DEFAULT ON)
   endif()
+  option(LK_LCL_POSIX "Register the Lcl POSIX package (Posix::*) in lcl_lk_main" ${LK_LCL_POSIX_DEFAULT})
 
-  # Lcl's build options must be forced into the cache BEFORE
-  # FetchContent_MakeAvailable -- it configures the subproject
-  # immediately, so anything set after it is ignored on first run.
   set(LCL_BUILD_SHARED OFF CACHE BOOL "" FORCE)
   set(LCL_BUILD_STATIC ON CACHE BOOL "" FORCE)
   set(LCL_BUILD_CLI OFF CACHE BOOL "" FORCE)
@@ -327,7 +326,7 @@ if(LK_BUILD_LCL)
     set(LCL_BUILD_MATH OFF CACHE BOOL "" FORCE)
   endif()
 
-  if (LK_LCL_POSIX)
+  if(LK_LCL_POSIX)
     set(LCL_BUILD_POSIX ON CACHE BOOL "" FORCE)
   else()
     set(LCL_BUILD_POSIX OFF CACHE BOOL "" FORCE)
@@ -421,7 +420,7 @@ if(LK_BUILD_LCL)
         target_link_libraries(${target} PRIVATE lcl_math)
       endif()
 
-      if (LK_LCL_POSIX)
+      if(LK_LCL_POSIX)
         target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_POSIX)
         target_link_libraries(${target} PRIVATE lcl_posix)
       endif()
