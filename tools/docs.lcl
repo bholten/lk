@@ -73,7 +73,7 @@ namespace DocSite {
             List::push! out [_page $f packages]
         }
 
-        foreach f [Posix::glob lib/*/docs/*.lcl lib/*/docs/*.md lib/*/src/*.lcl] {
+        foreach f [Posix::glob lib/*/docs/*.lcl lib/*/docs/*.md lib/*/src/*.lcl lib/*.lcl] {
             let p [_page $f lib]
 
             if [== [get $seen [get $p href] 0] 0] {

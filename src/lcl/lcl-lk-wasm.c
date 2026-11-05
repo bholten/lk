@@ -127,9 +127,6 @@ int main(void) {
     return rc == LCL_RC_OK ? 0 : 1;
   }
 
-  /* The first frame right now, synchronously: the canvas is painted
-   * before the page yields, rather than after the first animation
-   * frame the browser grants (a background tab may grant none). */
   if (!lcl_lk_run_step()) {
     fprintf(stderr, "lk: window closed\n");
     lcl_interp_free(g_interp);
@@ -138,9 +135,6 @@ int main(void) {
 
   fprintf(stderr, "lk: first frame rendered; main loop on\n");
 
-  /* 0 fps = requestAnimationFrame; 1 = never return from main (the
-   * call unwinds through the JS event loop), so nothing below it may
-   * hold state the callback needs. */
   emscripten_set_main_loop_arg(tick, NULL, 0, 1);
 
   return 0;
