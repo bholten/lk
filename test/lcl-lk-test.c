@@ -6477,15 +6477,16 @@ static void test_annot_presentation_get(void) {
   BEGIN_TEST("annot_presentation: reads back what annot_present set");
   interp = make_interp();
 
-  eval_ok(interp,
-          "let ui [Lk::ui_create]\n"
-          "let doc [Lk::doc_new \"hello world\"]\n"
-          "let s [Lk::annot_store_new]\n"
-          "Lk::annot_attach $s $doc\n"
-          "let a [Lk::annot_add $s 0 5 \"l\"]\n"
-          "let b [Lk::annot_add $s 6 11 \"l\"]\n"
-          "Lk::annot_present $ui $s $a \"qjump\" #{buffer \"b1\" start 4 end 9}",
-          &r);
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "let doc [Lk::doc_new \"hello world\"]\n"
+      "let s [Lk::annot_store_new]\n"
+      "Lk::annot_attach $s $doc\n"
+      "let a [Lk::annot_add $s 0 5 \"l\"]\n"
+      "let b [Lk::annot_add $s 6 11 \"l\"]\n"
+      "Lk::annot_present $ui $s $a \"qjump\" #{buffer \"b1\" start 4 end 9}",
+      &r);
   if (r) {
     lcl_ref_dec(r);
   }
@@ -6498,8 +6499,7 @@ static void test_annot_presentation_get(void) {
   }
   r = NULL;
 
-  eval_ok(interp, "get [get [Lk::annot_presentation $ui $s $a] value] end",
-          &r);
+  eval_ok(interp, "get [get [Lk::annot_presentation $ui $s $a] value] end", &r);
   CHECK(r != NULL && strcmp(lcl_value_to_string(r), "9") == 0);
   if (r) {
     lcl_ref_dec(r);

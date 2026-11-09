@@ -348,6 +348,17 @@ if(LK_BUILD_LCL)
   )
   FetchContent_MakeAvailable(lcl)
 
+  # lk's install exports lk_core/lk_shared/lk_sdl only; the Lcl bindings
+  # are consumed in-tree.  So none of Lcl's own install rules belong in
+  # `cmake --install build`, and one of them (cJSON's) actively breaks
+  # it: cJSON installs with CMAKE_INSTALL_FULL_INCLUDEDIR, an absolute
+  # path baked from CMAKE_INSTALL_PREFIX at configure time, so
+  # `--prefix` cannot redirect it and an unprivileged install fails on
+  # /usr/local/include/cjson.  EXCLUDE_FROM_ALL on the directory drops
+  # the whole subtree's install script.  Targets lcl_lk links still
+  # build -- dependencies override the exclusion.
+  set_property(DIRECTORY ${lcl_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE)
+
   # The Layer-2 DSL travels inside the library: lib/lk-dsl.lcl is
   # embedded as a byte array (tools/embed.cmake) and evaluated by
   # lcl_lk_load_dsl, so a runner needs no path to the source tree --
