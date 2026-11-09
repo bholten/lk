@@ -6,7 +6,6 @@
 
 #include "lk-menu.h"
 
-/* lk-state.c */
 lk_state *lk_state_create(void *(*)(void *, lk_u32), void (*)(void *, void *),
                           void *);
 void lk_state_destroy(lk_state *st);
@@ -125,7 +124,7 @@ static int props_equal(const lk_tree *a, const lk_node *na, const lk_tree *b,
         return 0;
       }
       break;
-    case UIV_TEXT: /* command/hit scope only — never valid in trees */
+    case UIV_TEXT:
       if (pa->value.as.text.off != pb->value.as.text.off ||
           pa->value.as.text.len != pb->value.as.text.len) {
         return 0;
@@ -182,17 +181,15 @@ static int pres_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
     return 1;
   }
 
-  /* Compare presentations in order of appearance */
   pi = 0;
   ni = 0;
 
   while (pi < prev->pres_count && ni < next->pres_count) {
-    /* Find next pres for prev_ix */
+
     while (pi < prev->pres_count && prev->pres[pi].node != prev_ix) {
       pi++;
     }
 
-    /* Find next pres for next_ix */
     while (ni < next->pres_count && next->pres[ni].node != next_ix) {
       ni++;
     }
@@ -252,7 +249,6 @@ static int tags_equal(const lk_tree *prev, lk_ix prev_ix, const lk_tree *next,
     return 1;
   }
 
-  /* Compare tags in order of appearance */
   pi = 0;
   ni = 0;
 
@@ -450,9 +446,6 @@ lk_ui *lk_ui_create(const lk_ui_cfg *cfg) {
     return NULL;
   }
 
-  /* Resource table — eager, matching the rest of lk_ui's init.  Both
-   * trees borrow it so widget vtable hooks can resolve refs through
-   * the tree alone (docs/editor.md §5). */
   ui->resources = lk_resources_new(al, de, ud);
 
   if (!ui->resources) {
@@ -555,9 +548,6 @@ lk_tree *lk_ui_begin_frame(lk_ui *ui) {
   return ui->next;
 }
 
-/* 1 when id was REMOVED in cs and not re-ADDED (i.e. truly gone, not
- * merely moved to a new parent).  Shared by the focus-clear and
- * overlay GC in lk_ui_end_frame; lk_state_gc applies the same rule. */
 static int cs_id_removed_not_readded(const lk_changeset *cs, lk_node_id id) {
   lk_u32 i;
   int removed = 0;
@@ -588,7 +578,7 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
   ui->changeset.count = 0;
 
   if (ui->prev->root == 0 && ui->next->root == 0) {
-    /* Both empty: nothing to do */
+
   } else if (ui->prev->root == 0) {
     emit_added_subtree(ui, ui->next->root);
   } else if (ui->next->root == 0) {
@@ -605,19 +595,13 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
   ui->prev = ui->next;
   ui->next = tmp;
 
-  /* Clear focus if the focused node was removed.  A node that is
-   * REMOVED and ADDED in the same changeset merely moved to a new
-   * parent — keep focus in that case.  The clear is an effective
-   * focus change, so it enqueues FOCUS_CHANGED like the lk_focus_*
-   * functions; the host drains it via lk_ui_flush_events (end_frame
-   * itself never routes). */
   if (ui->focused_id != 0 &&
       cs_id_removed_not_readded(&ui->changeset, ui->focused_id)) {
     lk_event fev;
 
     memset(&fev, 0, sizeof(fev));
     fev.type = LK_EVENT_FOCUS_CHANGED;
-    fev.target = ui->prev->root; /* clear: no focused node to target */
+    fev.target = ui->prev->root;
     fev.data.focus.prev_id = ui->focused_id;
     fev.data.focus.next_id = 0;
     lk_event_enqueue(ui, &fev);
@@ -625,18 +609,10 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
     ui->focused_id = 0;
   }
 
-  /* A focused node inside a collapsed TAB page (the tabs selection
-   * moved -- by a click, or by an app-controlled `value` change --
-   * while focus lived in the old page) is unreachable: not laid out,
-   * not rendered, skipped by focus traversal.  Clear focus rather than
-   * route keystrokes into an invisible widget.  UIP_HIDDEN subtrees
-   * are deliberately NOT swept here: modal overlay content is a
-   * hidden subtree that legitimately holds focus (focus trap). */
   if (ui->focused_id != 0) {
     lk_ix fx = lk_tree_find_by_id(ui->prev, ui->focused_id);
     int collapsed = 0;
 
-    /* ancestors only: a collapsed TAB itself is its (visible) header */
     if (fx != 0) {
       fx = ui->prev->nodes[fx].parent;
     }
@@ -664,23 +640,15 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
     }
   }
 
-  /* Same rule for pointer capture: a captured node that is truly gone
-   * releases the capture; a move (REMOVED+ADDED) keeps it. */
   if (ui->captured_id != 0 &&
       cs_id_removed_not_readded(&ui->changeset, ui->captured_id)) {
     ui->captured_id = 0;
   }
 
-  /* Deferred focus (lk_focus_request): the committed tree is the
-   * first place the requested node can exist.  lk_focus_set applies
-   * its own focusable/enabled rules and clears the request on
-   * success; an unsatisfied request simply stays pending. */
   if (ui->focus_request_id != 0) {
     lk_focus_set(ui, ui->prev, ui->focus_request_id);
   }
 
-  /* Pop overlays whose owner node was removed (same move filter:
-   * REMOVED + ADDED in one changeset is a reparent, overlay stays). */
   {
     lk_u32 oi = ui->overlay_count;
 
@@ -700,7 +668,6 @@ const lk_changeset *lk_ui_end_frame(lk_ui *ui) {
     }
   }
 
-  /* GC retained state for removed nodes */
   if (ui->state) {
     lk_state_gc(ui->state, &ui->changeset);
   }
@@ -748,7 +715,7 @@ lk_widget_geom *lk_ui_geom(lk_ui *ui) {
     return NULL;
   }
 
-  t = ui->prev; /* current tree (mirrors lk_ui_resolve_styles) */
+  t = ui->prev;
   nc = t ? t->node_count : 0;
 
   if (nc > ui->geom_cap) {
@@ -778,7 +745,7 @@ lk_rect *lk_ui_rects(lk_ui *ui) {
     return NULL;
   }
 
-  t = ui->prev; /* current tree (mirrors lk_ui_geom) */
+  t = ui->prev;
   nc = t ? t->node_count : 0;
 
   if (nc > ui->rects_cap) {
@@ -869,7 +836,6 @@ void lk_ui_resolve_styles(lk_ui *ui) {
 
   nc = t->node_count;
 
-  /* Ensure styles array is large enough */
   if (nc > ui->styles_cap) {
     if (ui->styles) {
       ui_dealloc(ui, ui->styles);
@@ -885,7 +851,6 @@ void lk_ui_resolve_styles(lk_ui *ui) {
     ui->styles_cap = nc;
   }
 
-  /* Ensure node_states array is large enough */
   if (nc > ui->nstates_cap) {
     if (ui->node_states) {
       ui_dealloc(ui, ui->node_states);
@@ -901,13 +866,11 @@ void lk_ui_resolve_styles(lk_ui *ui) {
     ui->nstates_cap = nc;
   }
 
-  /* Compute node states */
   memset(ui->node_states, 0, sizeof(lk_u8) * nc);
 
   {
     lk_ix fi;
 
-    /* Mark focused node */
     if (ui->focused_id != 0) {
       for (fi = 1; fi < (lk_ix)nc; fi++) {
         if (t->nodes[fi].id == ui->focused_id) {
@@ -917,7 +880,6 @@ void lk_ui_resolve_styles(lk_ui *ui) {
       }
     }
 
-    /* Mark hovered node */
     if (ui->hovered_id != 0) {
       for (fi = 1; fi < (lk_ix)nc; fi++) {
         if (t->nodes[fi].id == ui->hovered_id) {
@@ -927,7 +889,6 @@ void lk_ui_resolve_styles(lk_ui *ui) {
       }
     }
 
-    /* Mark disabled nodes */
     for (fi = 1; fi < (lk_ix)nc; fi++) {
       if (lk_node_prop_bool(t, fi, UIP_DISABLED)) {
         ui->node_states[fi] |= LK_NSTATE_DISABLED;

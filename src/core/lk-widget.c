@@ -17,8 +17,6 @@
 #include <lk-editor.h>
 #include <lk.h>
 
-/* ---- Registry ---- */
-
 static lk_widget_def g_widgets[LK_KIND_MAX];
 static int g_inited;
 
@@ -47,8 +45,6 @@ const lk_widget_def *lk_widget_get(lk_kind kind) {
 
   return &g_widgets[(int)kind];
 }
-
-/* ---- Measure functions ---- */
 
 static void measure_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
@@ -143,8 +139,6 @@ static void measure_spacer(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = lk_node_prop_i32(t, n, UIP_H, 0);
 }
 
-/* Measure a text run through cfg->text with the node's resolved font
- * (0/0 defaults when no styles).  Zero metrics when no backend. */
 static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
                         lk_i32 *out_w, lk_i32 *out_h) {
   lk_text_metrics m;
@@ -163,8 +157,6 @@ static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
   *out_h = m.h;
 }
 
-/* Stash the measured run size for render's text_align placement
- * (render has no text backend).  NULL geom: text draws at START. */
 static void stash_run(const lk_layout_cfg *cfg, lk_ix n, lk_i32 tw, lk_i32 th) {
   if (cfg->geom) {
     cfg->geom[n].run.w = tw;
@@ -222,8 +214,6 @@ static void measure_button(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = th + inset * 2;
 }
 
-/* ---- Layout functions ---- */
-
 static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
                          const lk_rect *content, const lk_layout_cfg *cfg,
                          lk_rect *rects) {
@@ -247,15 +237,8 @@ static int layout_window(const lk_tree *t, lk_ix n, const lk_size *sizes,
   return 1;
 }
 
-/* Growth weight cap (docs/grow-layout.md section 1): keeps
- * leftover * weight inside lk_i32 without wide integers. */
 #define GROW_WEIGHT_MAX 4096
 
-/* Effective growth weight of one stack child.  An explicit UIP_GROW
- * wins -- presence-checked, so grow 0 genuinely pins a spacer --
- * clamped to [0, GROW_WEIGHT_MAX] (the core has no assert facility;
- * negatives clamp silently, the bindings hard-error).  An unsized
- * SPACER keeps its legacy weight of 1; everything else is fixed. */
 static lk_i32 grow_weight(const lk_tree *t, lk_ix child, lk_prop_key main_key) {
   if (lk_node_has_prop(t, child, UIP_GROW)) {
     lk_i32 w = lk_node_prop_i32(t, child, UIP_GROW, 0);
@@ -279,20 +262,6 @@ static lk_i32 grow_weight(const lk_tree *t, lk_ix child, lk_prop_key main_key) {
   return 0;
 }
 
-/* Shared column/row layout parameterized by axis.
- * axis=0 -> column (main=vertical, cross=horizontal)
- * axis=1 -> row    (main=horizontal, cross=vertical)
- *
- * Leftover main-axis space (final extent minus bases minus visible
- * gaps, never negative -- intrinsic is the floor, no shrink) is
- * apportioned by grow weight, largest-remainder, ties to earlier
- * children.  Equal weights reproduce the legacy spacer share-out
- * exactly.  Growth is layout-only: measurement never sees it. */
-/* Height-for-width of a stack (docs/styled-text.md section 2).
- * COLUMN: sum of the children's fits at their cross width -- the inner
- * width under stretch, else min(measured, inner), an explicit UIP_W
- * standing -- plus gaps.  ROW: the max of the children's fits at
- * their measured width (growth ignored for the estimate). */
 static lk_i32 fit_stack(const lk_tree *t, lk_ix n, lk_i32 width,
                         const lk_size *sizes, const lk_layout_cfg *cfg,
                         int axis) {
@@ -371,15 +340,14 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 justify = cfg->styles
                        ? (lk_i32)cfg->styles[n].justify
                        : lk_node_prop_i32(t, n, UIP_JUSTIFY, LK_ALIGN_START);
-  /* main_size = content extent along main axis
-   * cross_size = content extent along cross axis */
+
   lk_i32 main_size = axis ? content->w : content->h;
   lk_i32 cross_size = axis ? content->h : content->w;
   lk_i32 main_origin = axis ? content->x : content->y;
   lk_i32 cross_origin = axis ? content->y : content->x;
-  /* main-axis explicit-size prop (its absence keeps a spacer flexible) */
+
   lk_prop_key main_key = axis ? UIP_W : UIP_H;
-  /* cross-axis fixed-size prop */
+
   lk_prop_key cross_key = axis ? UIP_H : UIP_W;
 
   lk_i32 leftover = main_size;
@@ -388,9 +356,7 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
   int child_count = 0;
   lk_i32 pos;
   lk_ix child;
-  /* Column children's bases are height-for-width at their cross
-   * extent (docs/styled-text.md section 2), computed once here;
-   * rows keep the measured width as the base. */
+
   lk_i32 *bases = NULL;
   int bi;
 
@@ -459,8 +425,6 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
     leftover = 0;
   }
 
-  /* Largest-remainder residual: pixels the floored shares leave
-   * over (always < the number of weighted children). */
   if (total_weight > 0 && leftover > 0) {
     residual = leftover;
     child = nd->first_child;
@@ -474,7 +438,6 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
     }
   }
 
-  /* Justify shifts the run only when nothing grows */
   pos = main_origin;
   if (total_weight == 0 && leftover > 0) {
     if (justify == LK_ALIGN_CENTER) {
@@ -511,9 +474,7 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
       lk_i32 wgt = grow_weight(t, child, main_key);
 
       if (wgt > 0) {
-        /* Rank this child's remainder among its weighted siblings
-         * (earlier child wins ties); the first `residual` ranks get
-         * one extra pixel.  O(n^2) but sort-free and exact. */
+
         lk_i32 rem = leftover * wgt % total_weight;
         lk_i32 rank = 0;
         int before = 1;
@@ -546,13 +507,12 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
     } else if (align == LK_ALIGN_STRETCH) {
       child_cross = cross_size;
     } else if (axis) {
-      /* a row child's height is height-for-width at its main extent */
+
       child_cross = lk_widget_fit_height(t, child, child_main, sizes, cfg);
     } else {
       child_cross = sizes[child].w;
     }
 
-    /* Cross-axis alignment */
     child_cross_pos = cross_origin;
     if (!lk_node_has_prop(t, child, cross_key) && align != LK_ALIGN_STRETCH) {
       if (align == LK_ALIGN_CENTER) {
@@ -563,13 +523,13 @@ static int layout_stack(const lk_tree *t, lk_ix n, const lk_size *sizes,
     }
 
     if (axis) {
-      /* row: main = x, cross = y */
+
       rects[child].x = pos;
       rects[child].y = child_cross_pos;
       rects[child].w = child_main;
       rects[child].h = child_cross;
     } else {
-      /* column: main = y, cross = x */
+
       rects[child].x = child_cross_pos;
       rects[child].y = pos;
       rects[child].w = child_cross;
@@ -598,8 +558,6 @@ static int layout_row(const lk_tree *t, lk_ix n, const lk_size *sizes,
                       lk_rect *rects) {
   return layout_stack(t, n, sizes, content, cfg, rects, 1);
 }
-
-/* ---- Render functions ---- */
 
 static void render_window(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
@@ -688,8 +646,6 @@ static void render_button(const lk_tree *t, lk_ix n, const lk_rect *rect,
   }
 }
 
-/* ---- Default registration ---- */
-
 static void init_defaults(void) {
   lk_widget_def def;
 
@@ -700,7 +656,6 @@ static void init_defaults(void) {
   g_inited = 1;
   memset(g_widgets, 0, sizeof(g_widgets));
 
-  /* WINDOW */
   memset(&def, 0, sizeof(def));
   def.measure = measure_window;
   def.layout = layout_window;
@@ -708,7 +663,6 @@ static void init_defaults(void) {
   def.clips = 1;
   g_widgets[UIK_WINDOW] = def;
 
-  /* COLUMN */
   memset(&def, 0, sizeof(def));
   def.measure = measure_column;
   def.layout = layout_column;
@@ -717,7 +671,6 @@ static void init_defaults(void) {
   def.fit_height = fit_column;
   g_widgets[UIK_COLUMN] = def;
 
-  /* ROW */
   memset(&def, 0, sizeof(def));
   def.measure = measure_row;
   def.layout = layout_row;
@@ -726,7 +679,6 @@ static void init_defaults(void) {
   def.fit_height = fit_row;
   g_widgets[UIK_ROW] = def;
 
-  /* SPACER */
   memset(&def, 0, sizeof(def));
   def.measure = measure_spacer;
   def.layout = 0;
@@ -734,7 +686,6 @@ static void init_defaults(void) {
   def.clips = 0;
   g_widgets[UIK_SPACER] = def;
 
-  /* LABEL */
   memset(&def, 0, sizeof(def));
   def.measure = measure_label;
   def.layout = 0;
@@ -742,7 +693,6 @@ static void init_defaults(void) {
   def.clips = 0;
   g_widgets[UIK_LABEL] = def;
 
-  /* BUTTON */
   memset(&def, 0, sizeof(def));
   def.measure = measure_button;
   def.layout = 0;
@@ -750,47 +700,34 @@ static void init_defaults(void) {
   def.clips = 0;
   g_widgets[UIK_BUTTON] = def;
 
-  /* TEXT_INPUT */
   g_widgets[UIK_TEXT_INPUT] = lk_text_input_widget_def();
 
-  /* SCROLL */
   g_widgets[UIK_SCROLL] = lk_scroll_widget_def();
 
-  /* DROPDOWN */
   g_widgets[UIK_DROPDOWN] = lk_dropdown_widget_def();
 
-  /* OPTION */
   g_widgets[UIK_OPTION] = lk_option_widget_def();
 
-  /* SPLIT_H / SPLIT_V */
   g_widgets[UIK_SPLIT_H] = lk_split_h_widget_def();
   g_widgets[UIK_SPLIT_V] = lk_split_v_widget_def();
 
-  /* EDITOR (src/editor/lk-editor-widget.c) */
   g_widgets[UIK_EDITOR] = *lk_editor_widget();
 
-  /* CHECKBOX / RADIO (lk-check.c) */
   g_widgets[UIK_CHECKBOX] = lk_checkbox_widget_def();
   g_widgets[UIK_RADIO] = lk_radio_widget_def();
 
-  /* SLIDER (lk-slider.c) */
   g_widgets[UIK_SLIDER] = lk_slider_widget_def();
 
-  /* TABS / TAB (lk-tabs.c) -- a TAB page measures and lays out its
-   * children like a column; lk-tabs.c supplies render + event. */
   g_widgets[UIK_TABS] = lk_tabs_widget_def();
   def = lk_tab_widget_def();
   def.measure = measure_column;
   def.layout = layout_column;
   g_widgets[UIK_TAB] = def;
 
-  /* GRID (lk-grid.c) */
   g_widgets[UIK_GRID] = lk_grid_widget_def();
 
-  /* IMAGE (lk-image.c) */
   g_widgets[UIK_IMAGE] = lk_image_widget_def();
 
-  /* CANVAS (lk-canvas.c) */
   g_widgets[UIK_CANVAS] = lk_canvas_widget_def();
   g_widgets[UIK_STYLED_TEXT] = lk_styled_text_widget_def();
   g_widgets[UIK_LIST] = lk_list_widget_def();

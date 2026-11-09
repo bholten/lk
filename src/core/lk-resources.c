@@ -4,22 +4,11 @@
 #include "lk-resources.h"
 #include <lk.h>
 
-/*
- * lk_resources — typed, generation-checked resource reference table
- * (docs/editor.md §5).
- *
- * Slots are addressed by ref.id - 1 (id 0 is the null ref).  The
- * table never owns registered objects: release only invalidates the
- * ref by bumping the slot generation and clearing the object.  A
- * released slot is reused by a later register, which hands out a ref
- * carrying the bumped generation — the old ref stays dead.
- */
-
 typedef struct lk_resource_slot {
   const lk_resource_type *type;
   void *obj;
-  char *debug_name; /* copied with the table's allocator; NULL when
-                       the slot is not live */
+  char *debug_name;
+
   lk_u32 generation;
   lk_u8 live;
 } lk_resource_slot;
@@ -130,8 +119,6 @@ lk_resource_ref lk_resource_register(lk_resources *rs,
     return ref;
   }
 
-  /* Reuse a released slot when one exists — its generation was bumped
-   * on release, so refs to the previous occupant stay dead. */
   slot_ix = rs->count;
 
   for (i = 0; i < rs->count; i++) {
@@ -161,8 +148,7 @@ lk_resource_ref lk_resource_register(lk_resources *rs,
   s = &rs->slots[slot_ix];
 
   if (slot_ix == rs->count) {
-    /* Fresh slot: generations start at 1 so a zeroed ref never
-     * resolves. */
+
     s->generation = 1;
     rs->count++;
   }
@@ -188,7 +174,7 @@ void lk_resource_release(lk_resources *rs, lk_resource_ref ref) {
   s = &rs->slots[ref.id - 1];
 
   if (!s->live || s->generation != ref.generation) {
-    return; /* stale ref: no-op */
+    return;
   }
 
   if (s->debug_name) {

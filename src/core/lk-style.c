@@ -1,20 +1,14 @@
-/*
- * lk-style.c — Theme storage, style resolver, default theme.
- *
- * C89 (matches lk core).
- */
+
 
 #include <string.h>
 
 #include "lk-memory.h"
 #include <lk.h>
 
-/* ---- Internal rule struct ---- */
-
 typedef struct lk_style_rule {
-  lk_u16 kind;      /* 0 = any */
-  lk_u32 tag_id;    /* 0 = any */
-  lk_u8 state_mask; /* 0 = any */
+  lk_u16 kind;
+  lk_u32 tag_id;
+  lk_u8 state_mask;
   lk_style style;
   lk_u32 field_mask;
 } lk_style_rule;
@@ -26,8 +20,6 @@ struct lk_theme {
   lk_style_rule *rules;
   lk_u32 count, cap;
 };
-
-/* ---- Allocator helpers ---- */
 
 static void *th_alloc(const lk_theme *th, lk_u32 bytes) {
   if (th->alloc) {
@@ -45,8 +37,6 @@ static void th_dealloc(const lk_theme *th, void *ptr) {
 
   lk_sys_dealloc(NULL, ptr);
 }
-
-/* ---- Theme API ---- */
 
 lk_theme *lk_theme_new(void *(*alloc)(void *, lk_u32),
                        void (*dealloc)(void *, void *), void *ud) {
@@ -124,8 +114,6 @@ void lk_theme_add_rule(lk_theme *th, lk_u16 kind, lk_u32 tag_id,
   r->field_mask = field_mask;
 }
 
-/* ---- Default theme ---- */
-
 static lk_color mk_color(lk_u8 r, lk_u8 g, lk_u8 b, lk_u8 a) {
   lk_color c;
   c.r = r;
@@ -144,16 +132,11 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
     return NULL;
   }
 
-  /* wildcard fg + accent for all nodes (accent: check marks, radio
-   * dots, slider fill/thumb, selected-tab underline) */
   memset(&s, 0, sizeof(s));
   s.fg = mk_color(220, 220, 220, 255);
   s.accent = mk_color(80, 140, 220, 255);
   lk_theme_add_rule(th, 0, 0, 0, &s, LK_SF_FG | LK_SF_ACCENT);
 
-  /* WINDOW -- align STRETCH: a root's child should fill the client
-   * area (docs/grow-layout.md section 4).  ROW/COLUMN keep the
-   * resolved default of START and opt in per node. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(30, 30, 30, 255);
   s.padding = 0;
@@ -161,31 +144,26 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_WINDOW, 0, 0, &s,
                     LK_SF_BG | LK_SF_PADDING | LK_SF_ALIGN);
 
-  /* COLUMN */
   memset(&s, 0, sizeof(s));
   s.padding = 0;
   s.gap = 0;
   lk_theme_add_rule(th, UIK_COLUMN, 0, 0, &s, LK_SF_PADDING | LK_SF_GAP);
 
-  /* ROW */
   memset(&s, 0, sizeof(s));
   s.padding = 0;
   s.gap = 0;
   lk_theme_add_rule(th, UIK_ROW, 0, 0, &s, LK_SF_PADDING | LK_SF_GAP);
 
-  /* BUTTON */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(60, 60, 60, 255);
   s.padding = 8;
   lk_theme_add_rule(th, UIK_BUTTON, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
-  /* TEXT_INPUT */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(45, 45, 45, 255);
   s.padding = 4;
   lk_theme_add_rule(th, UIK_TEXT_INPUT, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
-  /* SCROLL */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(35, 35, 35, 255);
   s.padding = 0;
@@ -196,7 +174,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
                     LK_SF_BG | LK_SF_PADDING | LK_SF_GAP |
                         LK_SF_SCROLLBAR_TRACK | LK_SF_SCROLLBAR_THUMB);
 
-  /* LIST (the scroll rule: same plate + bar colours) */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(35, 35, 35, 255);
   s.padding = 0;
@@ -207,14 +184,12 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
                     LK_SF_BG | LK_SF_PADDING | LK_SF_GAP |
                         LK_SF_SCROLLBAR_TRACK | LK_SF_SCROLLBAR_THUMB);
 
-  /* TEXT_INPUT focused */
   memset(&s, 0, sizeof(s));
   s.border_width = 1;
   s.border_color = mk_color(80, 140, 220, 255);
   lk_theme_add_rule(th, UIK_TEXT_INPUT, 0, LK_NSTATE_FOCUSED, &s,
                     LK_SF_BORDER_WIDTH | LK_SF_BORDER_COLOR);
 
-  /* DROPDOWN */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(45, 45, 45, 255);
   s.padding = 6;
@@ -224,26 +199,21 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
                     LK_SF_BG | LK_SF_PADDING | LK_SF_BORDER_WIDTH |
                         LK_SF_BORDER_COLOR);
 
-  /* DROPDOWN hovered */
   memset(&s, 0, sizeof(s));
   s.border_color = mk_color(120, 120, 150, 255);
   lk_theme_add_rule(th, UIK_DROPDOWN, 0, LK_NSTATE_HOVERED, &s,
                     LK_SF_BORDER_COLOR);
 
-  /* DROPDOWN focused */
   memset(&s, 0, sizeof(s));
   s.border_color = mk_color(80, 140, 220, 255);
   lk_theme_add_rule(th, UIK_DROPDOWN, 0, LK_NSTATE_FOCUSED, &s,
                     LK_SF_BORDER_COLOR);
 
-  /* OPTION */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(45, 45, 45, 255);
   s.padding = 4;
   lk_theme_add_rule(th, UIK_OPTION, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
-  /* SPLIT_H / SPLIT_V — near-transparent bg (panes paint themselves);
-   * border_color doubles as the divider band color. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(30, 30, 30, 0);
   s.padding = 0;
@@ -253,11 +223,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_SPLIT_V, 0, 0, &s,
                     LK_SF_BG | LK_SF_PADDING | LK_SF_BORDER_COLOR);
 
-  /* EDITOR -- dark bg slightly distinct from the window bg; fg
-   * inherits from the wildcard rule.  Padding 0 keeps line geometry
-   * aligned with the node rect (apps can set UIP_PADDING).
-   * Scrollbar colors mirror the UIK_SCROLL rule (that rule is
-   * kind-scoped, so the editor needs its own). */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(24, 25, 29, 255);
   s.padding = 0;
@@ -267,9 +232,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
                     LK_SF_BG | LK_SF_PADDING | LK_SF_SCROLLBAR_TRACK |
                         LK_SF_SCROLLBAR_THUMB);
 
-  /* CHECKBOX / RADIO -- transparent bg (the box is drawn from
-   * border_color, the mark from accent); padding 2, gap 6 between the
-   * box and its label. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(0, 0, 0, 0);
   s.padding = 2;
@@ -280,7 +242,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_RADIO, 0, 0, &s,
                     LK_SF_BG | LK_SF_PADDING | LK_SF_GAP | LK_SF_BORDER_COLOR);
 
-  /* CHECKBOX / RADIO focused -- accent-colored box outline */
   memset(&s, 0, sizeof(s));
   s.border_color = mk_color(80, 140, 220, 255);
   lk_theme_add_rule(th, UIK_CHECKBOX, 0, LK_NSTATE_FOCUSED, &s,
@@ -288,8 +249,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_RADIO, 0, LK_NSTATE_FOCUSED, &s,
                     LK_SF_BORDER_COLOR);
 
-  /* SLIDER -- transparent bg; border_color is the empty track, accent
-   * the filled track + thumb. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(0, 0, 0, 0);
   s.padding = 4;
@@ -302,8 +261,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_SLIDER, 0, LK_NSTATE_FOCUSED, &s,
                     LK_SF_BORDER_COLOR);
 
-  /* TABS -- bg paints the strip background; padding is the header
-   * cell inset; border_color separates the strip from the page. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(38, 38, 42, 255);
   s.padding = 6;
@@ -312,7 +269,6 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_TABS, 0, 0, &s,
                     LK_SF_BG | LK_SF_PADDING | LK_SF_GAP | LK_SF_BORDER_COLOR);
 
-  /* TAB -- the page: a column-like container */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(30, 30, 30, 255);
   s.padding = 8;
@@ -320,23 +276,16 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   lk_theme_add_rule(th, UIK_TAB, 0, 0, &s,
                     LK_SF_BG | LK_SF_PADDING | LK_SF_GAP);
 
-  /* GRID -- container: gap between cells */
   memset(&s, 0, sizeof(s));
   s.padding = 0;
   s.gap = 4;
   lk_theme_add_rule(th, UIK_GRID, 0, 0, &s, LK_SF_PADDING | LK_SF_GAP);
 
-  /* IMAGE -- dark plate behind the pixels: shows through transparent
-   * regions and IS the degraded rendering for a missing/stale ref.
-   * Padding 0 keeps the blit aligned with the node rect. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(20, 20, 22, 255);
   s.padding = 0;
   lk_theme_add_rule(th, UIK_IMAGE, 0, 0, &s, LK_SF_BG | LK_SF_PADDING);
 
-  /* CANVAS -- a slightly lifted plate under the display list (also
-   * the degrade for a dead ref); padding 0 so canvas-local (0, 0) is
-   * the node's top-left. */
   memset(&s, 0, sizeof(s));
   s.bg = mk_color(24, 26, 30, 255);
   s.padding = 0;
@@ -345,13 +294,9 @@ lk_theme *lk_theme_default(void *(*alloc)(void *, lk_u32),
   return th;
 }
 
-/* ---- Tag check (delegates to lk_tree_has_tag) ---- */
-
 static int tree_has_tag(const lk_tree *t, lk_ix node, lk_u32 tag_id) {
   return lk_tree_has_tag(t, node, tag_id);
 }
-
-/* ---- Apply a single rule's fields to a style ---- */
 
 static void apply_rule(lk_style *dst, lk_u32 *set_mask,
                        const lk_style_rule *rule) {
@@ -424,11 +369,9 @@ static void apply_rule(lk_style *dst, lk_u32 *set_mask,
   *set_mask |= fm;
 }
 
-/* ---- Resolver ---- */
-
 void lk_style_resolve(const lk_theme *th, const lk_tree *t,
                       const lk_u8 *node_states, lk_style *styles) {
-  /* Stack-based top-down DFS */
+
   lk_ix *stack;
   lk_u32 sp;
 
@@ -461,21 +404,17 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
 
     memset(&styles[n], 0, sizeof(lk_style));
 
-    /* Walk rules in order */
     for (ri = 0; ri < th->count; ri++) {
       const lk_style_rule *rule = &th->rules[ri];
 
-      /* Check kind match */
       if (rule->kind != 0 && rule->kind != kind) {
         continue;
       }
 
-      /* Check tag match */
       if (rule->tag_id != 0 && !tree_has_tag(t, n, rule->tag_id)) {
         continue;
       }
 
-      /* Check state match */
       if (rule->state_mask != 0 &&
           (nstate & rule->state_mask) != rule->state_mask) {
         continue;
@@ -484,10 +423,6 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
       apply_rule(&styles[n], &set_mask, rule);
     }
 
-    /* Tree prop overrides -- presence-gated (lk_node_has_prop), so an
-     * absent prop never clobbers a theme-sourced value and an explicit
-     * zero (e.g. align start) still beats the theme.  Resolution order:
-     * explicit prop > theme rule > engine fallback (zeroed style). */
     if (lk_node_has_prop(t, n, UIP_PADDING)) {
       styles[n].padding = lk_node_prop_i32(t, n, UIP_PADDING, 0);
       set_mask |= LK_SF_PADDING;
@@ -518,7 +453,6 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
       set_mask |= LK_SF_TEXT_VALIGN;
     }
 
-    /* Inheritance from parent */
     {
       lk_u32 inherit = LK_STYLE_INHERIT_MASK & ~set_mask;
       if (nd->parent != 0 && nd->parent < t->node_count) {
@@ -534,14 +468,13 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
           styles[n].font_size = styles[nd->parent].font_size;
         }
       } else {
-        /* Root fallbacks */
+
         if (inherit & LK_SF_FG) {
           styles[n].fg = mk_color(220, 220, 220, 255);
         }
       }
     }
 
-    /* Push children forward, then reverse segment for correct DFS order */
     sp_start = sp;
     child = nd->first_child;
 
@@ -566,8 +499,6 @@ void lk_style_resolve(const lk_theme *th, const lk_tree *t,
 
   lk_sys_dealloc(NULL, stack);
 }
-
-/* ---- Style tracing ---- */
 
 void lk_style_trace_node(const lk_theme *th, const lk_tree *t, lk_ix node,
                          lk_u8 node_state, lk_style_trace *out) {
@@ -602,7 +533,6 @@ void lk_style_trace_node(const lk_theme *th, const lk_tree *t, lk_ix node,
       continue;
     }
 
-    /* Grow trace array */
     if (out->count >= out->cap) {
       lk_u32 new_cap = out->cap ? out->cap * 2 : 8;
       lk_style_trace_entry *ne = (lk_style_trace_entry *)lk_sys_alloc(

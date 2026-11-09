@@ -23,6 +23,7 @@
 ;;                                  foreign file into the left pane
 ;;   secondary  anywhere else       LOOK: jump to the next occurrence of
 ;;                                  the clicked word (repeat to cycle)
+;;   Ctrl+F / Ctrl+S / Ctrl+Q       search the active pane / save left / quit
 ;;
 ;; Re-binding is one line of policy, not a toolkit change.  Weft
 ;; veterans who want PLUMB on middle-click change exactly this much:
@@ -541,6 +542,7 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
     keybinding s ctrl buf SaveLeft
     keybinding return "" search_edit SearchNext
     keybinding escape "" search_edit SearchClose
+    keybinding q ctrl Quit   ;; the terminal has no close button
 
     ;; Secondary on a plumb presentation arrives HERE as a command
     ;; carrying the typed value - no text re-parsing, no re-querying.
@@ -557,6 +559,7 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
     }]
 
     on SearchEdit [lambda {cmd} { set! search_val [get $cmd source_value] }]
+    on Quit [lambda {cmd} { quit }]
 
     on SearchNext [lambda {cmd} {
         if [empty? $search_val] { return "" }

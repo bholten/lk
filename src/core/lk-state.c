@@ -3,13 +3,6 @@
 #include "lk-memory.h"
 #include <lk.h>
 
-/*
- * lk_state — retained per-node state store.
- *
- * Open-addressing hash table keyed by (lk_node_id, lk_u16 key).
- * Values are lk_value.  No tombstones; deletions rebuild the table.
- */
-
 #define LK_STATE_INIT_CAP 32
 #define LK_STATE_LOAD_PCT 70
 
@@ -29,7 +22,6 @@ struct lk_state {
   void *alloc_ud;
 };
 
-/* FNV-1a mixing of node id (4 bytes) + key (2 bytes) */
 static lk_u32 state_hash(lk_node_id node, lk_u16 key) {
   lk_u32 h = 2166136261u;
   lk_u8 b;
@@ -75,7 +67,6 @@ static int state_grow(lk_state *st, lk_u32 new_cap) {
   st->tab_cap = new_cap;
   st->tab_len = 0;
 
-  /* Reinsert all used entries */
   if (old_tab) {
     for (i = 0; i < old_cap; i++) {
       if (old_tab[i].used) {
@@ -163,7 +154,7 @@ int lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v) {
   idx = state_hash(node, key) & (st->tab_cap - 1);
   while (st->tab[idx].used) {
     if (st->tab[idx].node == node && st->tab[idx].key == key) {
-      /* Overwrite existing */
+
       st->tab[idx].value = v;
       return 1;
     }
@@ -171,7 +162,6 @@ int lk_state_set(lk_state *st, lk_node_id node, lk_u16 key, lk_value v) {
     idx = (idx + 1) & (st->tab_cap - 1);
   }
 
-  /* Insert new */
   st->tab[idx].node = node;
   st->tab[idx].key = key;
   st->tab[idx].used = 1;
@@ -209,7 +199,6 @@ void lk_state_remove_node(lk_state *st, lk_node_id node) {
     return;
   }
 
-  /* Linear scan: mark entries for this node as unused */
   for (i = 0; i < st->tab_cap; i++) {
     if (st->tab[i].used && st->tab[i].node == node) {
       st->tab[i].used = 0;
@@ -218,7 +207,6 @@ void lk_state_remove_node(lk_state *st, lk_node_id node) {
     }
   }
 
-  /* Rebuild at same capacity to fix probe chains */
   if (any_removed) {
     state_grow(st, st->tab_cap);
   }
@@ -239,10 +227,6 @@ void lk_state_gc(lk_state *st, const lk_changeset *cs) {
       continue;
     }
 
-    /* A node id that is both REMOVED and ADDED in the same changeset
-     * moved to a different parent — its retained state must survive.
-     * The nested scan is O(removed * changes); changesets are
-     * typically small, so this beats building a side table. */
     readded = 0;
 
     for (ai = 0; ai < cs->count; ai++) {
@@ -257,7 +241,6 @@ void lk_state_gc(lk_state *st, const lk_changeset *cs) {
       continue;
     }
 
-    /* Remove all entries matching this node id */
     for (i = 0; i < st->tab_cap; i++) {
       if (st->tab[i].used && st->tab[i].node == cs->changes[ci].id) {
         st->tab[i].used = 0;
@@ -267,7 +250,6 @@ void lk_state_gc(lk_state *st, const lk_changeset *cs) {
     }
   }
 
-  /* Single rebuild after all deletions */
   if (any_removed) {
     state_grow(st, st->tab_cap);
   }

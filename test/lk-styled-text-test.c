@@ -429,7 +429,7 @@ static void test_render_runs(void) {
   lk_render_list rl;
   lk_color none;
 
-  BEGIN_TEST("styled text: runs split at spans, bg before, underline after");
+  BEGIN_TEST("styled text: runs split at spans, bg before, underline on run");
   memset(&none, 0, sizeof(none));
 
   /* "hello world": [0,5) red fg; [6,11) blue bg + underline. */
@@ -483,7 +483,8 @@ static void test_render_runs(void) {
     CHECK(c && c->rect.x == 10 + 48);
     CHECK(c && c->color.r == styles[st].fg.r); /* no FG flag: node fg */
 
-    /* The bg fill precedes the runs; the underline follows them. */
+    /* The bg fill precedes the runs; the underline is an attribute of
+     * the "world" run, which carries its measured width. */
     {
       lk_u32 i;
       int bg_at = -1, first_run = -1, ul_at = -1;
@@ -501,16 +502,22 @@ static void test_render_runs(void) {
           first_run = (int)i;
         }
 
-        if (k->op == LK_ROP_FILL_RECT && k->rect.h == 1) {
+        if (k->op == LK_ROP_DRAW_RUN && (k->text_attr & LK_TA_UNDERLINE)) {
+          CHECK(ul_at < 0); /* exactly one underlined run */
           ul_at = (int)i;
+          CHECK(run_is(&rl, k, "world"));
           CHECK_EQ(k->rect.x, 58);
           CHECK_EQ(k->rect.w, 40);
-          CHECK_EQ(k->rect.y, 10 + 12 + 1);
+          CHECK_EQ(k->rect.y, 10);
+        }
+
+        if (k->op == LK_ROP_FILL_RECT) {
+          CHECK(k->rect.h != 1); /* no 1 px underline fills remain */
         }
       }
 
       CHECK(bg_at >= 0 && first_run > bg_at);
-      CHECK(ul_at > first_run);
+      CHECK(ul_at >= first_run);
     }
 
     lk_render_list_destroy(&rl);

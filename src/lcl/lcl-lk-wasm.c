@@ -1,15 +1,5 @@
-/*
- * lcl-lk-wasm.c -- the browser runner.
- *
- * The Emscripten counterpart of lcl-lk-main.c.  Same interpreter, same
- * packages, same DSL prelude; two things differ because a page cannot
- * block.  The script is not an argv path but /app.lcl, preloaded into
- * the virtual filesystem at link time (CMake: LK_WASM_APP, along with
- * the font at LK_WASM_FONT), and the window loop is not run by the
- * script: Lk::window_run is deferred (include/lcl-lk.h), so the
- * script's `app` returns at once, and the browser's frame callback
- * drives lcl_lk_run_step until the window stops.
- */
+
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -87,7 +77,7 @@ int main(void) {
   lcl_lk_set_args(0, NULL);
 
 #ifdef LK_HAVE_LCL_IO
-  lcl_register_io(g_interp); /* MEMFS: whatever the link preloaded */
+  lcl_register_io(g_interp);
 #endif
 
 #ifdef LK_HAVE_LCL_REGEX

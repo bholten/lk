@@ -238,6 +238,32 @@ else()
   message(STATUS "SDL3 not found -- skipping lk_sdl and lk_demo")
 endif()
 
+# ---- Terminal backend (docs/tui-backend.md) ----
+#
+# A second implementation of the window API (include/lk-window.h)
+# with no dependency beyond POSIX.  Milestone 1 is headless: it paints the
+# render list into a cell buffer and writes text/ANSI snapshots, which
+# is what `lcl_lk_tui examples/tour-dsl.lcl --snap DIR` exercises.
+if(UNIX AND NOT EMSCRIPTEN)
+  set(LK_BUILD_TUI_DEFAULT ON)
+else()
+  set(LK_BUILD_TUI_DEFAULT OFF)
+endif()
+option(LK_BUILD_TUI "Build the terminal backend (lk_tui) and its Lcl runner" ${LK_BUILD_TUI_DEFAULT})
+
+if(LK_BUILD_TUI)
+  add_library(lk_tui STATIC src/tui/lk-tui.c)
+  target_link_libraries(lk_tui PUBLIC lk_core)
+  target_include_directories(lk_tui
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/sdl>
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_compile_options(lk_tui PRIVATE -Wall -Wextra)
+  set_target_properties(lk_tui PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED OFF
+    C_EXTENSIONS OFF)
+endif()
+
 # ---- install / export (docs/release.md) ----
 #
 # Installs the C library (static + shared), the SDL backend when built,
@@ -259,7 +285,12 @@ install(FILES include/lk.h include/lk-document.h include/lk-editor.h
 if(LK_HAVE_SDL)
   install(TARGETS lk_sdl EXPORT lkTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-  install(FILES src/sdl/lk-sdl.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()
+
+if(LK_HAVE_SDL OR LK_BUILD_TUI)
+  # The window API header is backend-neutral: one of lk_sdl / lk_tui
+  # implements it.
+  install(FILES include/lk-window.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()
 
 install(EXPORT lkTargets NAMESPACE lk::
@@ -386,8 +417,53 @@ if(LK_BUILD_LCL)
   target_link_libraries(lcl_lk PUBLIC lk_core lcl::lcl)
   target_compile_options(lcl_lk PRIVATE -Wall -Wextra -pedantic)
 
+  # The optional Lcl packages a runner registers (Io::, Regex::,
+  # Xoshiro::, Json::, Math::), shared by the native and the browser
+  # runner.  Data-driven apps (a crafting simulator reading Core3
+  # tables) need Json:: and Math:: as much as a file explorer needs
+  # Io::; a UI library still owns none of them, so they stay runner
+  # packages that scripts probe with catch.
+  function(lk_runner_packages target)
+    if(LK_LCL_IO)
+      target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_IO)
+      target_link_libraries(${target} PRIVATE lcl_io)
+    endif()
+
+    if(LK_LCL_REGEX)
+      target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_REGEX)
+      target_link_libraries(${target} PRIVATE lcl_regex)
+    endif()
+
+    if(LK_LCL_RANDOM)
+      target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_RANDOM)
+      target_link_libraries(${target} PRIVATE lcl_random)
+    endif()
+
+    if(LK_LCL_JSON)
+      target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_JSON)
+      target_link_libraries(${target} PRIVATE lcl_json)
+    endif()
+
+    if(LK_LCL_MATH)
+      target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_MATH)
+      target_link_libraries(${target} PRIVATE lcl_math)
+    endif()
+
+    if(LK_LCL_POSIX)
+      target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_POSIX)
+      target_link_libraries(${target} PRIVATE lcl_posix)
+    endif()
+
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+
+    set_target_properties(${target} PROPERTIES
+      C_STANDARD 11
+      C_STANDARD_REQUIRED OFF
+      C_EXTENSIONS OFF)
+  endfunction()
+
   if(SDL3_FOUND AND SDL3_ttf_FOUND)
-    target_compile_definitions(lcl_lk PUBLIC LK_HAVE_SDL)
+    target_compile_definitions(lcl_lk PUBLIC LK_HAVE_WINDOW)
     target_link_libraries(lcl_lk PUBLIC lk_sdl)
 
     add_executable(lcl_lk_main src/lcl/lcl-lk-main.c)
@@ -399,50 +475,6 @@ if(LK_BUILD_LCL)
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
 
-    # The optional Lcl packages a runner registers (Io::, Regex::,
-    # Xoshiro::, Json::, Math::), shared by the native and the browser
-    # runner.  Data-driven apps (a crafting simulator reading Core3
-    # tables) need Json:: and Math:: as much as a file explorer needs
-    # Io::; a UI library still owns none of them, so they stay runner
-    # packages that scripts probe with catch.
-    function(lk_runner_packages target)
-      if(LK_LCL_IO)
-        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_IO)
-        target_link_libraries(${target} PRIVATE lcl_io)
-      endif()
-
-      if(LK_LCL_REGEX)
-        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_REGEX)
-        target_link_libraries(${target} PRIVATE lcl_regex)
-      endif()
-
-      if(LK_LCL_RANDOM)
-        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_RANDOM)
-        target_link_libraries(${target} PRIVATE lcl_random)
-      endif()
-
-      if(LK_LCL_JSON)
-        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_JSON)
-        target_link_libraries(${target} PRIVATE lcl_json)
-      endif()
-
-      if(LK_LCL_MATH)
-        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_MATH)
-        target_link_libraries(${target} PRIVATE lcl_math)
-      endif()
-
-      if(LK_LCL_POSIX)
-        target_compile_definitions(${target} PRIVATE LK_HAVE_LCL_POSIX)
-        target_link_libraries(${target} PRIVATE lcl_posix)
-      endif()
-
-      target_compile_options(${target} PRIVATE -Wall -Wextra)
-
-      set_target_properties(${target} PROPERTIES
-        C_STANDARD 11
-        C_STANDARD_REQUIRED OFF
-        C_EXTENSIONS OFF)
-    endfunction()
 
     lk_runner_packages(lcl_lk_main)
 
@@ -482,6 +514,28 @@ if(LK_BUILD_LCL)
         "${LK_WASM_APP}" "${LK_WASM_FONT}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/lcl/lcl-lk-web-shell.html")
     endif()
+  endif()
+
+  if(LK_BUILD_TUI)
+    # The same binding source compiled a second time against lk_tui:
+    # lcl-lk.c never names SDL, only the window API (include/
+    # lk-window.h), so the only difference is the link.  The runner is
+    # lcl-lk-main.c verbatim.
+    add_library(lcl_lk_tui_bind STATIC src/lcl/lcl-lk.c ${_lk_dsl_prelude_c})
+    target_include_directories(lcl_lk_tui_bind
+      PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(lcl_lk_tui_bind PUBLIC lk_core lcl::lcl lk_tui)
+    target_compile_definitions(lcl_lk_tui_bind PUBLIC LK_HAVE_WINDOW)
+    target_compile_options(lcl_lk_tui_bind PRIVATE -Wall -Wextra -pedantic)
+
+    add_executable(lcl_lk_tui src/lcl/lcl-lk-main.c)
+    target_link_libraries(lcl_lk_tui PRIVATE lcl_lk_tui_bind)
+    target_include_directories(lcl_lk_tui PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/sdl)
+    lk_runner_packages(lcl_lk_tui)
   endif()
 
   add_executable(lcl_lk_test test/lcl-lk-test.c)

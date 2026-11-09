@@ -1,30 +1,4 @@
-/*
- * lk-check.c -- UIK_CHECKBOX and UIK_RADIO (docs/forms-widgets.md).
- *
- * A checkbox is a square box plus an optional text label; a radio is
- * the same shape with a centered dot and sibling-exclusive semantics.
- * Both are leaves.
- *
- * Effective checked = LKS_CHECKED state (written by clicks / SPACE)
- * > UIP_CHECKED prop (initial / controlled value) > 0 -- the
- * SPLIT_RATIO priority pattern.  Toggling enqueues a synthetic
- * LK_EVENT_VALUE_CHANGED whose payload is "1" or "0" (the new checked
- * state); with UIP_CONTROLLED nonzero the state write is suppressed
- * and the app re-supplies UIP_CHECKED each frame.
- *
- * Radio exclusivity is sibling-scoped: checking one radio writes
- * LKS_CHECKED = 0 for every other UIK_RADIO child of the same parent
- * (state beats their UIP_CHECKED prop, so a prop-checked sibling
- * unchecks too).  Only the newly checked radio emits VALUE_CHANGED;
- * clicking an already-checked radio is consumed without effect.
- *
- * Geometry: box side = label text height (BOX_MIN when there is no
- * text or no backend); box and text separated by style->gap; the
- * whole thing inset by padding + border_width.  Render: bg (if
- * visible), a 1 px box outline in style->border_color, the mark in
- * style->accent (checkbox: inset fill; radio: centered dot), then the
- * label in style->fg.
- */
+
 
 #include <string.h>
 
@@ -65,8 +39,6 @@ int lk_check_effective(const lk_tree *t, lk_ix n, const lk_state *state) {
   return lk_node_prop_bool(t, n, UIP_CHECKED);
 }
 
-/* ---- Measure ---- */
-
 static void measure_check(const lk_tree *t, lk_ix n, const lk_size *sizes,
                           const lk_layout_cfg *cfg, lk_i32 *out_w,
                           lk_i32 *out_h) {
@@ -87,8 +59,6 @@ static void measure_check(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_w = box + (text.len ? gap + tw : 0) + inset * 2;
   *out_h = (th > box ? th : box) + inset * 2;
 }
-
-/* ---- Render ---- */
 
 static void push_fill(lk_render_list *out, lk_i32 x, lk_i32 y, lk_i32 w,
                       lk_i32 h, lk_color c) {
@@ -127,11 +97,19 @@ static void render_check(const lk_tree *t, lk_ix n, const lk_rect *rect,
     push_fill(out, rect->x, rect->y, rect->w, rect->h, style->bg);
   }
 
-  /* 1 px outline */
-  push_fill(out, bx, by, box, 1, style->border_color);
-  push_fill(out, bx, by + box - 1, box, 1, style->border_color);
-  push_fill(out, bx, by, 1, box, style->border_color);
-  push_fill(out, bx + box - 1, by, 1, box, style->border_color);
+  {
+    lk_render_cmd cmd;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.op = LK_ROP_STROKE_RECT;
+    cmd.rect.x = bx;
+    cmd.rect.y = by;
+    cmd.rect.w = box;
+    cmd.rect.h = box;
+    cmd.color = style->border_color;
+    cmd.stroke = 1;
+    lk_render_list_push(out, cmd);
+  }
 
   if (checked) {
     if (radio) {
@@ -174,8 +152,6 @@ static void render_radio(const lk_tree *t, lk_ix n, const lk_rect *rect,
   render_check(t, n, rect, style, state, geom, out, 1);
 }
 
-/* ---- Events ---- */
-
 static void emit_value_changed(lk_ui *ui, lk_ix n, int checked) {
   lk_event vev;
 
@@ -187,7 +163,6 @@ static void emit_value_changed(lk_ui *ui, lk_ix n, int checked) {
   lk_event_enqueue(ui, &vev);
 }
 
-/* Apply a toggle / select.  Returns 1 if the event is consumed. */
 static int check_activate(lk_ui *ui, const lk_tree *t, lk_ix n, int radio) {
   lk_state *st = lk_ui_state(ui);
   lk_node_id nid = t->nodes[n].id;
@@ -197,7 +172,7 @@ static int check_activate(lk_ui *ui, const lk_tree *t, lk_ix n, int radio) {
 
   if (radio) {
     if (cur) {
-      return 1; /* already the checked one: consumed, no change */
+      return 1;
     }
 
     next = 1;
@@ -240,11 +215,9 @@ static int event_check(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
     lk_u8 b = ev->data.pointer.button;
 
     if (b != LK_POINTER_BUTTON_ANY && b != LK_POINTER_BUTTON_PRIMARY) {
-      return 0; /* middle / secondary bubble to translators */
+      return 0;
     }
 
-    /* We consume the click, so the host's built-in click-to-focus
-     * never sees it -- take focus here (no-op unless focusable). */
     lk_focus_set(ui, t, t->nodes[n].id);
 
     return check_activate(ui, t, n, radio);
@@ -265,8 +238,6 @@ static int event_checkbox(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 static int event_radio(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   return event_check(ui, t, n, ev, 1);
 }
-
-/* ---- Registration ---- */
 
 lk_widget_def lk_checkbox_widget_def(void) {
   lk_widget_def def;

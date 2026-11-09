@@ -1,16 +1,4 @@
-/*
- * lcl-lk.c — Lcl scripting bindings for lk (Layer 1).
- *
- * Exposes 80 procs in the "Lk" namespace (74 core + 6 SDL) for
- * building UI trees, managing frames, commands, translators, state,
- * focus, overlays, interning, windows/fonts, the editor track
- * (documents, edit histories, editors, annotation stores), and range
- * presentations (weft-surface S1: annot_present, annot_layer_priority,
- * editor_presentations, editor_pos_at).  SDL procs (window_* and
- * register_font) are conditionally compiled when LK_HAVE_SDL is set.
- *
- * C89 (matches lk + lcl).
- */
+
 
 #include <limits.h>
 #include <stdio.h>
@@ -23,11 +11,6 @@
 #include <lk-editor.h>
 #include <lk.h>
 
-/* ============================================================================
- * Opaque type tags
- * ============================================================================
- */
-
 #define LK_UI_TYPE "lk_ui"
 #define LK_TREE_TYPE "lk_tree"
 #define LK_DOC_TYPE "lk_document"
@@ -38,15 +21,10 @@
 #define LK_SPANS_TYPE "lk_spans"
 #define LK_CANVAS_TYPE "lk_canvas"
 
-#ifdef LK_HAVE_SDL
-#include "lk-sdl.h"
+#ifdef LK_HAVE_WINDOW
+#include <lk-window.h>
 #define LK_WIN_TYPE "lk_window"
 #endif
-
-/* ============================================================================
- * String-to-enum lookup tables
- * ============================================================================
- */
 
 typedef struct str_enum {
   const char *name;
@@ -93,7 +71,7 @@ static const str_enum prop_table[] = {
     {"hidden",           UIP_HIDDEN     },
     {"tooltip",          UIP_TOOLTIP    },
     {"split_ratio",      UIP_SPLIT_RATIO},
-    {"split_controlled", UIP_CONTROLLED }, /* legacy name */
+    {"split_controlled", UIP_CONTROLLED },
     {"controlled",       UIP_CONTROLLED },
     {"text_align",       UIP_TEXT_ALIGN },
     {"text_valign",      UIP_TEXT_VALIGN},
@@ -116,9 +94,6 @@ static const str_enum prop_table[] = {
     {NULL,               0              }
 };
 
-/* Editor command names, mirroring lk_editor_cmd_id (LK_ED_* with the
- * prefix stripped and lowercased).  Kept in enum order so the joined
- * known-commands list reads naturally in error messages. */
 static const str_enum ed_cmd_table[] = {
     {"insert_text",          LK_ED_INSERT_TEXT         },
     {"delete_backward",      LK_ED_DELETE_BACKWARD     },
@@ -155,7 +130,6 @@ static const str_enum ed_cmd_table[] = {
     {NULL,                   0                         }
 };
 
-/* Wrap-mode names, mirroring lk_editor_wrap_mode. */
 static const str_enum wrap_mode_table[] = {
     {"none",      LK_EDITOR_WRAP_NONE     },
     {"character", LK_EDITOR_WRAP_CHARACTER},
@@ -191,11 +165,10 @@ static const str_enum event_table[] = {
     {"window_close",  LK_EVENT_WINDOW_CLOSE },
     {"value_changed", LK_EVENT_VALUE_CHANGED},
     {"focus_changed", LK_EVENT_FOCUS_CHANGED},
+    {"paste",         LK_EVENT_PASTE        },
     {NULL,            0                     }
 };
 
-/* UIP_WRAP values (lk_wrap_mode; the editor's own wrap_mode_table maps
- * the same names onto LK_EDITOR_WRAP_*). */
 static const str_enum st_wrap_table[] = {
     {"none",      LK_WRAP_NONE     },
     {"character", LK_WRAP_CHARACTER},
@@ -211,7 +184,6 @@ static const str_enum align_table[] = {
     {NULL,      0               }
 };
 
-/* UIP_FILTER values (lk_image_filter). */
 static const str_enum filter_table[] = {
     {"linear",  LK_FILTER_LINEAR },
     {"nearest", LK_FILTER_NEAREST},
@@ -320,8 +292,6 @@ static int lookup_enum(const str_enum *table, const char *name, int *out) {
   return 0;
 }
 
-/* Parse a mods string like "ctrl", "ctrl+shift", etc. into a bitmask.
- * Returns 0 for "" (any). Returns -1 on error. */
 static int parse_mods(const char *s, lk_u8 *out) {
   char buf[64];
   char *p;
@@ -365,7 +335,6 @@ static int parse_mods(const char *s, lk_u8 *out) {
   return 0;
 }
 
-/* Human-readable lcl_type name for error messages. */
 static const char *lcl_type_name(lcl_type t) {
   switch (t) {
   case LCL_STRING: return "string";
@@ -382,13 +351,6 @@ static const char *lcl_type_name(lcl_type t) {
   }
 }
 
-/* Fetch a name-shaped argument (node id, tag, ptype, command name,
- * layer, meta key).  Strings pass through and typed numbers render (a
- * counter is a fine id), but structured values — list, dict, proc,
- * opaque — are hard errors: rendering those would silently turn a
- * wrong-variable bug into a misnamed node.  On error sets the interp
- * error ("<what> must be a string or number, got <type>") and returns
- * NULL.  `what` names the proc and operand, e.g. "Lk::node: id". */
 static const char *arg_name(lcl_interp *interp, lcl_value *v,
                             const char *what) {
   lcl_type ty = lcl_value_type_of(v);
@@ -415,16 +377,6 @@ static const char *arg_name(lcl_interp *interp, lcl_value *v,
   return NULL;
 }
 
-/* Integer arguments.  An Lcl integer (lcl_int) is 64-bit on every
- * host; the widths lk consumes are 32 or narrower, so the narrowing
- * is checked, never a cast (the same discipline as Lcl's own
- * lcl_std_index).  to_* return 1 and write *out when `v` is an
- * integer that fits, else 0 and leave *out alone -- for sites that
- * ignore a bad value.  arg_* additionally set the interp error:
- * "<what> must be an integer" when `v` is not one, "<what> out of
- * range" when it is but does not fit (a negative for an unsigned
- * width included).  `what` names the proc and operand, e.g.
- * "Lk::set_root: node_ix". */
 static int to_i32(lcl_value *v, lk_i32 *out) {
   lcl_int n;
 
@@ -516,121 +468,74 @@ static int arg_u16(lcl_interp *interp, const char *what, lcl_value *v,
   return 1;
 }
 
-/* ============================================================================
- * Editor-track wrappers (documents, histories, editors, annot stores)
- *
- * Lifetime scheme: dependents retain their dependencies' Lcl values.
- * A history/editor/annot-store wrapper holds an lcl_ref_inc'd
- * reference to the document value it uses (and the editor to the ui
- * and history values too), so the referenced opaque can never be
- * finalized while a dependent is alive — GC order becomes refcount
- * order, and the C contract "destroy dependents before the document"
- * holds no matter when the script drops its own handles.  Dependent
- * finalizers destroy their own C object (which unsubscribes) and only
- * then release the retained values.
- * ============================================================================
- */
-
-/* One script-side document subscription (Lk::doc_subscribe). */
 struct lcl_doc_sub {
   lk_u32 id;
   lcl_interp *interp;
-  lcl_value *handler; /* retained */
+  lcl_value *handler;
   struct lcl_doc_sub *next;
 };
 
 struct lcl_lk_doc {
   lk_document *doc;
-  struct lcl_doc_sub *subs; /* live Lk::doc_subscribe bridges */
+  struct lcl_doc_sub *subs;
 };
 
 struct lcl_lk_history {
   lk_edit_history *hist;
-  lk_document *doc;   /* attached document, NULL until attached */
-  lcl_value *doc_val; /* retained once attached */
+  lk_document *doc;
+  lcl_value *doc_val;
 };
 
 struct lcl_lk_editor {
   lk_editor *ed;
-  lk_ui *ui;            /* for lk_editor_command + resource release */
-  lk_resource_ref ref;  /* registration in the ui's resource table */
-  lcl_value *ui_val;    /* retained */
-  lcl_value *doc_val;   /* retained */
-  lcl_value *hist_val;  /* retained, NULL when no history was given */
-  lcl_value *annot_val; /* retained annot-store value while its
-                           presentation source is installed
-                           (Lk::editor_presentations), NULL before */
+  lk_ui *ui;
+  lk_resource_ref ref;
+  lcl_value *ui_val;
+  lcl_value *doc_val;
+  lcl_value *hist_val;
+  lcl_value *annot_val;
 };
 
 struct lcl_lk_annot {
   lk_annot_store *store;
-  lcl_value *doc_val; /* retained once attached, NULL before */
-  lk_ui *pres_ui;     /* ui whose resource table holds this store's
-                         presentation values; set by the first
-                         Lk::annot_present, NULL before */
-  lcl_value *ui_val;  /* retained alongside pres_ui */
+  lcl_value *doc_val;
+  lk_ui *pres_ui;
+
+  lcl_value *ui_val;
 };
 
-/* Image track: Lk::image_new / image_load register the lk_image in
- * the ui's resource table (the editor wrapper scheme). */
 struct lcl_lk_image {
   lk_image *img;
-  lk_ui *ui;           /* for resource release */
-  lk_resource_ref ref; /* registration in the ui's resource table */
-  lcl_value *ui_val;   /* retained */
+  lk_ui *ui;
+  lk_resource_ref ref;
+  lcl_value *ui_val;
 };
 
-/* Vector canvas (docs/canvas.md): Lk::canvas_new registers the
- * display list in the ui's resource table -- the image wrapper scheme
- * verbatim. */
-/* Span set (docs/styled-text.md): Lk::spans_new registers the set in
- * the ui's resource table -- the image wrapper scheme -- and installs
- * the release hook that frees the lcl-value boxes its presentations
- * carry. */
 struct lcl_lk_spans {
   lk_spans *sp;
   lk_ui *ui;
   lk_resource_ref ref;
-  lcl_value *ui_val; /* retained */
+  lcl_value *ui_val;
 };
 
 struct lcl_lk_canvas {
   lk_canvas *cv;
   lk_ui *ui;
   lk_resource_ref ref;
-  lcl_value *ui_val; /* retained */
+  lcl_value *ui_val;
 };
-
-/* ---- "lcl-value" resources ----
- *
- * Lk::annot_present wraps ANY Lcl value as a presentation value: the
- * value is retained in a box registered in the ui's resource table
- * under this type, and the annotation carries the UIV_RESOURCE ref.
- * command_to_dict unwraps refs of this type back to the retained Lcl
- * value, so handlers receive dicts/closures/whatever intact.  The
- * store's release hook releases the registration + retain when the
- * presentation detaches.
- *
- * The resource table does not own the boxes, so the binding keeps its
- * own list of every live box: when a ui is torn down before the
- * store's finalizer runs (the DSL's `app` destroys its window
- * explicitly), the release hook can no longer reach the table and the
- * boxes would leak -- ui teardown sweeps them instead. */
 
 static const lk_resource_type g_lcl_value_type = {"lcl-value", NULL};
 
 struct lcl_pres_box {
-  lcl_value *val; /* retained */
-  lk_ui *ui;      /* the table this box is registered in */
+  lcl_value *val;
+  lk_ui *ui;
   struct lcl_pres_box *prev;
   struct lcl_pres_box *next;
 };
 
 static struct lcl_pres_box *g_pres_boxes = NULL;
 
-/* Test hook (not in lcl-lk.h; lcl_lk_test declares it extern): the
- * number of live boxes.  The list above makes the boxes reachable, so
- * LSan cannot see a missed sweep -- the count can. */
 int lcl_lk_debug_pres_boxes(void) {
   struct lcl_pres_box *box = g_pres_boxes;
   int n = 0;
@@ -654,8 +559,6 @@ static void pres_box_link(struct lcl_pres_box *box) {
   g_pres_boxes = box;
 }
 
-/* Unlink, drop the Lcl retain, free.  Never touches the resource
- * table -- callers release the registration while the ui is live. */
 static void pres_box_free(struct lcl_pres_box *box) {
   if (box->prev) {
     box->prev->next = box->next;
@@ -671,8 +574,6 @@ static void pres_box_free(struct lcl_pres_box *box) {
   free(box);
 }
 
-/* Free every box registered in `ui`'s table (the table dies with the
- * ui; the store's later release hook sees a dead ui and skips). */
 static void pres_boxes_sweep(lk_ui *ui) {
   struct lcl_pres_box *box = g_pres_boxes;
 
@@ -686,15 +587,6 @@ static void pres_boxes_sweep(lk_ui *ui) {
     box = next;
   }
 }
-
-/* ---- Live-ui registry ----
- *
- * Value retention cannot cover one case: a ui destroyed explicitly
- * (Lk::ui_destroy, Lk::window_destroy, or the window finalizer for
- * window-owned uis) while an editor value still exists.  The editor
- * finalizer must then skip lk_resource_release (the table died with
- * the ui).  This registry tracks every lk_ui* the bindings handed
- * out ownership-wise; editors consult it before touching their ui. */
 
 static lk_ui **g_live_uis = NULL;
 static int g_live_ui_count = 0;
@@ -710,7 +602,7 @@ static void live_ui_add(lk_ui *ui) {
     lk_ui **grown = (lk_ui **)realloc(g_live_uis, sizeof(*grown) * cap);
 
     if (!grown) {
-      return; /* untracked ui: editors will conservatively skip release */
+      return;
     }
 
     g_live_uis = grown;
@@ -744,24 +636,10 @@ static int live_ui_check(const lk_ui *ui) {
   return 0;
 }
 
-/* ============================================================================
- * Finalizers
- * ============================================================================
- */
-
-/* Forward declarations for command handler cleanup */
 struct lcl_cmd_ctx;
 static void lcl_cmd_bridge(const lk_command *cmd, void *ud);
 static void lcl_cmd_ctx_free(struct lcl_cmd_ctx *ctx);
 
-/* Everything the binding hung on `ui` that must go before the ui
- * dies: the command-handler ctx (retained handler value + record),
- * the lcl-value presentation boxes registered in its resource table,
- * and the live-registry entry.  Every teardown path -- the ui/window
- * finalizers AND the explicit Lk::ui_destroy / Lk::window_destroy
- * procs -- calls this; the DSL's `app` destroys its window
- * explicitly, so a finalizer-only release leaked the handler lambda
- * and every presented value of every app. */
 static void ui_teardown_bindings(lk_ui *ui) {
   if (!ui) {
     return;
@@ -780,9 +658,6 @@ static void ui_teardown_bindings(lk_ui *ui) {
 static void ui_finalizer(void *ptr) {
   lk_ui *ui = (lk_ui *)ptr;
 
-  /* Explicit Lk::ui_destroy / window teardown already removed the ui
-   * from the live registry and freed it; touching it again here would
-   * be a use-after-free. */
   if (!live_ui_check(ui)) {
     return;
   }
@@ -795,9 +670,6 @@ static void doc_finalizer(void *ptr) {
   struct lcl_lk_doc *dw = (struct lcl_lk_doc *)ptr;
   struct lcl_doc_sub *s = dw->subs;
 
-  /* No dependent can still be subscribed here (they retain the doc
-   * value), so only script subscriptions remain; the listener slots
-   * die with the document. */
   while (s) {
     struct lcl_doc_sub *next = s->next;
 
@@ -813,8 +685,6 @@ static void doc_finalizer(void *ptr) {
 static void history_finalizer(void *ptr) {
   struct lcl_lk_history *hw = (struct lcl_lk_history *)ptr;
 
-  /* Destroy unsubscribes; the doc is still alive because we retain
-   * its value.  Release the retained value only afterwards. */
   lk_history_destroy(hw->hist);
 
   if (hw->doc_val) {
@@ -831,7 +701,7 @@ static void editor_finalizer(void *ptr) {
     lk_resource_release(lk_ui_resources(ew->ui), ew->ref);
   }
 
-  lk_editor_destroy(ew->ed); /* unsubscribes from the (still live) doc */
+  lk_editor_destroy(ew->ed);
 
   if (ew->hist_val) {
     lcl_ref_dec(ew->hist_val);
@@ -849,9 +719,7 @@ static void editor_finalizer(void *ptr) {
 static void annot_finalizer(void *ptr) {
   struct lcl_lk_annot *aw = (struct lcl_lk_annot *)ptr;
 
-  /* Destroy first: the release hook fires for every live
-   * presentation while aw->pres_ui is still retained/checkable. */
-  lk_annot_store_destroy(aw->store); /* unsubscribes if attached */
+  lk_annot_store_destroy(aw->store);
 
   if (aw->doc_val) {
     lcl_ref_dec(aw->doc_val);
@@ -879,8 +747,6 @@ static void image_finalizer(void *ptr) {
 static void spans_finalizer(void *ptr) {
   struct lcl_lk_spans *sw = (struct lcl_lk_spans *)ptr;
 
-  /* destroy first: its release hook frees the presentation boxes while
-   * the ui (if still alive) can still be consulted */
   lk_spans_destroy(sw->sp);
 
   if (live_ui_check(sw->ui)) {
@@ -903,12 +769,6 @@ static void canvas_finalizer(void *ptr) {
   free(cw);
 }
 
-/* ============================================================================
- * UI Lifecycle procs (5)
- * ============================================================================
- */
-
-/* Lk::ui_create -> opaque<lk_ui> */
 static lcl_return_code c_lk_ui_create(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -935,7 +795,6 @@ static lcl_return_code c_lk_ui_create(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::ui_destroy [ui] -> "" */
 static lcl_return_code c_lk_ui_destroy(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -955,14 +814,11 @@ static lcl_return_code c_lk_ui_destroy(lcl_interp *interp, int argc,
   ui_teardown_bindings(ui);
   lk_ui_destroy(ui);
 
-  /* The opaque still points at the freed ui, but its finalizer checks
-   * the live registry and no-ops for uis already destroyed here. */
   *out = lcl_string_new("");
 
   return LCL_RC_OK;
 }
 
-/* Lk::begin_frame [ui] -> opaque<lk_tree> */
 static lcl_return_code c_lk_begin_frame(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -982,13 +838,11 @@ static lcl_return_code c_lk_begin_frame(lcl_interp *interp, int argc,
 
   t = lk_ui_begin_frame(ui);
 
-  /* Tree is owned by ui, no finalizer */
   *out = lcl_opaque_new(t, LK_TREE_TYPE, NULL);
 
   return LCL_RC_OK;
 }
 
-/* Lk::end_frame [ui] -> list of change dicts */
 static lcl_return_code c_lk_end_frame(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -1036,7 +890,6 @@ static lcl_return_code c_lk_end_frame(lcl_interp *interp, int argc,
     lcl_dict_put(&dict, "node_ix", v);
     lcl_ref_dec(v);
 
-    /* Resolve id to string */
     {
       const char *id_str = lk_intern_cstr(ui->intern, ch->id);
 
@@ -1059,7 +912,6 @@ static lcl_return_code c_lk_end_frame(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::tree [ui] -> opaque<lk_tree> (current tree) */
 static lcl_return_code c_lk_tree(lcl_interp *interp, int argc, lcl_value **argv,
                                  lcl_value **out) {
   lk_ui *ui;
@@ -1079,18 +931,11 @@ static lcl_return_code c_lk_tree(lcl_interp *interp, int argc, lcl_value **argv,
 
   t = lk_ui_tree(ui);
 
-  /* Cast away const: the tree is borrowed, no finalizer */
   *out = lcl_opaque_new((void *)t, LK_TREE_TYPE, NULL);
 
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Tree Building procs (5)
- * ============================================================================
- */
-
-/* Lk::node [tree, id_str, kind_str] -> int (node ix) */
 static lcl_return_code c_lk_node(lcl_interp *interp, int argc, lcl_value **argv,
                                  lcl_value **out) {
   lk_tree *t;
@@ -1132,7 +977,6 @@ static lcl_return_code c_lk_node(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
-/* Lk::set_root [tree, node_ix] -> "" */
 static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   lk_tree *t;
@@ -1162,7 +1006,6 @@ static lcl_return_code c_lk_set_root(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::append_child [tree, parent_ix, child_ix] -> "" */
 static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_tree *t;
@@ -1195,7 +1038,6 @@ static lcl_return_code c_lk_append_child(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::prop [tree, node_ix, key_str, value] -> "" */
 static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
                                  lcl_value **out) {
   lk_tree *t;
@@ -1229,16 +1071,13 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
     return LCL_RC_ERR;
   }
 
-  /* Value coercion based on prop key */
   switch (key_val) {
   case UIP_TEXT:
   case UIP_TOOLTIP:
     lv = lk_v_cstr(t->intern, lcl_value_to_string(argv[3]));
     break;
   case UIP_VALUE:
-    /* Kind-dispatched: a slider's value and a list's value (its
-     * cursor row) are integers (numeric text accepted); every other
-     * kind's value is a string (dropdown option text, tabs tab id). */
+
     if (node_ix > 0 && node_ix < t->node_count &&
         ((lk_kind)t->nodes[node_ix].kind == UIK_SLIDER ||
          (lk_kind)t->nodes[node_ix].kind == UIK_LIST)) {
@@ -1416,9 +1255,6 @@ static lcl_return_code c_lk_prop(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
-/* Coerce one Lcl value into an lk_value by tag: a string stays a
- * string (numeric text like "007" is data, not a number), a typed
- * number becomes i32, anything else renders to a string. */
 static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
   const char *sv;
   lk_i32 iv;
@@ -1434,12 +1270,6 @@ static lk_value coerce_lk_value(lk_tree *t, lcl_value *v) {
   return lk_v_cstr(t->intern, lcl_value_to_string(v));
 }
 
-/* Lk::present [tree, node_ix, ptype_str, pvalue]
- *
- * pvalue may be a scalar (int/string) or a list; list elements become
- * the presentation's args, one-to-one with the emitted command's args.
- * Lists longer than LK_PRES_MAX_ARGS are truncated.
- */
 static lcl_return_code c_lk_present(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   lk_tree *t;
@@ -1496,28 +1326,6 @@ static lcl_return_code c_lk_present(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Commands & Translators (5)
- * ============================================================================
- */
-
-/* Lk::add_translator [ui event_type ptype kind keycode mods cmd_name
- *                     ?button?]
- * All string fields: "" means any/wildcard.
- * keycode: "" or letter/name (e.g. "s", "f", "return").
- * mods: "" or "+"-joined modifiers (e.g. "ctrl", "ctrl+shift").
- * button (optional 8th arg): "primary" | "middle" | "secondary", or
- * "" / "0" for any.  When set, only pointer events with that button
- * and exact mods match. */
-/* Lk::clear_translators [ui] -> "": drop every translator registered
- * on the ui (lk_ui_clear_translators).  The clear-and-re-register idiom
- * for keymaps that change at runtime.  Safe wherever script runs --
- * frame body, event handler, or inside a command handler: emission
- * copies the matched row into the command before the handler runs and
- * every matcher loop returns right after emitting, so neither a clear
- * nor a re-add (which may reallocate the table) is observed
- * mid-iteration.  Registrations made before the clear on the same
- * frame's events are simply gone for the next event. */
 static lcl_return_code c_lk_clear_translators(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
@@ -1581,7 +1389,6 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* event_type: "" means 0 (any) */
   if (ev_str[0] != '\0') {
     int ev_val;
     if (!lookup_enum(event_table, ev_str, &ev_val)) {
@@ -1593,12 +1400,10 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
     ev_type = (lk_u8)ev_val;
   }
 
-  /* ptype: "" means 0 (any) */
   if (pt_str[0] != '\0') {
     ptype = lk_intern_cid(ui->intern, pt_str);
   }
 
-  /* kind: "" means 0 (any) */
   if (kn_str[0] != '\0') {
     int kn_val;
     if (!lookup_enum(kind_table, kn_str, &kn_val)) {
@@ -1608,7 +1413,6 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
     node_kind = (lk_u16)kn_val;
   }
 
-  /* keycode: "" means 0 (any) */
   if (kc_str[0] != '\0') {
     int kc_val;
     if (!lookup_enum(keycode_table, kc_str, &kc_val)) {
@@ -1618,7 +1422,6 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
     keycode = (lk_u16)kc_val;
   }
 
-  /* mods: "" means 0 (any), or "ctrl+shift" etc. */
   if (mod_str[0] != '\0') {
     if (parse_mods(mod_str, &mods) != 0) {
       lcl_set_error(interp, "Lk::add_translator: unknown modifier");
@@ -1626,7 +1429,6 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
     }
   }
 
-  /* button: absent, "" or "0" means 0 (any) */
   if (argc == 8) {
     const char *btn_str = lcl_value_to_string(argv[7]);
 
@@ -1653,12 +1455,6 @@ static lcl_return_code c_lk_add_translator(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Helper: convert lk_command to lcl dict */
-/* ---- Marshal lk_value to Lcl value (caller owns ref) ---- */
-
-/* Context-free marshal: UIV_TEXT and non-lcl-value resources become
- * placeholders (command args go through cmd_value_to_lcl below, which
- * has the ui for arena + resource-table access). */
 static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
   switch (v->tag) {
   case UIV_I32: return lcl_int_new((lcl_int)v->as.i);
@@ -1673,9 +1469,6 @@ static lcl_value *lk_value_to_lcl(const lk_value *v, const lk_intern *intern) {
   }
 }
 
-/* Command-scope marshal: UIV_TEXT resolves through the right arena
- * (queue or log copy); UIV_RESOURCE refs of the lcl-value type unwrap
- * to the retained Lcl value itself. */
 static lcl_value *cmd_value_to_lcl(lk_ui *ui, const lk_command *cmd,
                                    const lk_value *v) {
   switch (v->tag) {
@@ -1715,10 +1508,6 @@ static lcl_value *cmd_value_to_lcl(lk_ui *ui, const lk_command *cmd,
   }
 }
 
-/* The hit sub-dict: #{ptype <name> value <unwrapped> locus_kind
- * <name> locus <...>}.  For locus_kind "editor-range" the locus is
- * decoded into #{annot_id start end pos rev "hi:lo"}; any other kind
- * gets the raw 6-int list. */
 static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
   const lk_presentation_hit *hit = &cmd->hit;
   lcl_value *dict = lcl_dict_new();
@@ -1759,8 +1548,6 @@ static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
     lcl_dict_put(&locus, "pos", v);
     lcl_ref_dec(v);
 
-    /* Same "hi:lo" shape as Lk::doc_revision, so scripts can compare
-     * for staleness with a string equality. */
     sprintf(rev, "%lu:%lu", (unsigned long)hit->locus[4],
             (unsigned long)hit->locus[5]);
     v = lcl_string_new(rev);
@@ -1770,7 +1557,7 @@ static lcl_value *hit_to_dict(lk_ui *ui, const lk_command *cmd) {
     lcl_dict_put(&dict, "locus", locus);
     lcl_ref_dec(locus);
   } else if (lk_name && strcmp(lk_name, "text-range") == 0) {
-    /* a STYLED_TEXT span: #{start end pos} */
+
     lcl_value *locus = lcl_dict_new();
 
     v = lcl_int_new((lcl_int)hit->locus[0]);
@@ -1808,13 +1595,11 @@ static lcl_value *command_to_dict(const lk_command *cmd, lk_ui *ui) {
   const char *name_str;
   lk_u8 i;
 
-  /* name */
   name_str = lk_intern_cstr(intern, cmd->name);
   v = lcl_string_new(name_str ? name_str : "");
   lcl_dict_put(&dict, "name", v);
   lcl_ref_dec(v);
 
-  /* args */
   {
     lcl_value *args_list = lcl_list_new();
     for (i = 0; i < cmd->arg_count; i++) {
@@ -1828,12 +1613,10 @@ static lcl_value *command_to_dict(const lk_command *cmd, lk_ui *ui) {
     lcl_ref_dec(args_list);
   }
 
-  /* source_node */
   v = lcl_int_new((lcl_int)cmd->source_node);
   lcl_dict_put(&dict, "source_node", v);
   lcl_ref_dec(v);
 
-  /* source_ptype */
   {
     const char *pt = lk_intern_cstr(intern, cmd->source_ptype);
     v = lcl_string_new(pt ? pt : "");
@@ -1841,15 +1624,10 @@ static lcl_value *command_to_dict(const lk_command *cmd, lk_ui *ui) {
     lcl_ref_dec(v);
   }
 
-  /* source_value — the event-intrinsic value (e.g. new buffer for
-   * value_changed commands).  Always present; empty string when the
-   * event carried no value. */
   v = lk_value_to_lcl(&cmd->source_value, intern);
   lcl_dict_put(&dict, "source_value", v);
   lcl_ref_dec(v);
 
-  /* hit — only when the command came from an interior presentation
-   * (scripts test with `has?`). */
   if (cmd->hit.type_id != 0) {
     v = hit_to_dict(ui, cmd);
     lcl_dict_put(&dict, "hit", v);
@@ -1859,13 +1637,6 @@ static lcl_value *command_to_dict(const lk_command *cmd, lk_ui *ui) {
   return dict;
 }
 
-/* ---- Script-callback error reporting ---- */
-
-/* Host->script callbacks (command handlers, event handlers, doc
- * subscribers, the frame proc) run outside any script eval, so a
- * script error raised inside one has no caller to propagate to.
- * Report it on stderr — swallowing it silently makes handler bugs
- * undiagnosable (a broken handler just "does nothing"). */
 static void lcl_lk_report_callback_error(lcl_interp *interp,
                                          const char *where) {
   const char *file = lcl_interp_error_file(interp);
@@ -1885,8 +1656,6 @@ static void lcl_lk_report_callback_error(lcl_interp *interp,
   fprintf(stderr, ": %s\n", msg ? msg : "(unknown)");
 }
 
-/* ---- Command handler bridge ---- */
-
 struct lcl_cmd_ctx {
   lcl_interp *interp;
   lcl_value *handler;
@@ -1902,7 +1671,6 @@ static void lcl_cmd_bridge(const lk_command *cmd, void *ud) {
 
   dict = command_to_dict(cmd, ctx->ui);
 
-  /* Add source_node_id string for convenience */
   cur = lk_ui_tree(ctx->ui);
   if (cur && cmd->source_node > 0 &&
       cmd->source_node <= (lk_ix)cur->node_count) {
@@ -1937,7 +1705,6 @@ static void lcl_cmd_ctx_free(struct lcl_cmd_ctx *ctx) {
   }
 }
 
-/* Lk::commands [ui] -> list of command dicts */
 static lcl_return_code c_lk_commands(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -1971,7 +1738,6 @@ static lcl_return_code c_lk_commands(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::clear_commands [ui] -> "" */
 static lcl_return_code c_lk_clear_commands(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -1994,7 +1760,6 @@ static lcl_return_code c_lk_clear_commands(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::command_log [ui] -> list of command dicts */
 static lcl_return_code c_lk_command_log(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2029,7 +1794,6 @@ static lcl_return_code c_lk_command_log(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::clear_command_log [ui] -> "" */
 static lcl_return_code c_lk_clear_command_log(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
@@ -2053,7 +1817,6 @@ static lcl_return_code c_lk_clear_command_log(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::set_command_handler [ui, handler_proc] -> "" */
 static lcl_return_code c_lk_set_command_handler(lcl_interp *interp, int argc,
                                                 lcl_value **argv,
                                                 lcl_value **out) {
@@ -2078,7 +1841,6 @@ static lcl_return_code c_lk_set_command_handler(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* Free previous handler ctx if one was set through this binding */
   if (ui->cmd_handler == lcl_cmd_bridge && ui->cmd_handler_ud) {
     lcl_cmd_ctx_free((struct lcl_cmd_ctx *)ui->cmd_handler_ud);
   }
@@ -2103,12 +1865,6 @@ static lcl_return_code c_lk_set_command_handler(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * State (2)
- * ============================================================================
- */
-
-/* Lk::state_set [ui, node_id_str, key_int, value] -> "" */
 static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2140,9 +1896,6 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* Keys below LKS_USER are internal widget state — scripts never
-   * poke widget state (initial values are props, e.g. the dropdown's
-   * `value`).  App-owned state starts at LKS_USER. */
   if (key < LKS_USER) {
     lcl_set_error(interp,
                   "Lk::state_set: keys below 256 (LKS_USER) are internal "
@@ -2153,8 +1906,6 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
 
   nid = lk_intern_cid(ui->intern, node_str);
 
-  /* Value by tag: strings stay strings, typed numbers become i32,
-   * anything else renders (mirrors coerce_lk_value). */
   {
     const char *sv;
     lk_i32 iv;
@@ -2176,7 +1927,6 @@ static lcl_return_code c_lk_state_set(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::state_get [ui, node_id_str, key_int] -> value */
 static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2208,8 +1958,6 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* Same barrier as Lk::state_set: internal widget state is not
-   * script-visible. */
   if (key < LKS_USER) {
     lcl_set_error(interp,
                   "Lk::state_get: keys below 256 (LKS_USER) are internal "
@@ -2231,21 +1979,13 @@ static lcl_return_code c_lk_state_get(lcl_interp *interp, int argc,
     break;
   }
   case UIV_RESOURCE: *out = lcl_string_new("<resource>"); break;
-  case UIV_TEXT:
-    *out = lcl_string_new("<text>");
-    break; /* command scope only */
+  case UIV_TEXT: *out = lcl_string_new("<text>"); break;
   default: *out = lcl_string_new(""); break;
   }
 
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Focus (2)
- * ============================================================================
- */
-
-/* Lk::focus_set [ui, node_id_str] -> "" */
 static lcl_return_code c_lk_focus_set(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2280,8 +2020,6 @@ static lcl_return_code c_lk_focus_set(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::focus_request [ui id] -> "" -- deferred focus, applied at the
- * next end_frame that commits the node ("" cancels). */
 static lcl_return_code c_lk_focus_request(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2312,7 +2050,6 @@ static lcl_return_code c_lk_focus_request(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::focus_clear [ui] -> "" */
 static lcl_return_code c_lk_focus_clear(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2336,8 +2073,6 @@ static lcl_return_code c_lk_focus_clear(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::capture_set [ui id] -> "" -- pointer capture for a node: the run
- * loop targets MOVE/UP at it and suppresses hover until cleared. */
 static lcl_return_code c_lk_capture_set(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2367,7 +2102,6 @@ static lcl_return_code c_lk_capture_set(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::capture_clear [ui] -> "" */
 static lcl_return_code c_lk_capture_clear(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2390,7 +2124,6 @@ static lcl_return_code c_lk_capture_clear(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::capture_get [ui] -> node id string, "" when none */
 static lcl_return_code c_lk_capture_get(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2420,8 +2153,6 @@ static lcl_return_code c_lk_capture_get(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::text_size [ui text ?font_id ?font_size] -> (w h), measured by the
- * ui's text backend (a window installs its own; the stub headless). */
 static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2479,7 +2210,6 @@ static lcl_return_code c_lk_text_size(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::focus_get [ui] -> focused node's id string, "" when none */
 static lcl_return_code c_lk_focus_get(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2506,12 +2236,6 @@ static lcl_return_code c_lk_focus_get(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::node_rect [ui id] -> (x y w h) from the last layout into the
- * ui-owned rects array, or () when the node is unknown or the host
- * never laid out into lk_ui_rects (headless script, tree-driving
- * host with its own array).  A node the layout skipped -- hidden
- * subtree, collapsed tab page -- reports (0 0 0 0). */
-/* Lk::version -> the linked lk's LK_VERSION_STRING. */
 static lcl_return_code c_lk_version(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   (void)argv;
@@ -2527,10 +2251,6 @@ static lcl_return_code c_lk_version(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ---- Lk::args: script arguments (lcl_lk_set_args) ---- */
-
-/* tools/embed.cmake generates these from lib/lk-dsl.lcl (CMake
- * target lcl_lk). */
 extern const unsigned char lcl_lk_dsl_prelude[];
 extern const size_t lcl_lk_dsl_prelude_len;
 
@@ -2564,8 +2284,6 @@ void lcl_lk_set_args(int argc, char **argv) {
   g_lk_argv = argv;
 }
 
-/* Lk::args -> list of the strings after the script path (() when the
- * host set none). */
 static lcl_return_code c_lk_args(lcl_interp *interp, int argc, lcl_value **argv,
                                  lcl_value **out) {
   lcl_value *list;
@@ -2643,8 +2361,6 @@ static lcl_return_code c_lk_node_rect(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ---- Lk::editor_keys: the widget's bindings as data ---- */
-
 static const char *enum_name(const str_enum *table, int value) {
   int i;
 
@@ -2657,8 +2373,6 @@ static const char *enum_name(const str_enum *table, int value) {
   return "";
 }
 
-/* "ctrl+alt+shift" spelling shared with the DSL `keybinding` parser
- * (parse_mods accepts any order; this is the canonical one). */
 static void mods_to_string(lk_u8 mods, char *buf, size_t cap) {
   static const struct {
     lk_u8 bit;
@@ -2697,7 +2411,6 @@ static void mods_to_string(lk_u8 mods, char *buf, size_t cap) {
   }
 }
 
-/* "<mods>+<name>" or just "<name>"; buf is always terminated. */
 static void join_chord(char *buf, size_t cap, const char *mods,
                        const char *name) {
   size_t ml = strlen(mods);
@@ -2731,14 +2444,6 @@ static void dict_put_int(lcl_value **dict, const char *key, lcl_int i) {
   lcl_ref_dec(v);
 }
 
-/* Lk::editor_keys -> list of binding records (docs/editor-keys-
- * reflection.md).  Key rows: #{kind key chord "ctrl+d" key d mods
- * "ctrl" mods_exact 1 extend_with_shift 0 command select_next_match
- * doc ..}; pointer rows: #{kind pointer gesture "ctrl+click" button
- * primary mods "ctrl" mods_exact 0 action add_cursor command
- * add_cursor_at doc ..} (command "" when the action is not one).
- * Order is the widget's dispatch order (stable across a release, so
- * apps can diff it). */
 static lcl_return_code c_lk_editor_keys(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   static const char *gesture_names[] = {"click", "drag", "wheel"};
@@ -2821,9 +2526,6 @@ static lcl_return_code c_lk_editor_keys(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::time_ms [ui] -> int: monotonic frame time in ms, stamped by the
- * backend once per frame (0 until a backend stamps it; wraps at
- * 2^32). */
 static lcl_return_code c_lk_time_ms(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2845,12 +2547,6 @@ static lcl_return_code c_lk_time_ms(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Tags & Style (2)
- * ============================================================================
- */
-
-/* Lk::tag [tree, node_ix, tag_str] -> "" */
 static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
                                 lcl_value **out) {
   lk_tree *t;
@@ -2887,7 +2583,6 @@ static lcl_return_code c_lk_tag(lcl_interp *interp, int argc, lcl_value **argv,
   return LCL_RC_OK;
 }
 
-/* Helper: parse (r g b) or (r g b a) list into lk_color */
 static int parse_color_list(lcl_value *list, lk_color *out) {
   size_t len;
   lcl_value *v;
@@ -2938,7 +2633,6 @@ static int parse_color_list(lcl_value *list, lk_color *out) {
   return 1;
 }
 
-/* Lk::theme_rule [ui, kind_str, tag_str, state_str, style_dict] -> "" */
 static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -2973,7 +2667,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   state_str = lcl_value_to_string(argv[3]);
   dict = argv[4];
 
-  /* kind: "" or "*" means 0 (any) */
   if (kind_str[0] != '\0' && strcmp(kind_str, "*") != 0) {
     int kv;
     if (!lookup_enum(kind_table, kind_str, &kv)) {
@@ -2985,12 +2678,10 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     kind = (lk_u16)kv;
   }
 
-  /* tag: "" means 0 (any) */
   if (tag_str[0] != '\0') {
     tag_id = lk_intern_cid(ui->intern, tag_str);
   }
 
-  /* state: "" means 0 (any) */
   if (state_str[0] != '\0') {
     int sv;
     if (!lookup_enum(state_table, state_str, &sv)) {
@@ -3002,10 +2693,8 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     state_mask = (lk_u8)sv;
   }
 
-  /* Parse style dict */
   memset(&style, 0, sizeof(style));
 
-  /* bg: {r g b} or {r g b a} */
   v = lcl_dict_peek(dict, "bg");
 
   if (v) {
@@ -3014,7 +2703,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* fg: {r g b} or {r g b a} */
   v = lcl_dict_peek(dict, "fg");
 
   if (v) {
@@ -3023,7 +2711,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* border_color: {r g b} or {r g b a} */
   v = lcl_dict_peek(dict, "border_color");
 
   if (v) {
@@ -3032,7 +2719,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* padding: int */
   v = lcl_dict_peek(dict, "padding");
 
   if (v) {
@@ -3043,7 +2729,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* gap: int */
   v = lcl_dict_peek(dict, "gap");
 
   if (v) {
@@ -3054,7 +2739,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* font_id: int (from Lk::register_font; 0 = default face) */
   v = lcl_dict_peek(dict, "font_id");
 
   if (v) {
@@ -3070,7 +2754,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     field_mask |= LK_SF_FONT_ID;
   }
 
-  /* font_size: int (0 = face default size) */
   v = lcl_dict_peek(dict, "font_size");
 
   if (v) {
@@ -3086,7 +2769,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     field_mask |= LK_SF_FONT_SIZE;
   }
 
-  /* border_width: int */
   v = lcl_dict_peek(dict, "border_width");
 
   if (v) {
@@ -3097,7 +2779,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* border_radius: int */
   v = lcl_dict_peek(dict, "border_radius");
 
   if (v) {
@@ -3108,7 +2789,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* align: string */
   v = lcl_dict_peek(dict, "align");
 
   if (v) {
@@ -3119,7 +2799,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* justify: string */
   v = lcl_dict_peek(dict, "justify");
 
   if (v) {
@@ -3130,7 +2809,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* text_align / text_valign: string (a leaf's text run placement) */
   v = lcl_dict_peek(dict, "text_align");
 
   if (v) {
@@ -3151,7 +2829,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* scrollbar_track: {r g b} or {r g b a} */
   v = lcl_dict_peek(dict, "scrollbar_track");
 
   if (v) {
@@ -3160,7 +2837,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* scrollbar_thumb: {r g b} or {r g b a} */
   v = lcl_dict_peek(dict, "scrollbar_thumb");
 
   if (v) {
@@ -3169,8 +2845,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
     }
   }
 
-  /* accent: {r g b} or {r g b a} -- check marks, radio dots, slider
-   * fill + thumb, selected-tab bar */
   v = lcl_dict_peek(dict, "accent");
 
   if (v) {
@@ -3194,12 +2868,6 @@ static lcl_return_code c_lk_theme_rule(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Interning (2)
- * ============================================================================
- */
-
-/* Lk::intern_str [ui, id_int] -> string */
 static lcl_return_code c_lk_intern_str(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -3228,7 +2896,6 @@ static lcl_return_code c_lk_intern_str(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::intern_id [ui, string] -> int */
 static lcl_return_code c_lk_intern_id(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui;
@@ -3259,15 +2926,6 @@ static lcl_return_code c_lk_intern_id(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Event marshaling — shared by the SDL event-handler bridge and the
- * headless tests (lcl_lk_event_to_dict is deliberately non-static so
- * a host driving lk_event_route itself can reuse the marshal).
- * ============================================================================
- */
-
-/* ---- Enum-to-string reverse tables ---- */
-
 static const char *event_type_str(lk_u8 t) {
   switch (t) {
   case LK_EVENT_POINTER_MOVE: return "pointer_move";
@@ -3281,6 +2939,7 @@ static const char *event_type_str(lk_u8 t) {
   case LK_EVENT_WINDOW_CLOSE: return "window_close";
   case LK_EVENT_VALUE_CHANGED: return "value_changed";
   case LK_EVENT_FOCUS_CHANGED: return "focus_changed";
+  case LK_EVENT_PASTE: return "paste";
   default: return "unknown";
   }
 }
@@ -3293,8 +2952,6 @@ static const char *event_phase_str(lk_u8 p) {
   default: return "unknown";
   }
 }
-
-/* ---- Marshal lk_event to Lcl dict ---- */
 
 lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern);
 
@@ -3322,7 +2979,6 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
   lcl_dict_put(&dict, "target", v);
   lcl_ref_dec(v);
 
-  /* Type-specific fields */
   switch (ev->type) {
   case LK_EVENT_POINTER_MOVE:
   case LK_EVENT_POINTER_DOWN:
@@ -3357,6 +3013,24 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
     lcl_ref_dec(v);
     break;
 
+  case LK_EVENT_PASTE: {
+
+    char *tmp = (char *)malloc((size_t)ev->data.paste.len + 1);
+
+    if (tmp) {
+      memcpy(tmp, ev->data.paste.ptr, ev->data.paste.len);
+      tmp[ev->data.paste.len] = '\0';
+      v = lcl_string_new(tmp);
+      free(tmp);
+    } else {
+      v = lcl_string_new("");
+    }
+
+    lcl_dict_put(&dict, "text", v);
+    lcl_ref_dec(v);
+    break;
+  }
+
   case LK_EVENT_WHEEL:
     v = lcl_int_new((lcl_int)ev->data.wheel.dx);
     lcl_dict_put(&dict, "dx", v);
@@ -3386,8 +3060,7 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
   }
 
   case LK_EVENT_FOCUS_CHANGED: {
-    /* Node-id STRINGS resolved from the intern table (the
-     * target_id/node_id convention); 0 = no focus -> empty string. */
+
     const char *ps = ev->data.focus.prev_id
                          ? lk_intern_cstr(intern, ev->data.focus.prev_id)
                          : NULL;
@@ -3411,13 +3084,6 @@ lcl_value *lcl_lk_event_to_dict(const lk_event *ev, const lk_intern *intern) {
   return dict;
 }
 
-/* ============================================================================
- * Hex payload helpers — shared by Lk::window_icon_hex and the image
- * byte accessors.  Lcl strings are NUL-terminated, so raw bytes ride
- * as hex text.
- * ============================================================================
- */
-
 static int hex_nibble(char c) {
   if (c >= '0' && c <= '9') {
     return c - '0';
@@ -3434,11 +3100,6 @@ static int hex_nibble(char c) {
   return -1;
 }
 
-/* Decode a hex payload (the Lk::window_icon_hex contract: whitespace
- * between digits ignored; any other character, an odd digit count, or
- * an empty payload is a hard error, prefixed with proc).  Returns a
- * malloc'd buffer the caller frees, or NULL with the interp error
- * set. */
 static unsigned char *hex_decode_arg(lcl_interp *interp, const char *proc,
                                      const char *hex, lk_u32 *out_n) {
   unsigned char *bytes;
@@ -3447,7 +3108,6 @@ static unsigned char *hex_decode_arg(lcl_interp *interp, const char *proc,
   const char *p;
   char err[96];
 
-  /* Decoded size <= strlen/2; over-allocate by the string length. */
   bytes = (unsigned char *)malloc(strlen(hex) / 2 + 1);
 
   if (!bytes) {
@@ -3497,8 +3157,6 @@ static unsigned char *hex_decode_arg(lcl_interp *interp, const char *proc,
   return bytes;
 }
 
-/* Encode n bytes as lowercase hex into dst (2n + 1 chars incl. the
- * NUL).  Round-trips through hex_decode_arg. */
 static void hex_encode(const unsigned char *bytes, lk_u32 n, char *dst) {
   static const char digits[] = "0123456789abcdef";
   lk_u32 i;
@@ -3510,14 +3168,6 @@ static void hex_encode(const unsigned char *bytes, lk_u32 n, char *dst) {
 
   dst[n * 2] = '\0';
 }
-
-/* ============================================================================
- * Image procs (6) — core, headless.  File load/save live in the SDL
- * set; the pixel/byte accessors here are the script-side substrate
- * for pixel work (steganography!): bytes travel as hex, the
- * window_icon_hex convention.
- * ============================================================================
- */
 
 static struct lcl_lk_image *get_image(lcl_interp *interp, lcl_value *val) {
   struct lcl_lk_image *iw = NULL;
@@ -3531,8 +3181,6 @@ static struct lcl_lk_image *get_image(lcl_interp *interp, lcl_value *val) {
   return iw;
 }
 
-/* Register img in ui's table and wrap it as an Lcl opaque.  Consumes
- * img on failure.  Shared by Lk::image_new and (SDL) Lk::image_load. */
 static lcl_return_code image_wrap_register(lcl_interp *interp, const char *proc,
                                            lk_ui *ui, lcl_value *ui_val,
                                            lk_image *img, lcl_value **out) {
@@ -3572,8 +3220,6 @@ static lcl_return_code image_wrap_register(lcl_interp *interp, const char *proc,
   return LCL_RC_OK;
 }
 
-/* Lk::image_new [ui w h] -> opaque<lk_image>.  Pixels start
- * transparent black. */
 static lcl_return_code c_lk_image_new(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -3602,7 +3248,7 @@ static lcl_return_code c_lk_image_new(lcl_interp *interp, int argc,
   img = lk_image_new(w, h, NULL, NULL, NULL);
 
   if (!img) {
-    /* > 16384 on an axis, or OOM (lk_image_new's contract) */
+
     lcl_set_error(interp,
                   "Lk::image_new: invalid dimensions (max 16384 per axis) "
                   "or allocation failed");
@@ -3613,7 +3259,6 @@ static lcl_return_code c_lk_image_new(lcl_interp *interp, int argc,
   return image_wrap_register(interp, "Lk::image_new", ui, argv[0], img, out);
 }
 
-/* Lk::image_size [img] -> (w h) */
 static lcl_return_code c_lk_image_size(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
@@ -3650,8 +3295,6 @@ static lcl_return_code c_lk_image_size(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Shared (x, y) validation for the pixel accessors.  Returns the
- * byte offset of the pixel, or sets the error and returns -1. */
 static lcl_int image_px_offset(lcl_interp *interp, const char *proc,
                                struct lcl_lk_image *iw, lcl_value *xv,
                                lcl_value *yv) {
@@ -3681,7 +3324,6 @@ static lcl_int image_px_offset(lcl_interp *interp, const char *proc,
   return (y * (lcl_int)w + x) * 4;
 }
 
-/* Lk::image_get_px [img x y] -> (r g b a) */
 static lcl_return_code c_lk_image_get_px(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
@@ -3723,8 +3365,6 @@ static lcl_return_code c_lk_image_get_px(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::image_set_px [img x y (r g b ?a?)] — alpha defaults to 255;
- * marks the image dirty. */
 static lcl_return_code c_lk_image_set_px(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
@@ -3770,8 +3410,6 @@ static lcl_return_code c_lk_image_set_px(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::image_bytes [img off len] -> lowercase hex over the raw
- * w*h*4 RGBA byte stream. */
 static lcl_return_code c_lk_image_bytes(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
@@ -3826,8 +3464,6 @@ static lcl_return_code c_lk_image_bytes(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::image_set_bytes [img off hex] — the window_icon_hex hex
- * contract; marks the image dirty. */
 static lcl_return_code c_lk_image_set_bytes(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
@@ -3891,16 +3527,6 @@ static lcl_return_code c_lk_image_set_bytes(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Vector canvas procs (docs/canvas.md)
- *
- * An lk_canvas is an application-owned display list shown by the
- * `canvas` widget kind through the `canvas` prop.  Coordinates go
- * through lcl_value_to_int so typed floats are accepted (a plotter
- * computes in floats); colors are the theme's (r g b ?a?) lists.
- * ============================================================================
- */
-
 static struct lcl_lk_canvas *get_canvas(lcl_interp *interp, lcl_value *val) {
   struct lcl_lk_canvas *cw = NULL;
 
@@ -3913,9 +3539,6 @@ static struct lcl_lk_canvas *get_canvas(lcl_interp *interp, lcl_value *val) {
   return cw;
 }
 
-/* One coordinate: ints pass through, floats round half away from
- * zero (lcl_value_to_int would truncate).  Returns 0 when not numeric
- * or out of i32 range. */
 static int canvas_coord(lcl_value *v, lk_i32 *out) {
   double f;
 
@@ -3932,8 +3555,6 @@ static int canvas_coord(lcl_value *v, lk_i32 *out) {
   return 1;
 }
 
-/* Read n coordinates from argv[from..from+n) into out.  Sets the
- * error and returns 0 when one is not numeric. */
 static int canvas_coords(lcl_interp *interp, const char *proc, lcl_value **argv,
                          int from, int n, lk_i32 *out) {
   int i;
@@ -3965,8 +3586,6 @@ static int canvas_color(lcl_interp *interp, const char *proc, lcl_value *v,
   return 1;
 }
 
-/* Optional trailing stroke width: absent -> 1; else an integer
- * 0..255 (hard error otherwise). */
 static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
                          lcl_value **argv, int idx, lk_u8 *out) {
   lk_u8 v;
@@ -3990,9 +3609,6 @@ static int canvas_stroke(lcl_interp *interp, const char *proc, int argc,
   return 1;
 }
 
-/* Lk::canvas_new [ui ?w ?h] -> opaque<lk_canvas>.  w/h are the size
- * hint the widget measures at (default 0x0: let grow / w / h size
- * the node). */
 static lcl_return_code c_lk_canvas_new(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -4061,7 +3677,6 @@ static lcl_return_code c_lk_canvas_new(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_size [c] -> (w h) */
 static lcl_return_code c_lk_canvas_size(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -4097,7 +3712,6 @@ static lcl_return_code c_lk_canvas_size(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_set_size [c w h] */
 static lcl_return_code c_lk_canvas_set_size(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -4130,7 +3744,6 @@ static lcl_return_code c_lk_canvas_set_size(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_clear [c] */
 static lcl_return_code c_lk_canvas_clear(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -4153,8 +3766,6 @@ static lcl_return_code c_lk_canvas_clear(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_clip [c x y w h] -> "" -- open a sub-clip (nests to
- * LK_CANVAS_MAX_CLIP_DEPTH; deeper is a hard error). */
 static lcl_return_code c_lk_canvas_clip(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -4204,8 +3815,6 @@ static lcl_return_code c_lk_canvas_clip(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_clip_end [c] -> "" -- close the innermost sub-clip; none
- * open is a hard error. */
 static lcl_return_code c_lk_canvas_clip_end(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -4239,11 +3848,6 @@ static lcl_return_code c_lk_canvas_clip_end(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Span sets + styled text (docs/styled-text.md)
- * ============================================================================
- */
-
 static struct lcl_lk_spans *get_spans(lcl_interp *interp, lcl_value *val) {
   struct lcl_lk_spans *sw = NULL;
 
@@ -4255,8 +3859,6 @@ static struct lcl_lk_spans *get_spans(lcl_interp *interp, lcl_value *val) {
   return sw;
 }
 
-/* The span set's release hook: a presented value is an lcl-value box
- * registered in the wrapper's ui; free it once (annot store pattern). */
 static void lcl_spans_pres_release(void *ud, lk_value v) {
   struct lcl_lk_spans *sw = (struct lcl_lk_spans *)ud;
   lk_resource_ref ref = lk_v_resource_ref(v);
@@ -4277,7 +3879,6 @@ static void lcl_spans_pres_release(void *ud, lk_value v) {
   pres_box_free(box);
 }
 
-/* Lk::spans_new [ui] -> opaque<lk_spans> */
 static lcl_return_code c_lk_spans_new(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -4330,7 +3931,6 @@ static lcl_return_code c_lk_spans_new(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::spans_clear [s] -> "" */
 static lcl_return_code c_lk_spans_clear(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_spans *sw;
@@ -4352,7 +3952,6 @@ static lcl_return_code c_lk_spans_clear(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::spans_count [s] -> int */
 static lcl_return_code c_lk_spans_count(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_spans *sw;
@@ -4373,7 +3972,6 @@ static lcl_return_code c_lk_spans_count(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* start / end args shared by spans_add and spans_present */
 static int spans_range_args(lcl_interp *interp, const char *proc, lcl_value *a,
                             lcl_value *b, lk_u32 *start, lk_u32 *end) {
   lk_u32 s, e;
@@ -4397,9 +3995,6 @@ static int spans_range_args(lcl_interp *interp, const char *proc, lcl_value *a,
   return 1;
 }
 
-/* Lk::spans_add [s start end style-dict] -> "" -- style keys fg / bg
- * ((r g b ?a) lists) and underline (0/1); at least one; unknown keys
- * and overlaps are hard errors. */
 static lcl_return_code c_lk_spans_add(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   struct lcl_lk_spans *sw;
@@ -4511,9 +4106,6 @@ static lcl_return_code c_lk_spans_add(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::spans_present [s start end ptype value] -> "" -- a presentation
- * on a byte range: value may be ANY Lcl value (retained in an
- * lcl-value box in the set's ui, unwrapped in the command dict). */
 static lcl_return_code c_lk_spans_present(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_spans *sw;
@@ -4591,8 +4183,6 @@ static lcl_return_code c_lk_spans_present(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::styled_text_pos_at [ui id x y] -> byte position, or -1 when the
- * node is unknown / not laid out / the point is outside it. */
 static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
                                                lcl_value **argv,
                                                lcl_value **out) {
@@ -4633,14 +4223,6 @@ static lcl_return_code c_lk_styled_text_pos_at(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Context menus (docs/context-menu.md)
- * ============================================================================
- */
-
-/* Lk::context_menu [ui x y] -> item count (0 = nothing applicable, no
- * menu).  Hit-tests the ui-owned rects, runs the producer, opens at
- * the cursor. */
 static lcl_return_code c_lk_context_menu(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -4666,7 +4248,6 @@ static lcl_return_code c_lk_context_menu(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::context_menu_focus [ui] -> item count -- the keyboard opener. */
 static lcl_return_code c_lk_context_menu_focus(lcl_interp *interp, int argc,
                                                lcl_value **argv,
                                                lcl_value **out) {
@@ -4688,11 +4269,9 @@ static lcl_return_code c_lk_context_menu_focus(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* One explicit item from a list `(label Cmd ?arg..)`, `(---)`, or a
- * dict #{label command args enabled}. */
 static int menu_item_from_lcl(lcl_interp *interp, lk_ui *ui, lcl_value *v,
                               lk_node_id owner, lk_menu_item *it) {
-  lk_tree *t = (lk_tree *)lk_ui_tree(ui); /* interning only */
+  lk_tree *t = (lk_tree *)lk_ui_tree(ui);
 
   memset(it, 0, sizeof(*it));
   it->enabled = 1;
@@ -4808,8 +4387,6 @@ static int menu_item_from_lcl(lcl_interp *interp, lk_ui *ui, lcl_value *v,
   return 0;
 }
 
-/* Lk::menu_open [ui spec] -> 1/0.  spec: #{items (...) ?owner id
- * ?anchor below|above|at_cursor|center ?x N ?y N}. */
 static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -4899,8 +4476,6 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
     }
   }
 
-  /* An item's node: the owner when given, else the root (so a menu
-   * with no owner still has a source node). */
   if (owner == 0) {
     const lk_tree *t = lk_ui_tree(ui);
     lk_node_id root_id = (t && t->root) ? t->nodes[t->root].id : 0;
@@ -4916,8 +4491,6 @@ static lcl_return_code c_lk_menu_open(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::menu_items [ui] -> list of #{label command accel enabled
- * separator}, () when no menu is open. */
 static lcl_return_code c_lk_menu_items(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -4970,7 +4543,6 @@ static lcl_return_code c_lk_menu_items(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::menu_hover [ui] -> hovered index, -1 when none / closed */
 static lcl_return_code c_lk_menu_hover(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -4990,7 +4562,6 @@ static lcl_return_code c_lk_menu_hover(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::menu_activate [ui index] -> 1/0 */
 static lcl_return_code c_lk_menu_activate(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -5017,7 +4588,6 @@ static lcl_return_code c_lk_menu_activate(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::menu_close [ui] -> "" */
 static lcl_return_code c_lk_menu_close(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -5038,12 +4608,6 @@ static lcl_return_code c_lk_menu_close(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Virtualized list (docs/table.md)
- * ============================================================================
- */
-
-/* Lk::list_range [ui id] -> (first count) or () before any layout */
 static lcl_return_code c_lk_list_range(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -5085,7 +4649,6 @@ static lcl_return_code c_lk_list_range(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::list_scroll_to [ui id row] -> 1/0 */
 static lcl_return_code c_lk_list_scroll_to(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -5120,7 +4683,6 @@ static lcl_return_code c_lk_list_scroll_to(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_op_count [c] -> int */
 static lcl_return_code c_lk_canvas_op_count(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -5142,7 +4704,6 @@ static lcl_return_code c_lk_canvas_op_count(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_line [c x0 y0 x1 y1 color ?stroke] */
 static lcl_return_code c_lk_canvas_line(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -5180,8 +4741,6 @@ static lcl_return_code c_lk_canvas_line(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_polyline [c points color ?stroke] -- points is a FLAT
- * (x0 y0 x1 y1 ...) list, even length >= 4. */
 static lcl_return_code c_lk_canvas_polyline(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -5261,7 +4820,6 @@ static lcl_return_code c_lk_canvas_polyline(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Shared body of canvas_rect / canvas_fill_rect. */
 static lcl_return_code canvas_rect_common(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out,
                                           int fill) {
@@ -5319,20 +4877,17 @@ static lcl_return_code canvas_rect_common(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::canvas_rect [c x y w h color ?stroke] (outline) */
 static lcl_return_code c_lk_canvas_rect(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   return canvas_rect_common(interp, argc, argv, out, 0);
 }
 
-/* Lk::canvas_fill_rect [c x y w h color] */
 static lcl_return_code c_lk_canvas_fill_rect(lcl_interp *interp, int argc,
                                              lcl_value **argv,
                                              lcl_value **out) {
   return canvas_rect_common(interp, argc, argv, out, 1);
 }
 
-/* Lk::canvas_text [c x y text color] -- drawn with the node's font. */
 static lcl_return_code c_lk_canvas_text(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_canvas *cw;
@@ -5377,22 +4932,14 @@ static lcl_return_code c_lk_canvas_text(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * SDL Window procs (8) — compiled only when LK_HAVE_SDL is set
- * ============================================================================
- */
-
-#ifdef LK_HAVE_SDL
-
-/* ---- Wrapper struct: holds lk_window + Lcl event handler ---- */
+#ifdef LK_HAVE_WINDOW
 
 struct lcl_lk_window {
   lk_window *win;
   lcl_interp *interp;
-  lcl_value *event_handler; /* NULL if not set */
+  lcl_value *event_handler;
+  lcl_value *dialog_fallback;
 };
-
-/* ---- C event handler bridge ---- */
 
 static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
   struct lcl_lk_window *lw = (struct lcl_lk_window *)ud;
@@ -5408,7 +4955,6 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
 
   ev_dict = lcl_lk_event_to_dict(event, lk_ui_intern(lk_window_ui(lw->win)));
 
-  /* Add target_id and node_id string fields so scripts can identify nodes */
   cur = lk_ui_tree(lk_window_ui(lw->win));
   if (cur) {
     lcl_value *v;
@@ -5457,8 +5003,6 @@ static int lcl_lk_event_handler(lk_event *event, lk_ix node_ix, void *ud) {
   return 0;
 }
 
-/* ---- Frame callback bridge ---- */
-
 struct lcl_lk_frame_ctx {
   lcl_interp *interp;
   lcl_value *view_fn;
@@ -5481,8 +5025,6 @@ static void lcl_lk_frame(lk_tree *t, void *ud) {
   lcl_ref_dec(tree_val);
 }
 
-/* ---- Finalizer ---- */
-
 static void lcl_lk_window_finalizer(void *ptr) {
   struct lcl_lk_window *lw = (struct lcl_lk_window *)ptr;
   lk_ui *ui;
@@ -5491,16 +5033,16 @@ static void lcl_lk_window_finalizer(void *ptr) {
     lcl_ref_dec(lw->event_handler);
   }
 
-  /* Release what the binding hung on the ui before window destroy
-   * frees it (lw->win is NULL after an explicit Lk::window_destroy). */
+  if (lw->dialog_fallback) {
+    lcl_ref_dec(lw->dialog_fallback);
+  }
+
   ui = lk_window_ui(lw->win);
   ui_teardown_bindings(ui);
 
   lk_window_destroy(lw->win);
   free(lw);
 }
-
-/* ---- Helper: extract lcl_lk_window from opaque ---- */
 
 static struct lcl_lk_window *get_lk_window(lcl_interp *interp, lcl_value *val) {
   struct lcl_lk_window *lw = NULL;
@@ -5514,7 +5056,6 @@ static struct lcl_lk_window *get_lk_window(lcl_interp *interp, lcl_value *val) {
   return lw;
 }
 
-/* Lk::window_create [title, ?w, ?h, ?font, ?size] -> opaque<lk_window> */
 static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_window_cfg cfg;
@@ -5582,6 +5123,7 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   lw->win = win;
   lw->interp = interp;
   lw->event_handler = NULL;
+  lw->dialog_fallback = NULL;
 
   live_ui_add(lk_window_ui(win));
   *out = lcl_opaque_new(lw, LK_WIN_TYPE, lcl_lk_window_finalizer);
@@ -5589,11 +5131,15 @@ static lcl_return_code c_lk_window_create(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_destroy [win] -> "" */
 static void window_destroy_now(struct lcl_lk_window *lw) {
   if (lw->event_handler) {
     lcl_ref_dec(lw->event_handler);
     lw->event_handler = NULL;
+  }
+
+  if (lw->dialog_fallback) {
+    lcl_ref_dec(lw->dialog_fallback);
+    lw->dialog_fallback = NULL;
   }
 
   ui_teardown_bindings(lk_window_ui(lw->win));
@@ -5601,22 +5147,12 @@ static void window_destroy_now(struct lcl_lk_window *lw) {
   lw->win = NULL;
 }
 
-/* ---- Deferred run: hosts that cannot block (include/lcl-lk.h) ----
- *
- * A browser page has no way to sit inside Lk::window_run.  With
- * deferral on, window_run records the window (retained, so the
- * script dropping its handle cannot destroy it mid-run) and the view
- * proc and returns; a window_destroy on that window is held back
- * too, since the DSL's `app` issues one right after the run.  The
- * host then calls lcl_lk_run_step from its frame callback until it
- * returns 0, which releases everything and performs the held
- * destroy.  One run at a time: a page has one main loop. */
 static int g_run_deferred = 0;
 
 static struct {
-  lcl_value *win_val; /* retained opaque<lk_window>; NULL = nothing pending */
+  lcl_value *win_val;
   struct lcl_lk_window *lw;
-  struct lcl_lk_frame_ctx frame; /* view_fn retained */
+  struct lcl_lk_frame_ctx frame;
   int destroy_after;
 } g_pending;
 
@@ -5675,7 +5211,7 @@ static lcl_return_code c_lk_window_destroy(lcl_interp *interp, int argc,
   }
 
   if (g_pending.win_val && g_pending.lw == lw) {
-    /* Held until the deferred run ends (pending_release). */
+
     g_pending.destroy_after = 1;
   } else if (lw->win) {
     window_destroy_now(lw);
@@ -5686,7 +5222,6 @@ static lcl_return_code c_lk_window_destroy(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_run [win, view_proc] -> "" (blocks until close) */
 static lcl_return_code c_lk_window_run(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5709,7 +5244,6 @@ static lcl_return_code c_lk_window_run(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* Install event handler bridge if a handler has been set */
   if (lw->event_handler) {
     lk_window_set_event_handler(lw->win, lcl_lk_event_handler, lw);
   }
@@ -5745,7 +5279,6 @@ static lcl_return_code c_lk_window_run(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_step [win, view_proc] -> 1 (keep going) / 0 (stopped) */
 static lcl_return_code c_lk_window_step(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5785,7 +5318,6 @@ static lcl_return_code c_lk_window_step(lcl_interp *interp, int argc,
   return *out ? LCL_RC_OK : LCL_RC_ERR;
 }
 
-/* Lk::window_ui [win] -> opaque<lk_ui> */
 static lcl_return_code c_lk_window_ui(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5804,13 +5336,12 @@ static lcl_return_code c_lk_window_ui(lcl_interp *interp, int argc,
   }
 
   ui = lk_window_ui(lw->win);
-  /* UI is owned by window, no finalizer */
+
   *out = lcl_opaque_new(ui, LK_UI_TYPE, NULL);
 
   return LCL_RC_OK;
 }
 
-/* Lk::window_set_event_handler [win, handler_proc] -> "" */
 static lcl_return_code c_lk_window_set_event_handler(lcl_interp *interp,
                                                      int argc, lcl_value **argv,
                                                      lcl_value **out) {
@@ -5834,24 +5365,18 @@ static lcl_return_code c_lk_window_set_event_handler(lcl_interp *interp,
     return LCL_RC_ERR;
   }
 
-  /* Release previous handler if any */
   if (lw->event_handler) {
     lcl_ref_dec(lw->event_handler);
   }
 
   lw->event_handler = lcl_ref_inc(argv[1]);
 
-  /* If already running, install immediately; otherwise window_run
-   * will install it before entering the loop. */
   lk_window_set_event_handler(lw->win, lcl_lk_event_handler, lw);
 
   *out = lcl_string_new("");
   return LCL_RC_OK;
 }
 
-/* Lk::register_font [win, path] -> font_id (int; 0 = failure).
- * Mirrors the C contract: bad arguments are errors, but an unreadable
- * path returns 0 rather than erroring. */
 static lcl_return_code c_lk_register_font(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5879,11 +5404,6 @@ static lcl_return_code c_lk_register_font(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_icon [win, path] -> 1 | 0.
- * Sets the window icon from an image file (PNG with SDL3_image; BMP
- * always).  Mirrors lk_window_set_icon: bad arguments are errors, an
- * unreadable/undecodable file returns 0 -- the window keeps its
- * previous icon. */
 static lcl_return_code c_lk_window_icon(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5908,9 +5428,6 @@ static lcl_return_code c_lk_window_icon(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_screenshot [win path] -> 1 | 0.  Queues a screenshot
- * saved at the end of the current run-loop iteration (see
- * lk_window_request_screenshot); .png via SDL3_image else BMP. */
 static lcl_return_code c_lk_window_screenshot(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
@@ -5944,8 +5461,6 @@ static lcl_return_code c_lk_window_screenshot(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_stop [win] -> "".  Leaves Lk::window_run after the
- * current frame. */
 static lcl_return_code c_lk_window_stop(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -5968,13 +5483,54 @@ static lcl_return_code c_lk_window_stop(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::window_icon_hex [win, hex] -> 1 | 0.
- * Sets the window icon from an encoded image (PNG/BMP, same decoders
- * as Lk::window_icon) given as a hex string -- the script-side route
- * for embedding an icon in a single-file script or static binary,
- * since Lcl strings cannot carry raw bytes.  Whitespace between hex
- * digits is ignored; any other character, an odd digit count, or an
- * empty payload is a hard error.  Returns 0 only when decoding fails. */
+static lcl_return_code c_lk_window_caps(lcl_interp *interp, int argc,
+                                        lcl_value **argv, lcl_value **out) {
+  static const struct {
+    lk_u32 bit;
+    const char *name;
+  } names[] = {
+      {LK_WCAP_FILE_DIALOGS, "file_dialogs"},
+      {LK_WCAP_ICON,         "icon"        },
+      {LK_WCAP_CLIPBOARD,    "clipboard"   },
+      {LK_WCAP_IMAGE_IO,     "image_io"    },
+      {LK_WCAP_POINTER,      "pointer"     },
+      {LK_WCAP_KEY_UP,       "key_up"      },
+      {LK_WCAP_KEY_CHORDS,   "key_chords"  },
+  };
+  struct lcl_lk_window *lw;
+  lcl_value *list;
+  lk_u32 caps;
+  size_t i;
+
+  if (argc != 1) {
+    lcl_set_error(interp, "Lk::window_caps: expected 1 argument (win)");
+
+    return LCL_RC_ERR;
+  }
+
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
+
+  caps = lk_window_caps(lw->win);
+  list = lcl_list_new();
+
+  for (i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+    if (caps & names[i].bit) {
+      lcl_value *v = lcl_string_new(names[i].name);
+
+      lcl_list_push(&list, v);
+      lcl_ref_dec(v);
+    }
+  }
+
+  *out = list;
+
+  return LCL_RC_OK;
+}
+
 static lcl_return_code c_lk_window_icon_hex(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_window *lw;
@@ -6018,13 +5574,40 @@ static lcl_return_code c_lk_window_icon_hex(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ---- Image file IO + native file dialogs (image track I6) ---- */
+static lcl_return_code c_lk_file_dialog_fallback(lcl_interp *interp, int argc,
+                                                 lcl_value **argv,
+                                                 lcl_value **out) {
+  struct lcl_lk_window *lw;
 
-/* Lk::image_load [ui path] -> opaque<lk_image>.
- * Decodes BMP always, PNG & co. under SDL3_image; the result is a
- * fresh app-owned image registered like Lk::image_new's.  Unlike
- * Lk::window_icon, an unreadable/undecodable file is a HARD error —
- * an opaque-returning proc has no clean 0 return; catch it. */
+  if (argc != 2) {
+    lcl_set_error(interp,
+                  "Lk::file_dialog_fallback: expected 2 arguments (win, proc)");
+
+    return LCL_RC_ERR;
+  }
+
+  lw = get_lk_window(interp, argv[0]);
+
+  if (!lw) {
+    return LCL_RC_ERR;
+  }
+
+  if (!lcl_is_callable(argv[1])) {
+    lcl_set_error(interp, "Lk::file_dialog_fallback: expected callable");
+
+    return LCL_RC_ERR;
+  }
+
+  if (lw->dialog_fallback) {
+    lcl_ref_dec(lw->dialog_fallback);
+  }
+
+  lw->dialog_fallback = lcl_ref_inc(argv[1]);
+  *out = lcl_string_new("");
+
+  return LCL_RC_OK;
+}
+
 static lcl_return_code c_lk_image_load(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -6087,11 +5670,6 @@ static int str_ieq(const char *a, const char *b) {
   return *a == '\0' && *b == '\0';
 }
 
-/* Lk::image_save [img path] -> 1 | 0.
- * Format from the extension (case-insensitive .bmp / .png — the
- * extension IS the format, a mismatch would lie on disk).  An
- * unknown extension is a hard error; an IO failure (or .png without
- * SDL3_image) returns 0, the Lk::window_icon contract. */
 static lcl_return_code c_lk_image_save(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_image *iw;
@@ -6137,17 +5715,9 @@ static lcl_return_code c_lk_image_save(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ---- File dialog bridge ----
- *
- * The C completion runs on the main thread from inside the window's
- * run loop (lk-sdl.h contract); this bridge builds the path list and
- * calls the retained script handler.  Known limitation: a window
- * destroyed while its dialog is pending never gets the completion,
- * so that ctx (and its retained handler) lives until process exit. */
-
 struct lcl_dialog_ctx {
   lcl_interp *interp;
-  lcl_value *handler; /* retained */
+  lcl_value *handler;
 };
 
 static void lcl_dialog_done(void *ud, const char *const *paths, int npaths) {
@@ -6181,11 +5751,6 @@ static void lcl_dialog_done(void *ud, const char *const *paths, int npaths) {
 
 #define LCL_DIALOG_MAX_FILTERS 16
 
-/* Shared body of Lk::open_file_dialog / Lk::save_file_dialog:
- * [win proc ?filters ?default] where filters is a list of
- * (name pattern) 2-lists (SDL ';'-separated extension patterns,
- * e.g. ("Images" "bmp;png")).  Returns immediately; proc is called
- * later with a list of path strings (empty = cancelled). */
 static lcl_return_code dialog_common(lcl_interp *interp, const char *proc,
                                      int save, int argc, lcl_value **argv,
                                      lcl_value **out) {
@@ -6251,8 +5816,6 @@ static lcl_return_code dialog_common(lcl_interp *interp, const char *proc,
         return LCL_RC_ERR;
       }
 
-      /* Strings borrowed from the argument list — valid for this
-       * call; lk-sdl deep-copies before returning. */
       filters[nfilters].name = lcl_value_to_string(lcl_list_peek(elem, 0));
       filters[nfilters].pattern = lcl_value_to_string(lcl_list_peek(elem, 1));
       nfilters++;
@@ -6265,6 +5828,43 @@ static lcl_return_code dialog_common(lcl_interp *interp, const char *proc,
     if (def_loc && !*def_loc) {
       def_loc = NULL;
     }
+  }
+
+  if (!(lk_window_caps(lw->win) & LK_WCAP_FILE_DIALOGS) &&
+      lw->dialog_fallback) {
+
+    lcl_value *args[4];
+    lcl_value *result = NULL;
+    lcl_value *empty_filters = NULL;
+    lcl_value *empty_default = NULL;
+    lcl_return_code rc;
+
+    args[0] = lcl_int_new(save);
+    args[1] = argv[1];
+    args[2] = argc >= 3 ? argv[2] : (empty_filters = lcl_list_new());
+    args[3] = argc == 4 ? argv[3] : (empty_default = lcl_string_new(""));
+    rc = lcl_call_proc(interp, lw->dialog_fallback, 4, args, &result);
+    lcl_ref_dec(args[0]);
+
+    if (empty_filters) {
+      lcl_ref_dec(empty_filters);
+    }
+
+    if (empty_default) {
+      lcl_ref_dec(empty_default);
+    }
+
+    if (result) {
+      lcl_ref_dec(result);
+    }
+
+    if (rc != LCL_RC_OK) {
+      return LCL_RC_ERR;
+    }
+
+    *out = lcl_string_new("");
+
+    return LCL_RC_OK;
   }
 
   ctx = (struct lcl_dialog_ctx *)malloc(sizeof(*ctx));
@@ -6304,15 +5904,8 @@ static lcl_return_code c_lk_save_file_dialog(lcl_interp *interp, int argc,
   return dialog_common(interp, "Lk::save_file_dialog", 1, argc, argv, out);
 }
 
-#endif /* LK_HAVE_SDL */
+#endif
 
-/* ============================================================================
- * Overlays
- * ============================================================================
- */
-
-/* Lk::overlay_count [ui] — number of overlays on the ui's overlay
- * stack (headless-testable introspection; widgets drive push/pop). */
 static lcl_return_code c_lk_overlay_count(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -6332,19 +5925,6 @@ static lcl_return_code c_lk_overlay_count(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::overlay_push [ui dict] — push an overlay from app code.
- *
- * Dict keys:
- *   kind               required: "dropdown_popup"|"tooltip"|
- *                      "context_menu"|"modal"
- *   anchor             optional: "below"|"above"|"at_cursor"|"center"
- *                      (default: "center" for modal, else "below")
- *   owner_id           optional node id string (interned)
- *   content_root_id    optional node id string (interned) — a
- *                      UIP_HIDDEN subtree laid out at the anchor
- *   dismiss_on_outside optional bool (default: modal 0, else 1)
- *   traps_focus        optional bool (default: modal 1, else 0)
- */
 static lcl_return_code c_lk_overlay_push(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -6465,7 +6045,6 @@ static lcl_return_code c_lk_overlay_push(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::overlay_pop [ui] — pop the topmost overlay (no-op when empty). */
 static lcl_return_code c_lk_overlay_pop(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -6486,11 +6065,6 @@ static lcl_return_code c_lk_overlay_pop(lcl_interp *interp, int argc,
 
   return LCL_RC_OK;
 }
-
-/* ============================================================================
- * Clipboard
- * ============================================================================
- */
 
 static lcl_return_code c_lk_clipboard_get(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
@@ -6541,13 +6115,6 @@ static lcl_return_code c_lk_clipboard_set(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Editor track: documents (14)
- * ============================================================================
- */
-
-/* ---- Typed wrapper getters (generic messages, get_lk_window style) ---- */
-
 static struct lcl_lk_doc *get_doc(lcl_interp *interp, lcl_value *val) {
   struct lcl_lk_doc *dw = NULL;
 
@@ -6596,8 +6163,6 @@ static struct lcl_lk_annot *get_annot(lcl_interp *interp, lcl_value *val) {
   return aw;
 }
 
-/* Lcl string from a non-terminated byte run (delta bytes are only
- * valid during the notification; this copies them into the value). */
 static lcl_value *lcl_string_from_bytes(const char *p, lk_u32 len) {
   char *buf;
   lcl_value *v;
@@ -6620,7 +6185,6 @@ static lcl_value *lcl_string_from_bytes(const char *p, lk_u32 len) {
   return v;
 }
 
-/* Lk::doc_new [?text] -> opaque<lk_document> */
 static lcl_return_code c_lk_doc_new(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6662,7 +6226,6 @@ static lcl_return_code c_lk_doc_new(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_text [doc] -> string (the whole contents) */
 static lcl_return_code c_lk_doc_text(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6698,7 +6261,6 @@ static lcl_return_code c_lk_doc_text(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_len [doc] -> int */
 static lcl_return_code c_lk_doc_len(lcl_interp *interp, int argc,
                                     lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6720,7 +6282,6 @@ static lcl_return_code c_lk_doc_len(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_line_count [doc] -> int */
 static lcl_return_code c_lk_doc_line_count(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6742,11 +6303,6 @@ static lcl_return_code c_lk_doc_line_count(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_pos_to_line [doc, pos] -> 0-based line index.
- *
- * pos at or past the document end resolves to the last line
- * (mirroring the C API); the 1-based display line is script-side
- * arithmetic. */
 static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6777,10 +6333,6 @@ static lcl_return_code c_lk_doc_pos_to_line(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_line_start [doc, line] -> byte offset of the line's start.
- *
- * line is 0-based.  Out-of-range lines are hard errors (the C API's
- * silent 0 is indistinguishable from line 0's start). */
 static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6817,10 +6369,6 @@ static lcl_return_code c_lk_doc_line_start(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_line_end [doc, line] -> byte offset of the line's end (its
- * \n, exclusive; the document length for the last line).
- *
- * line is 0-based; out-of-range lines are hard errors. */
 static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6856,20 +6404,6 @@ static lcl_return_code c_lk_doc_line_end(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_char_col [doc, pos] -> 1-based CHARACTER column.
- *
- * Column definition (docs/editor-wrap.md section 8, pinned): the
- * 1-based codepoint count from the line start to pos.  A tab counts
- * as ONE character; this is never a byte column and never a
- * visual/tab-expanded column (that is a different, future notion).
- * Script-side counting cannot be exact (String::length is
- * byte-based), hence this proc.
- *
- * Implementation: count UTF-8 lead bytes ((b & 0xC0) != 0x80)
- * between lk_doc_line_start(pos's line) and pos via chunked
- * lk_doc_get_text reads -- public API only, no core internals.
- * pos must be in [0, doc len] (codepoint-boundary alignment is the
- * caller's business; the cursor always is). */
 static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6918,7 +6452,7 @@ static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
     got = lk_doc_get_text(dw->doc, at, buf, want);
 
     if (got == 0) {
-      break; /* defensive: cannot happen for in-range pos */
+      break;
     }
 
     for (i = 0; i < got; i++) {
@@ -6935,14 +6469,6 @@ static lcl_return_code c_lk_doc_char_col(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_find [doc, needle, ?from] -> first match position >= from,
- * or -1 when not found.
- *
- * Literal forward byte search (no patterns); from defaults to 0.  A
- * from past the document end is simply not-found (-1), so the
- * search-next idiom -- search again from hit + 1 -- never errors at
- * the end of the document.  An empty needle is a hard error (the C
- * API's silent 0 would be indistinguishable from not-found). */
 static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -6990,11 +6516,6 @@ static lcl_return_code c_lk_doc_find(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_revision [doc] -> "hi:lo" (e.g. "0:42").
- *
- * The lk_revision {hi,lo} pair encoded as a deterministic string —
- * equality-comparable from script ([== $r1 $r2]); nothing more.  Do
- * not do arithmetic on it. */
 static lcl_return_code c_lk_doc_revision(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -7020,7 +6541,6 @@ static lcl_return_code c_lk_doc_revision(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_insert [doc, pos, text] -> "" */
 static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -7061,7 +6581,6 @@ static lcl_return_code c_lk_doc_insert(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_delete [doc, pos, len] -> "" */
 static lcl_return_code c_lk_doc_delete(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -7106,15 +6625,6 @@ static lcl_return_code c_lk_doc_delete(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_transact [doc, body] -> ""
- *
- * Brackets the body in one lk_doc_begin/lk_doc_commit transaction:
- * every Lk::doc_insert/Lk::doc_delete inside becomes one committed
- * transaction — one notification, one undo step.  The commit runs
- * even if the body errors (edits made before the error stay applied,
- * as one transaction), then the body's error propagates.  Nesting
- * doc_transact on the same document is a programming error (the C
- * layer debug-asserts nested begin). */
 static lcl_return_code c_lk_doc_transact(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -7145,15 +6655,13 @@ static lcl_return_code c_lk_doc_transact(lcl_interp *interp, int argc,
   }
 
   if (rc != LCL_RC_OK) {
-    return LCL_RC_ERR; /* interp error already set by the body */
+    return LCL_RC_ERR;
   }
 
   *out = lcl_string_new("");
 
   return LCL_RC_OK;
 }
-
-/* ---- Document subscription bridge ---- */
 
 static void lcl_doc_sub_bridge(void *ud, const lk_document *d,
                                const lk_doc_delta *deltas, lk_u32 n) {
@@ -7182,8 +6690,6 @@ static void lcl_doc_sub_bridge(void *ud, const lk_document *d,
     lcl_dict_put(&dict, "inserted_len", v);
     lcl_ref_dec(v);
 
-    /* Delta byte pointers are valid only during this notification —
-     * copied into Lcl strings here, so the script may keep them. */
     v = lcl_string_from_bytes(dl->deleted, dl->deleted_len);
     lcl_dict_put(&dict, "deleted", v);
     lcl_ref_dec(v);
@@ -7213,9 +6719,6 @@ static void lcl_doc_sub_bridge(void *ud, const lk_document *d,
   lcl_ref_dec(list);
 }
 
-/* Lk::doc_subscribe [doc, proc] -> subscription id (int).
- * The proc receives ONE argument: a list of delta dicts, each with
- * start, deleted_len, inserted_len, deleted, inserted, origin. */
 static lcl_return_code c_lk_doc_subscribe(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -7268,7 +6771,6 @@ static lcl_return_code c_lk_doc_subscribe(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::doc_unsubscribe [doc, id] -> "" */
 static lcl_return_code c_lk_doc_unsubscribe(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_doc *dw;
@@ -7312,15 +6814,6 @@ static lcl_return_code c_lk_doc_unsubscribe(lcl_interp *interp, int argc,
   return LCL_RC_ERR;
 }
 
-/* ============================================================================
- * Editor track: edit history (5)
- * ============================================================================
- */
-
-/* Lk::history_new [?doc] -> opaque<lk_edit_history>.
- * With a doc argument the history attaches immediately (records every
- * committed transaction).  Without one it stays detached until an
- * Lk::editor_new call wires it to that editor's document. */
 static lcl_return_code c_lk_history_new(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_history *hw;
@@ -7373,7 +6866,6 @@ static lcl_return_code c_lk_history_new(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::history_undo [hist, doc] -> 1 if a step was undone, else 0 */
 static lcl_return_code c_lk_history_undo(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_history *hw;
@@ -7402,7 +6894,6 @@ static lcl_return_code c_lk_history_undo(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::history_redo [hist, doc] -> 1 if a step was redone, else 0 */
 static lcl_return_code c_lk_history_redo(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_history *hw;
@@ -7431,7 +6922,6 @@ static lcl_return_code c_lk_history_redo(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::history_can_undo [hist] -> 0/1 */
 static lcl_return_code c_lk_history_can_undo(lcl_interp *interp, int argc,
                                              lcl_value **argv,
                                              lcl_value **out) {
@@ -7454,7 +6944,6 @@ static lcl_return_code c_lk_history_can_undo(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::history_can_redo [hist] -> 0/1 */
 static lcl_return_code c_lk_history_can_redo(lcl_interp *interp, int argc,
                                              lcl_value **argv,
                                              lcl_value **out) {
@@ -7477,7 +6966,6 @@ static lcl_return_code c_lk_history_can_redo(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::history_mark_saved [hist] -> "" */
 static lcl_return_code c_lk_history_mark_saved(lcl_interp *interp, int argc,
                                                lcl_value **argv,
                                                lcl_value **out) {
@@ -7501,7 +6989,6 @@ static lcl_return_code c_lk_history_mark_saved(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::history_at_saved [hist] -> 0/1 */
 static lcl_return_code c_lk_history_at_saved(lcl_interp *interp, int argc,
                                              lcl_value **argv,
                                              lcl_value **out) {
@@ -7524,16 +7011,6 @@ static lcl_return_code c_lk_history_at_saved(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Editor track: editors (8)
- * ============================================================================
- */
-
-/* Lk::editor_new [ui, doc, ?hist] -> opaque<lk_editor>.
- * Registers the editor in the ui's resource table; the wrapper's
- * finalizer releases the registration before destroying the editor.
- * A detached history is attached to the document here; a history
- * already attached to a DIFFERENT document is an error. */
 static lcl_return_code c_lk_editor_new(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -7606,9 +7083,6 @@ static lcl_return_code c_lk_editor_new(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* Attach a still-detached history to this document (v1: one history
-   * per document; the attach is recorded on the history wrapper so a
-   * second editor over the same doc+hist does not re-subscribe). */
   if (hw && !hw->doc) {
     lk_history_attach(hw->hist, dw->doc);
     hw->doc = dw->doc;
@@ -7628,7 +7102,6 @@ static lcl_return_code c_lk_editor_new(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_cursor [editor] -> byte offset (int) */
 static lcl_return_code c_lk_editor_cursor(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -7650,7 +7123,6 @@ static lcl_return_code c_lk_editor_cursor(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_set_cursor [editor, pos] -> "" */
 static lcl_return_code c_lk_editor_set_cursor(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
@@ -7683,12 +7155,6 @@ static lcl_return_code c_lk_editor_set_cursor(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_scroll_to_cursor [editor] -> "" -- request that the next
- * render bring the cursor row into view, without moving the cursor.
- * A foreign transaction (a script append, another view's edit) carries
- * the cursor along but deliberately does NOT scroll: a document
- * changing elsewhere must not yank the reader's viewport.  A caller
- * that WANTS to follow -- a log tailing its own output -- asks here. */
 static lcl_return_code c_lk_editor_scroll_to_cursor(lcl_interp *interp,
                                                     int argc, lcl_value **argv,
                                                     lcl_value **out) {
@@ -7712,7 +7178,6 @@ static lcl_return_code c_lk_editor_scroll_to_cursor(lcl_interp *interp,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_selection [editor] -> (start end) or () when none */
 static lcl_return_code c_lk_editor_selection(lcl_interp *interp, int argc,
                                              lcl_value **argv,
                                              lcl_value **out) {
@@ -7752,8 +7217,6 @@ static lcl_return_code c_lk_editor_selection(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_carets [editor] -> list of cursor positions (ints), one
- * per caret in document order (multi-cursor stage E; always >= 1). */
 static lcl_return_code c_lk_editor_carets(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -7791,9 +7254,6 @@ static lcl_return_code c_lk_editor_carets(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_selections [editor] -> one entry PER CARET, index-
- * parallel to Lk::editor_carets: a (start end) 2-list, or the empty
- * list () for a caret with no selection. */
 static lcl_return_code c_lk_editor_selections(lcl_interp *interp, int argc,
                                               lcl_value **argv,
                                               lcl_value **out) {
@@ -7843,15 +7303,6 @@ static lcl_return_code c_lk_editor_selections(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_wrap [editor, mode] -> ""
- *
- * mode is "none" | "character" | "word" (docs/editor-wrap.md section
- * 5).  An unknown name is a hard error listing the supported modes,
- * DSL-v2 style; an engine rejection (allocation failure) is a hard
- * error too. */
-/* Lk::editor_set_editable [editor] [0/1] -- read-only policy: 0
- * rejects USER mutations (insert/delete/cut/paste/undo/redo) at the
- * editor; document-level edits stay unaffected. */
 static lcl_return_code c_lk_editor_set_editable(lcl_interp *interp, int argc,
                                                 lcl_value **argv,
                                                 lcl_value **out) {
@@ -7883,7 +7334,6 @@ static lcl_return_code c_lk_editor_set_editable(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_editable [editor] -> 0/1 */
 static lcl_return_code c_lk_editor_editable(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -7955,8 +7405,6 @@ static lcl_return_code c_lk_editor_wrap(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_wrap_get [editor] -> the mode name ("none" | "character"
- * | "word") */
 static lcl_return_code c_lk_editor_wrap_get(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -7990,7 +7438,6 @@ static lcl_return_code c_lk_editor_wrap_get(lcl_interp *interp, int argc,
   return LCL_RC_ERR;
 }
 
-/* Joined command-name list for Lk::editor_command error messages. */
 static const char *ed_cmd_known(void) {
   static char buf[512];
   static int built = 0;
@@ -8016,20 +7463,6 @@ static const char *ed_cmd_known(void) {
   return buf;
 }
 
-/* Lk::editor_command [editor, cmd, ?args...] -> 1 if the command did
- * anything, else 0.
- *
- * cmd is an LK_ED_* name with the prefix stripped and lowercased
- * ("insert_text", "move_left", "select_all", "undo", ...).  Per-
- * command args: insert_text takes the text; set_cursor takes pos and
- * an optional literal "extend"; scroll_lines takes a signed line
- * count; add_cursor_at takes a position (toggle -- a caret already
- * exactly there is removed, never below one); motion commands accept
- * an optional literal "select" flag (extends the selection);
- * everything else -- including add_cursor_above/below,
- * select_next_match, collapse_cursors (multi-cursor stage E) --
- * takes no args.  Unknown commands and malformed args are hard
- * errors. */
 static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -8142,13 +7575,10 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
   }
 
   default:
-    /* Motion range: LK_ED_MOVE_LEFT..MOVE_PAGE_DOWN are contiguous;
-     * the visual-row pair was appended after the v1 enum tail
-     * (recorded transaction origins must not shift), so it sits
-     * outside that range and is matched explicitly. */
+
     if ((cmd_val >= LK_ED_MOVE_LEFT && cmd_val <= LK_ED_MOVE_PAGE_DOWN) ||
         cmd_val == LK_ED_MOVE_ROW_START || cmd_val == LK_ED_MOVE_ROW_END) {
-      /* Motion command: optional literal "select" flag. */
+
       if (extra > 1 ||
           (extra == 1 && strcmp(lcl_value_to_string(argv[2]), "select") != 0)) {
         lcl_set_error(interp,
@@ -8175,9 +7605,6 @@ static lcl_return_code c_lk_editor_command(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Parse one span dict (#{start N end N ?fg (r g b ?a?)? ?bg ...?
- * ?underline 1?}) into *sp.  Returns 1 on success, 0 with the interp
- * error set. */
 static int span_from_dict(lcl_interp *interp, lcl_value *dict,
                           lk_edit_span *sp) {
   lcl_value *v;
@@ -8192,7 +7619,6 @@ static int span_from_dict(lcl_interp *interp, lcl_value *dict,
     return 0;
   }
 
-  /* Unknown keys are hard errors (DSL v2 philosophy). */
   {
     lcl_value *keys = NULL;
 
@@ -8303,15 +7729,6 @@ static int span_from_dict(lcl_interp *interp, lcl_value *dict,
   return 1;
 }
 
-/* Lk::editor_set_spans [editor, doc, spans] -> ""
- *
- * spans is a list of span dicts (see span_from_dict); an empty list
- * clears.  The snapshot is stamped with the document's CURRENT
- * revision and the spans' min/max range — a simplification of the
- * docs/editor.md section 11 snapshot dict that is equivalent for
- * synchronous script producers (the producer runs and delivers within
- * one frame, so stamp-at-call == stamp-at-produce).  Spans must be
- * sorted by start and non-overlapping. */
 static lcl_return_code c_lk_editor_set_spans(lcl_interp *interp, int argc,
                                              lcl_value **argv,
                                              lcl_value **out) {
@@ -8381,7 +7798,7 @@ static lcl_return_code c_lk_editor_set_spans(lcl_interp *interp, int argc,
     if (!span_from_dict(interp, sv, &spans[i])) {
       free(spans);
 
-      return LCL_RC_ERR; /* error set by span_from_dict */
+      return LCL_RC_ERR;
     }
 
     if (i > 0 && spans[i].start < spans[i - 1].end) {
@@ -8408,12 +7825,6 @@ static lcl_return_code c_lk_editor_set_spans(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Editor track: annotation stores (10)
- * ============================================================================
- */
-
-/* Lk::annot_store_new -> opaque<lk_annot_store> */
 static lcl_return_code c_lk_annot_store_new(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8453,8 +7864,6 @@ static lcl_return_code c_lk_annot_store_new(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_attach [store, doc] -> "" (subscribes; anchors then track
- * every committed transaction).  Re-attaching is an error. */
 static lcl_return_code c_lk_annot_attach(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8493,8 +7902,6 @@ static lcl_return_code c_lk_annot_attach(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_add [store, start, end, layer, ?meta-dict] -> record id.
- * meta-dict keys/values become the record's metadata (all strings). */
 static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
                                       lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8570,8 +7977,6 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
         return LCL_RC_ERR;
       }
 
-      /* Borrowed from the dict (peek): valid for this call, and
-       * lk_annot_add copies every string before returning. */
       for (i = 0; i < nk; i++) {
         lcl_value *kv = lcl_list_peek(keys_list, i);
         lcl_value *vv =
@@ -8608,7 +8013,6 @@ static lcl_return_code c_lk_annot_add(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_remove [store, id] -> 1 if removed, 0 if not found */
 static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8635,8 +8039,6 @@ static lcl_return_code c_lk_annot_remove(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_span [store, id] -> (start end); error if the record is
- * gone. */
 static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8683,8 +8085,6 @@ static lcl_return_code c_lk_annot_span(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_meta [store, id, key] -> value string ("" when the key is
- * absent); error if the record is gone. */
 static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
                                        lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8729,8 +8129,6 @@ static lcl_return_code c_lk_annot_meta(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_layer [store, id] -> the record's layer name; error if
- * the record is gone. */
 static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
                                         lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8766,9 +8164,6 @@ static lcl_return_code c_lk_annot_layer(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_meta_all [store, id] -> dict of every metadata key/value
- * on the record (empty dict when it has none); error if the record is
- * gone.  The single-key Lk::annot_meta stays for point reads. */
 static lcl_return_code c_lk_annot_meta_all(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8816,7 +8211,6 @@ static lcl_return_code c_lk_annot_meta_all(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Marshal a query's ids into an Lcl list (frees nothing). */
 static lcl_value *annot_query_to_list(const lk_annot_query *q) {
   lcl_value *list = lcl_list_new();
   lk_u32 i;
@@ -8831,7 +8225,6 @@ static lcl_value *annot_query_to_list(const lk_annot_query *q) {
   return list;
 }
 
-/* Lk::annot_in_range [store, start, end, ?layer] -> list of ids */
 static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8875,7 +8268,6 @@ static lcl_return_code c_lk_annot_in_range(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_at [store, pos, ?layer] -> list of ids */
 static lcl_return_code c_lk_annot_at(lcl_interp *interp, int argc,
                                      lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8918,7 +8310,6 @@ static lcl_return_code c_lk_annot_at(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_by_layer [store, layer] -> list of ids */
 static lcl_return_code c_lk_annot_by_layer(lcl_interp *interp, int argc,
                                            lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -8953,7 +8344,6 @@ static lcl_return_code c_lk_annot_by_layer(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_layer_register [store, name] -> "" */
 static lcl_return_code c_lk_annot_layer_register(lcl_interp *interp, int argc,
                                                  lcl_value **argv,
                                                  lcl_value **out) {
@@ -8988,9 +8378,6 @@ static lcl_return_code c_lk_annot_layer_register(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_layer_priority [store, layer, priority] -> ""
- * Presentation precedence for a layer (default 0; higher wins).
- * Auto-registers the layer. */
 static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
                                                  lcl_value **argv,
                                                  lcl_value **out) {
@@ -9031,9 +8418,6 @@ static lcl_return_code c_lk_annot_layer_priority(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_store_seq [store] -> int
- * Monotonic count of record-set mutations (add/remove/clear/present,
- * delete-sweep).  Compare for change. */
 static lcl_return_code c_lk_annot_store_seq(lcl_interp *interp, int argc,
                                             lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -9055,8 +8439,6 @@ static lcl_return_code c_lk_annot_store_seq(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_layers [store] -> (name ...)
- * Registered layer names in registration order. */
 static lcl_return_code c_lk_annot_layers(lcl_interp *interp, int argc,
                                          lcl_value **argv, lcl_value **out) {
   struct lcl_lk_annot *aw;
@@ -9091,15 +8473,6 @@ static lcl_return_code c_lk_annot_layers(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Range presentations (weft-surface track, S1)
- * ============================================================================
- */
-
-/* The store's release hook: fires when a presentation value detaches.
- * For lcl-value resources this releases the registration and the Lcl
- * retain; a ui that was already destroyed explicitly is skipped (the
- * table died with it — same live_ui discipline as editors). */
 static void lcl_annot_pres_release(void *ud, lk_value v) {
   struct lcl_lk_annot *aw = (struct lcl_lk_annot *)ud;
   lk_resource_ref ref = lk_v_resource_ref(v);
@@ -9120,16 +8493,6 @@ static void lcl_annot_pres_release(void *ud, lk_value v) {
   pres_box_free(box);
 }
 
-/* Lk::annot_present [ui, store, id, ptype, value] -> ""
- *
- * Attaches a presentation to annotation id: ptype is interned in the
- * ui's table; value may be ANY Lcl value (dicts, closures, ...) — it
- * is retained and registered in the ui's resource table under the
- * "lcl-value" type, and the record carries the UIV_RESOURCE ref.
- * Handlers receive the value back intact (command_to_dict unwraps).
- * A store's presentations are bound to ONE ui (the first call's);
- * replacing / removing / clearing / destroying releases the retain
- * through the store's release hook, installed here on first use. */
 static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   lk_ui *ui = NULL;
@@ -9212,7 +8575,6 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
     return LCL_RC_ERR;
   }
 
-  /* First use binds the store to this ui and installs the hook. */
   if (!aw->pres_ui) {
     aw->pres_ui = ui;
     aw->ui_val = lcl_ref_inc(argv[0]);
@@ -9236,12 +8598,6 @@ static lcl_return_code c_lk_annot_present(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::annot_presentation [ui, store, id] -> #{ptype <name> value <v>}
- * or "" when the annotation carries no presentation.  The inverse of
- * annot_present: a value wrapped by annot_present comes back as the
- * retained Lcl value itself; any other lk_value marshals context-free.
- * Lets a caller copy presentations between stores (weft's derivation
- * publish: staged rows -> output buffer) without re-deriving them. */
 static lcl_return_code c_lk_annot_presentation(lcl_interp *interp, int argc,
                                                lcl_value **argv,
                                                lcl_value **out) {
@@ -9320,9 +8676,6 @@ static lcl_return_code c_lk_annot_presentation(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_pos_at [editor, x, y] -> byte position, or -1 when the
- * point is outside the editor's laid-out rect or no layout snapshot
- * exists (docs/weft-surface.md section 1.5 pinned contract). */
 static lcl_return_code c_lk_editor_pos_at(lcl_interp *interp, int argc,
                                           lcl_value **argv, lcl_value **out) {
   struct lcl_lk_editor *ew;
@@ -9358,10 +8711,6 @@ static lcl_return_code c_lk_editor_pos_at(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* Lk::editor_presentations [editor, store] -> ""
- * Installs the store's presentation source on the editor (the annot
- * adapter).  The editor wrapper retains the store value so the source
- * can never dangle. */
 static lcl_return_code c_lk_editor_presentations(lcl_interp *interp, int argc,
                                                  lcl_value **argv,
                                                  lcl_value **out) {
@@ -9402,16 +8751,10 @@ static lcl_return_code c_lk_editor_presentations(lcl_interp *interp, int argc,
   return LCL_RC_OK;
 }
 
-/* ============================================================================
- * Registration
- * ============================================================================
- */
-
 void lcl_register_lk(lcl_interp *interp) {
   lcl_value *ns = lcl_ns_new("Lk");
   lcl_define_take(interp, "Lk", ns);
 
-  /* UI Lifecycle */
   lcl_ns_def_take(ns, "ui_create",
                   lcl_c_proc_new("Lk::ui_create", c_lk_ui_create));
   lcl_ns_def_take(ns, "ui_destroy",
@@ -9422,7 +8765,6 @@ void lcl_register_lk(lcl_interp *interp) {
                   lcl_c_proc_new("Lk::end_frame", c_lk_end_frame));
   lcl_ns_def_take(ns, "tree", lcl_c_proc_new("Lk::tree", c_lk_tree));
 
-  /* Tree Building */
   lcl_ns_def_take(ns, "node", lcl_c_proc_new("Lk::node", c_lk_node));
   lcl_ns_def_take(ns, "set_root",
                   lcl_c_proc_new("Lk::set_root", c_lk_set_root));
@@ -9431,7 +8773,6 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(ns, "prop", lcl_c_proc_new("Lk::prop", c_lk_prop));
   lcl_ns_def_take(ns, "present", lcl_c_proc_new("Lk::present", c_lk_present));
 
-  /* Commands & Translators */
   lcl_ns_def_take(ns, "add_translator",
                   lcl_c_proc_new("Lk::add_translator", c_lk_add_translator));
   lcl_ns_def_take(
@@ -9450,13 +8791,11 @@ void lcl_register_lk(lcl_interp *interp) {
       ns, "set_command_handler",
       lcl_c_proc_new("Lk::set_command_handler", c_lk_set_command_handler));
 
-  /* State */
   lcl_ns_def_take(ns, "state_set",
                   lcl_c_proc_new("Lk::state_set", c_lk_state_set));
   lcl_ns_def_take(ns, "state_get",
                   lcl_c_proc_new("Lk::state_get", c_lk_state_get));
 
-  /* Focus */
   lcl_ns_def_take(ns, "focus_set",
                   lcl_c_proc_new("Lk::focus_set", c_lk_focus_set));
   lcl_ns_def_take(ns, "focus_request",
@@ -9474,16 +8813,13 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(ns, "text_size",
                   lcl_c_proc_new("Lk::text_size", c_lk_text_size));
 
-  /* Geometry */
   lcl_ns_def_take(ns, "node_rect",
                   lcl_c_proc_new("Lk::node_rect", c_lk_node_rect));
   lcl_ns_def_take(ns, "args", lcl_c_proc_new("Lk::args", c_lk_args));
   lcl_ns_def_take(ns, "version", lcl_c_proc_new("Lk::version", c_lk_version));
 
-  /* Time */
   lcl_ns_def_take(ns, "time_ms", lcl_c_proc_new("Lk::time_ms", c_lk_time_ms));
 
-  /* Overlays */
   lcl_ns_def_take(ns, "overlay_count",
                   lcl_c_proc_new("Lk::overlay_count", c_lk_overlay_count));
   lcl_ns_def_take(ns, "overlay_push",
@@ -9491,24 +8827,20 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(ns, "overlay_pop",
                   lcl_c_proc_new("Lk::overlay_pop", c_lk_overlay_pop));
 
-  /* Tags & Style */
   lcl_ns_def_take(ns, "tag", lcl_c_proc_new("Lk::tag", c_lk_tag));
   lcl_ns_def_take(ns, "theme_rule",
                   lcl_c_proc_new("Lk::theme_rule", c_lk_theme_rule));
 
-  /* Interning */
   lcl_ns_def_take(ns, "intern_str",
                   lcl_c_proc_new("Lk::intern_str", c_lk_intern_str));
   lcl_ns_def_take(ns, "intern_id",
                   lcl_c_proc_new("Lk::intern_id", c_lk_intern_id));
 
-  /* Clipboard */
   lcl_ns_def_take(ns, "clipboard_get",
                   lcl_c_proc_new("Lk::clipboard_get", c_lk_clipboard_get));
   lcl_ns_def_take(ns, "clipboard_set",
                   lcl_c_proc_new("Lk::clipboard_set", c_lk_clipboard_set));
 
-  /* Documents (editor track) */
   lcl_ns_def_take(ns, "doc_new", lcl_c_proc_new("Lk::doc_new", c_lk_doc_new));
   lcl_ns_def_take(ns, "doc_text",
                   lcl_c_proc_new("Lk::doc_text", c_lk_doc_text));
@@ -9538,7 +8870,6 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(ns, "doc_unsubscribe",
                   lcl_c_proc_new("Lk::doc_unsubscribe", c_lk_doc_unsubscribe));
 
-  /* Edit history */
   lcl_ns_def_take(ns, "history_new",
                   lcl_c_proc_new("Lk::history_new", c_lk_history_new));
   lcl_ns_def_take(ns, "history_undo",
@@ -9558,7 +8889,6 @@ void lcl_register_lk(lcl_interp *interp) {
       ns, "history_at_saved",
       lcl_c_proc_new("Lk::history_at_saved", c_lk_history_at_saved));
 
-  /* Editors */
   lcl_ns_def_take(ns, "editor_new",
                   lcl_c_proc_new("Lk::editor_new", c_lk_editor_new));
   lcl_ns_def_take(ns, "editor_cursor",
@@ -9594,7 +8924,6 @@ void lcl_register_lk(lcl_interp *interp) {
       ns, "editor_set_spans",
       lcl_c_proc_new("Lk::editor_set_spans", c_lk_editor_set_spans));
 
-  /* Annotation stores */
   lcl_ns_def_take(ns, "annot_store_new",
                   lcl_c_proc_new("Lk::annot_store_new", c_lk_annot_store_new));
   lcl_ns_def_take(ns, "annot_attach",
@@ -9628,7 +8957,6 @@ void lcl_register_lk(lcl_interp *interp) {
       ns, "annot_layer_priority",
       lcl_c_proc_new("Lk::annot_layer_priority", c_lk_annot_layer_priority));
 
-  /* Range presentations (weft-surface S1) */
   lcl_ns_def_take(ns, "annot_present",
                   lcl_c_proc_new("Lk::annot_present", c_lk_annot_present));
   lcl_ns_def_take(
@@ -9640,7 +8968,6 @@ void lcl_register_lk(lcl_interp *interp) {
       ns, "editor_presentations",
       lcl_c_proc_new("Lk::editor_presentations", c_lk_editor_presentations));
 
-  /* Images */
   lcl_ns_def_take(ns, "image_new",
                   lcl_c_proc_new("Lk::image_new", c_lk_image_new));
   lcl_ns_def_take(ns, "image_size",
@@ -9654,7 +8981,6 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(ns, "image_set_bytes",
                   lcl_c_proc_new("Lk::image_set_bytes", c_lk_image_set_bytes));
 
-  /* Vector canvas */
   lcl_ns_def_take(ns, "canvas_new",
                   lcl_c_proc_new("Lk::canvas_new", c_lk_canvas_new));
   lcl_ns_def_take(ns, "canvas_size",
@@ -9713,8 +9039,8 @@ void lcl_register_lk(lcl_interp *interp) {
   lcl_ns_def_take(ns, "canvas_text",
                   lcl_c_proc_new("Lk::canvas_text", c_lk_canvas_text));
 
-#ifdef LK_HAVE_SDL
-  /* SDL Window */
+#ifdef LK_HAVE_WINDOW
+
   lcl_ns_def_take(ns, "window_create",
                   lcl_c_proc_new("Lk::window_create", c_lk_window_create));
   lcl_ns_def_take(ns, "window_destroy",
@@ -9739,8 +9065,12 @@ void lcl_register_lk(lcl_interp *interp) {
       lcl_c_proc_new("Lk::window_screenshot", c_lk_window_screenshot));
   lcl_ns_def_take(ns, "window_stop",
                   lcl_c_proc_new("Lk::window_stop", c_lk_window_stop));
+  lcl_ns_def_take(ns, "window_caps",
+                  lcl_c_proc_new("Lk::window_caps", c_lk_window_caps));
+  lcl_ns_def_take(
+      ns, "file_dialog_fallback",
+      lcl_c_proc_new("Lk::file_dialog_fallback", c_lk_file_dialog_fallback));
 
-  /* Image file IO + file dialogs */
   lcl_ns_def_take(ns, "image_load",
                   lcl_c_proc_new("Lk::image_load", c_lk_image_load));
   lcl_ns_def_take(ns, "image_save",

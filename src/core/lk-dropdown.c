@@ -1,19 +1,4 @@
-/*
- * lk-dropdown.c — Selection dropdown (UIK_DROPDOWN) and option
- * (UIK_OPTION) widgets.
- *
- * UIK_DROPDOWN is a leaf in the main layout pass: its children
- * (UIK_OPTIONs) are NOT laid out or rendered by the main pass.
- * Opening the dropdown pushes an LK_OVERLAY_DROPDOWN_POPUP overlay
- * onto the ui's overlay stack (and sets LKS_EXPANDED — the two are
- * kept in sync); the overlay pass in lk-overlay.c dispatches back
- * here (lk_dropdown_render_popup / lk_dropdown_hit_popup) to draw and
- * hit-test the popup procedurally.  Popup geometry goes through
- * lk_anchor_resolve, so a dropdown near the bottom edge flips its
- * popup above the trigger instead of clipping.
- *
- * See docs/overlays.md.
- */
+
 
 #include <string.h>
 
@@ -21,16 +6,12 @@
 #include "lk-memory.h"
 #include <lk.h>
 
-/* ---- Tunable constants (kept local until proven to need configurability) */
-
-#define DROPDOWN_CHEVRON_W 14 /* reserved space on trigger's right edge */
+#define DROPDOWN_CHEVRON_W 14
 #define DROPDOWN_OPTION_PAD_Y 4
 #define DROPDOWN_MIN_OPTION_H 20
 #define DROPDOWN_POPUP_MAX_HEIGHT                                              \
-  240                           /* taller popups scroll (LKS_POPUP_SCROLL) */
-#define DROPDOWN_SCROLL_BAR_W 6 /* popup overflow indicator width */
-
-/* ---- State helpers ---- */
+  240
+#define DROPDOWN_SCROLL_BAR_W 6
 
 static lk_i32 get_i32(const lk_state *state, lk_node_id nid, lk_u16 key) {
   lk_value v;
@@ -52,10 +33,6 @@ static int is_expanded(const lk_state *state, lk_node_id nid) {
   return get_i32(state, nid, LKS_EXPANDED) ? 1 : 0;
 }
 
-/* Open/close keep LKS_EXPANDED (the expanded/overlay invariant) and
- * the ui overlay stack in sync.  The popup scroll offset resets on
- * both transitions; keyboard paths then scroll the hovered option
- * back into view (dropdown_scroll_to_hover). */
 static void dropdown_open(lk_ui *ui, lk_node_id nid, lk_i32 hover) {
   lk_state *st = lk_ui_state(ui);
   lk_overlay ov;
@@ -72,7 +49,7 @@ static void dropdown_open(lk_ui *ui, lk_node_id nid, lk_i32 hover) {
   ov.owner_id = nid;
   ov.content_root_id = 0;
 
-  lk_overlay_pop_owner(ui, nid); /* never stack two popups per owner */
+  lk_overlay_pop_owner(ui, nid);
   lk_overlay_push(ui, &ov);
 }
 
@@ -88,7 +65,6 @@ static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
   return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
 }
 
-/* Count options under a dropdown node (children with kind UIK_OPTION). */
 static lk_u32 count_options(const lk_tree *t, lk_ix n) {
   lk_ix ch = t->nodes[n].first_child;
   lk_u32 c = 0;
@@ -104,7 +80,6 @@ static lk_u32 count_options(const lk_tree *t, lk_ix n) {
   return c;
 }
 
-/* Walk to the i-th option child (0-based).  Returns 0 if out of range. */
 static lk_ix nth_option(const lk_tree *t, lk_ix n, lk_u32 i) {
   lk_ix ch = t->nodes[n].first_child;
   lk_u32 c = 0;
@@ -124,8 +99,6 @@ static lk_ix nth_option(const lk_tree *t, lk_ix n, lk_u32 i) {
   return 0;
 }
 
-/* Read the UIP_VALUE prop as an interned string id (0 when absent or
- * not a string). */
 static lk_u32 value_prop_id(const lk_tree *t, lk_ix n) {
   const lk_node *nd = &t->nodes[n];
   lk_u16 i;
@@ -141,11 +114,6 @@ static lk_u32 value_prop_id(const lk_tree *t, lk_ix n) {
   return 0;
 }
 
-/* Effective selection index: LKS_SELECTED_INDEX state (user
- * interaction) > UIP_VALUE prop matching an option's TEXT (host-set
- * initial / controlled value) > 0.  The state > prop > default
- * priority mirrors the split ratio.  An unmatched UIP_VALUE falls
- * back to 0. */
 static lk_i32 dropdown_selected(const lk_tree *t, lk_ix n,
                                 const lk_state *state) {
   lk_u32 vid;
@@ -180,8 +148,6 @@ static lk_i32 dropdown_selected(const lk_tree *t, lk_ix n,
   return 0;
 }
 
-/* Return the currently-selected option's text, or the dropdown's own
- * UIP_TEXT as a fallback (e.g. "Select…"). */
 static lk_u32 selected_text_id(const lk_tree *t, lk_ix n,
                                const lk_state *state) {
   lk_i32 sel = dropdown_selected(t, n, state);
@@ -200,8 +166,6 @@ static lk_u32 selected_text_id(const lk_tree *t, lk_ix n,
   return lk_node_text_id(t, n);
 }
 
-/* Measure a run through cfg->text with the node's resolved font
- * (0/0 defaults when no styles).  Zero metrics when no backend. */
 static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
                         lk_i32 *out_w, lk_i32 *out_h) {
   lk_text_metrics m;
@@ -220,8 +184,6 @@ static void measure_run(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
   *out_h = m.h;
 }
 
-/* Row-height of an option: max(measured-text-height, min) + pad*2.
- * No node context here, so probes with the default face (0/0). */
 static lk_i32 option_row_height(const lk_layout_cfg *cfg) {
   lk_i32 th = 0;
   lk_i32 tw = 0;
@@ -242,6 +204,13 @@ static lk_i32 option_row_height(const lk_layout_cfg *cfg) {
 
   (void)tw;
 
+  if (cfg && cfg->grid_h > 0) {
+
+    lk_i32 gh = cfg->grid_h;
+
+    return th > 0 ? ((th + gh - 1) / gh) * gh : gh;
+  }
+
   if (th < DROPDOWN_MIN_OPTION_H - DROPDOWN_OPTION_PAD_Y * 2) {
     th = DROPDOWN_MIN_OPTION_H - DROPDOWN_OPTION_PAD_Y * 2;
   }
@@ -249,17 +218,10 @@ static lk_i32 option_row_height(const lk_layout_cfg *cfg) {
   return th + DROPDOWN_OPTION_PAD_Y * 2;
 }
 
-/* ---- Popup scroll math ----
- *
- * A popup taller than DROPDOWN_POPUP_MAX_HEIGHT clamps its height and
- * scrolls its option list by LKS_POPUP_SCROLL (retained user scroll
- * position; reset on open/close).  All of it derives from three
- * numbers: option count, row height, and the popup content inset —
- * available from cfg+styles in the geometry/render paths and from the
- * dropdown's geom slot (trigger.row_h / trigger.inset) in the event
- * path. */
+static lk_i32 option_text_pad(const lk_layout_cfg *cfg) {
+  return (cfg && cfg->grid_h > 0) ? 0 : DROPDOWN_OPTION_PAD_Y;
+}
 
-/* Height of the popup's inner viewport (content area). */
 static lk_i32 popup_inner_h(lk_u32 count, lk_i32 row_h, lk_i32 inset) {
   lk_i32 popup_h = (lk_i32)count * row_h + inset * 2;
   lk_i32 inner;
@@ -273,7 +235,6 @@ static lk_i32 popup_inner_h(lk_u32 count, lk_i32 row_h, lk_i32 inset) {
   return inner > 0 ? inner : 0;
 }
 
-/* Max scroll offset: content height minus inner viewport, floor 0. */
 static lk_i32 popup_scroll_max(lk_u32 count, lk_i32 row_h, lk_i32 inset) {
   lk_i32 content = (lk_i32)count * row_h;
   lk_i32 inner = popup_inner_h(count, row_h, inset);
@@ -281,7 +242,6 @@ static lk_i32 popup_scroll_max(lk_u32 count, lk_i32 row_h, lk_i32 inset) {
   return content > inner ? content - inner : 0;
 }
 
-/* Current scroll offset clamped to [0, max]. */
 static lk_i32 popup_scroll_eff(const lk_tree *t, lk_ix n, const lk_state *state,
                                lk_i32 max) {
   lk_i32 s = get_i32(state, t->nodes[n].id, LKS_POPUP_SCROLL);
@@ -296,8 +256,6 @@ static lk_i32 popup_scroll_eff(const lk_tree *t, lk_ix n, const lk_state *state,
 
   return s;
 }
-
-/* ---- Measure ---- */
 
 static void measure_dropdown(const lk_tree *t, lk_ix n, const lk_size *sizes,
                              const lk_layout_cfg *cfg, lk_i32 *out_w,
@@ -318,7 +276,7 @@ static void measure_dropdown(const lk_tree *t, lk_ix n, const lk_size *sizes,
   measure_run(cfg, n, s, &tw, &th);
 
   if (tw < 80) {
-    tw = 80; /* sensible minimum when no selection */
+    tw = 80;
   }
 
   *out_w = tw + DROPDOWN_CHEVRON_W + inset * 2;
@@ -328,8 +286,7 @@ static void measure_dropdown(const lk_tree *t, lk_ix n, const lk_size *sizes,
 static void measure_option(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
                            lk_i32 *out_h) {
-  /* Options don't participate in the main layout pass.  Zero size is
-   * fine — the dropdown places them in its overlay. */
+
   (void)t;
   (void)n;
   (void)sizes;
@@ -337,8 +294,6 @@ static void measure_option(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_w = 0;
   *out_h = 0;
 }
-
-/* ---- Render (main pass — just the collapsed trigger) ---- */
 
 static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
                             const lk_style *style, const lk_state *state,
@@ -349,16 +304,14 @@ static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
   lk_u32 sid;
   lk_render_cmd cmd;
 
-  (void)geom; /* trigger paints from its own rect */
+  (void)geom;
 
-  /* Background */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
   cmd.color = style->bg;
   lk_render_list_push(out, cmd);
 
-  /* Selected-option text (or placeholder) */
   sid = selected_text_id(t, n, state);
   if (sid != 0) {
     memset(&cmd, 0, sizeof(cmd));
@@ -374,8 +327,6 @@ static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
     lk_render_list_push(out, cmd);
   }
 
-  /* Chevron — a small inverted triangle drawn as stacked rows.
-   * Positioned in the reserved right strip. */
   {
     lk_i32 cx = rect->x + rect->w - DROPDOWN_CHEVRON_W / 2 - 4;
     lk_i32 cy = rect->y + rect->h / 2 - 2;
@@ -398,10 +349,6 @@ static void render_dropdown(const lk_tree *t, lk_ix n, const lk_rect *rect,
   }
 }
 
-/* OPTION doesn't render in the main pass — its paint happens in the
- * dropdown's overlay render.  Keep the function here so UIK_OPTION is
- * a well-formed widget even if someone adds it outside a dropdown
- * (useful for tests). */
 static void render_option(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
                           const lk_widget_geom *geom, lk_render_list *out) {
@@ -414,11 +361,6 @@ static void render_option(const lk_tree *t, lk_ix n, const lk_rect *rect,
   (void)out;
 }
 
-/* ---- Event handling ---- */
-
-/* Enqueued, not routed: the event runs its tier sequence after the
- * originating event completes (drained at the end of the outermost
- * lk_event_route call). */
 static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n,
                                lk_u32 new_value_id) {
   lk_event ev;
@@ -430,8 +372,6 @@ static void emit_value_changed(lk_ui *ui, const lk_tree *t, lk_ix n,
   lk_event_enqueue(ui, &ev);
 }
 
-/* This dropdown's geometry slot in the ui's per-frame scratch, or
- * NULL when the host never wired one (cfg->geom / lk_ui_geom). */
 static const lk_widget_geom *dropdown_geom(const lk_ui *ui, lk_ix n) {
   if (!ui->geom || (lk_u32)n >= ui->geom_cap) {
     return NULL;
@@ -440,10 +380,6 @@ static const lk_widget_geom *dropdown_geom(const lk_ui *ui, lk_ix n) {
   return &ui->geom[n];
 }
 
-/* Keep the hovered option row visible: nudge LKS_POPUP_SCROLL so row
- * hov lies inside the popup's inner viewport.  Needs the layout-pass
- * geom slot (row height / inset); without one the offset is left
- * alone (degraded: hover can walk out of view). */
 static void dropdown_scroll_to_hover(lk_ui *ui, const lk_tree *t, lk_ix n,
                                      lk_i32 hov, lk_u32 count) {
   lk_state *st = lk_ui_state(ui);
@@ -466,7 +402,7 @@ static void dropdown_scroll_to_hover(lk_ui *ui, const lk_tree *t, lk_ix n,
   max = popup_scroll_max(count, row_h, inset);
 
   if (max <= 0) {
-    return; /* everything visible; offset already reset on open */
+    return;
   }
 
   inner = popup_inner_h(count, row_h, inset);
@@ -512,20 +448,13 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 
   if (ev->type == LK_EVENT_POINTER_DOWN) {
-    /* Only the trigger itself routes POINTER_DOWN through the widget
-     * handler.  Option clicks are dispatched via overlay hit-test and
-     * arrive as events targeting the option node; handled there. */
+
     if (ev->target != n) {
       return 0;
     }
 
     if (is_expanded(st, nid)) {
-      /* While expanded, a POINTER_DOWN targeting this node is either a
-       * trigger click (toggle closed) or a click in the popup's padding
-       * zone (the overlay hit-test resolves those to the dropdown too).
-       * The trigger rect lives in the per-frame geometry scratch; when
-       * absent (host never wired a geom array) fall back to the old
-       * always-toggle behavior. */
+
       const lk_widget_geom *g = dropdown_geom(ui, n);
 
       if (g && g->trigger.w > 0) {
@@ -537,7 +466,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
         tr.h = g->trigger.h;
 
         if (!point_in(&tr, ev->data.pointer.x, ev->data.pointer.y)) {
-          /* Popup-padding click: consume without closing. */
+
           return 1;
         }
       }
@@ -552,10 +481,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 
   if (ev->type == LK_EVENT_WHEEL) {
-    /* Wheel over the open popup (targeted at an option via overlay
-     * hit-test and bubbled here, or at the dropdown itself for the
-     * padding zone) scrolls the option list.  Consumed whenever the
-     * popup is open so the page under the popup never scrolls. */
+
     const lk_widget_geom *g;
     lk_i32 row_h;
     lk_i32 inset;
@@ -563,13 +489,13 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     lk_i32 s;
 
     if (!is_expanded(st, nid)) {
-      return 0; /* collapsed: bubble to a scroll ancestor */
+      return 0;
     }
 
     g = dropdown_geom(ui, n);
 
     if (!g || g->trigger.row_h == 0) {
-      return 1; /* no geometry to scroll with; still consume */
+      return 1;
     }
 
     row_h = (lk_i32)g->trigger.row_h;
@@ -577,7 +503,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     max = popup_scroll_max(count, row_h, inset);
 
     if (max <= 0) {
-      return 1; /* short popup: nothing to scroll */
+      return 1;
     }
 
     s = popup_scroll_eff(t, n, st, max) - ev->data.wheel.dy * row_h;
@@ -611,7 +537,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
           dropdown_scroll_to_hover(ui, t, n, hov + 1, count);
         }
       } else {
-        /* Collapsed + Down opens and moves selection. */
+
         dropdown_open(ui, nid, sel);
         dropdown_scroll_to_hover(ui, t, n, sel, count);
       }
@@ -627,7 +553,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     case LKK_RETURN:
     case LKK_SPACE:
       if (is_expanded(st, nid)) {
-        /* Commit: hover -> selection. */
+
         if (hov >= 0 && (lk_u32)hov < count) {
           lk_ix opt = nth_option(t, n, (lk_u32)hov);
 
@@ -645,9 +571,7 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
       return 1;
 
     case LKK_ESCAPE:
-      /* Normally consumed by the ESC pre-step in lk_event_route (which
-       * pops the topmost overlay); kept here as a fallback for hosts
-       * that dispatch widget events directly. */
+
       if (is_expanded(st, nid)) {
         dropdown_close(ui, nid);
         return 1;
@@ -662,9 +586,6 @@ static int event_dropdown(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   return 0;
 }
 
-/* An OPTION node can receive POINTER_DOWN and POINTER_MOVE from the
- * overlay hit-test.  Its widget event handler commits the selection
- * (down) or updates the hover highlight (move) on its parent dropdown. */
 static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   lk_ix parent;
   lk_state *st;
@@ -686,7 +607,6 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
-  /* Find this option's index within the parent. */
   ch = t->nodes[parent].first_child;
 
   while (ch) {
@@ -705,7 +625,7 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   nid = t->nodes[parent].id;
 
   if (ev->type == LK_EVENT_POINTER_MOVE) {
-    /* Hover highlight follows the mouse while the popup is open. */
+
     lk_state_set(st, nid, LKS_HOVER_INDEX, lk_v_i32((lk_i32)i));
     return 1;
   }
@@ -717,14 +637,6 @@ static int event_option(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   return 1;
 }
 
-/* ---- Overlay geometry ---- */
-
-/* Stash each dropdown's trigger rect — plus the popup row height and
- * content inset — in the per-frame geometry scratch (cfg->geom,
- * trigger arm).  Called by lk_layout after rects are final so event
- * handling (which has no access to layout rects, styles, or the text
- * backend) can distinguish trigger clicks from popup-padding clicks
- * and clamp popup scrolling.  No-op when cfg->geom is NULL. */
 void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
                                      const lk_layout_cfg *cfg) {
   lk_ix n;
@@ -745,8 +657,6 @@ void lk_dropdown_store_trigger_rects(const lk_tree *t, const lk_rect *rects,
       continue;
     }
 
-    /* Same inset the popup geometry uses (styles-or-zero, NOT tree
-     * props — lk_dropdown_popup_rect reads styles only). */
     pad = cfg->styles ? cfg->styles[n].padding : 0;
     bw = cfg->styles ? cfg->styles[n].border_width : 0;
 
@@ -777,14 +687,21 @@ lk_rect lk_dropdown_popup_rect(const lk_tree *t, lk_ix n, const lk_rect *rects,
     popup_h = DROPDOWN_POPUP_MAX_HEIGHT;
   }
 
-  /* Anchor below the trigger, same width; flips above / clamps at the
-   * viewport edges (0/0 viewport skips clamping — old behavior). */
   memset(&ov, 0, sizeof(ov));
   ov.kind = LK_OVERLAY_DROPDOWN_POPUP;
   ov.anchor_mode = LK_ANCHOR_BELOW;
 
-  return lk_anchor_resolve(&ov, trigger, cfg ? cfg->viewport_w : 0,
-                           cfg ? cfg->viewport_h : 0, trigger.w, popup_h);
+  {
+    lk_rect r =
+        lk_anchor_resolve(&ov, trigger, cfg ? cfg->viewport_w : 0,
+                          cfg ? cfg->viewport_h : 0, trigger.w, popup_h);
+
+    if (cfg) {
+      lk_rect_snap_grid(&r, cfg->grid_w, cfg->grid_h);
+    }
+
+    return r;
+  }
 }
 
 lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n, lk_u32 opt_index,
@@ -806,8 +723,6 @@ lk_rect lk_dropdown_option_rect(const lk_tree *t, lk_ix n, lk_u32 opt_index,
   out.h = row_h;
   return out;
 }
-
-/* ---- Overlay render (dispatch target for lk-overlay.c) ---- */
 
 void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
                               const lk_style *styles, const lk_state *state,
@@ -847,7 +762,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
   trig_style = styles ? &styles[n] : NULL;
   popup = lk_dropdown_popup_rect(t, n, rects, styles, cfg);
 
-  /* Popup background */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = popup;
@@ -861,38 +775,19 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
   }
   lk_render_list_push(out, cmd);
 
-  /* Border (1px) */
   if (trig_style && trig_style->border_width > 0) {
-    lk_color bc = trig_style->border_color;
     lk_i32 bw = trig_style->border_width;
 
     memset(&cmd, 0, sizeof(cmd));
-    cmd.op = LK_ROP_FILL_RECT;
-    cmd.color = bc;
-    /* top */
-    cmd.rect.x = popup.x;
-    cmd.rect.y = popup.y;
-    cmd.rect.w = popup.w;
-    cmd.rect.h = bw;
-    lk_render_list_push(out, cmd);
-    /* bottom */
-    cmd.rect.y = popup.y + popup.h - bw;
-    lk_render_list_push(out, cmd);
-    /* left */
-    cmd.rect.y = popup.y;
-    cmd.rect.w = bw;
-    cmd.rect.h = popup.h;
-    lk_render_list_push(out, cmd);
-    /* right */
-    cmd.rect.x = popup.x + popup.w - bw;
+    cmd.op = LK_ROP_STROKE_RECT;
+    cmd.color = trig_style->border_color;
+    cmd.rect = popup;
+    cmd.stroke = (lk_u8)(bw > 255 ? 255 : bw);
     lk_render_list_push(out, cmd);
   }
 
   hov = get_i32(state, nid, LKS_HOVER_INDEX);
 
-  /* Overflow: clip the option list to the popup's inner viewport so
-   * scrolled-out rows can't paint over the border, and remember the
-   * numbers for the indicator bar below. */
   {
     lk_i32 pad = trig_style ? trig_style->padding : 0;
     lk_i32 bw = trig_style ? trig_style->border_width : 0;
@@ -915,7 +810,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
     lk_render_list_push(out, cmd);
   }
 
-  /* Options (rows fully outside the inner viewport are skipped) */
   for (i = 0; i < count; i++) {
     lk_ix opt = nth_option(t, n, i);
     lk_rect r;
@@ -934,7 +828,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
 
     opt_style = styles ? &styles[opt] : trig_style;
 
-    /* Hover highlight */
     if ((lk_i32)i == hov) {
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
@@ -951,16 +844,19 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
       lk_render_list_push(out, cmd);
     }
 
-    /* Option text */
     {
       lk_u32 sid = lk_node_text_id(t, opt);
       if (sid != 0) {
         memset(&cmd, 0, sizeof(cmd));
         cmd.op = LK_ROP_DRAW_TEXT;
-        cmd.rect.x = r.x + DROPDOWN_OPTION_PAD_Y;
-        cmd.rect.y = r.y + DROPDOWN_OPTION_PAD_Y;
-        cmd.rect.w = r.w - DROPDOWN_OPTION_PAD_Y * 2;
-        cmd.rect.h = r.h - DROPDOWN_OPTION_PAD_Y * 2;
+        {
+          lk_i32 tp = option_text_pad(cfg);
+
+          cmd.rect.x = r.x + tp;
+          cmd.rect.y = r.y + tp;
+          cmd.rect.w = r.w - tp * 2;
+          cmd.rect.h = r.h - tp * 2;
+        }
         if (opt_style) {
           cmd.color = opt_style->fg;
           cmd.font_id = (lk_u16)opt_style->font_id;
@@ -977,10 +873,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
     }
   }
 
-  /* Overflow indicator: end the option clip, then draw a track +
-   * thumb along the popup's right edge (the scroll widget's bar,
-   * overlay-sized).  Short popups emit none of this — their render
-   * list is untouched by the scrolling feature. */
   if (max_scroll > 0) {
     lk_i32 track_h = inner_h;
     lk_i32 content_h = (lk_i32)count * row_h;
@@ -1001,7 +893,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
       thumb_y = popup.y + inset;
       thumb_y += (scroll * (track_h - thumb_h)) / max_scroll;
 
-      /* Track */
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
       cmd.rect.x = popup.x + popup.w - inset - DROPDOWN_SCROLL_BAR_W;
@@ -1018,7 +909,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
       }
       lk_render_list_push(out, cmd);
 
-      /* Thumb */
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
       cmd.rect.x = popup.x + popup.w - inset - DROPDOWN_SCROLL_BAR_W;
@@ -1037,8 +927,6 @@ void lk_dropdown_render_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
     }
   }
 }
-
-/* ---- Overlay hit-test (dispatch target for lk-overlay.c) ---- */
 
 lk_ix lk_dropdown_hit_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
                             const lk_style *styles, const lk_state *state,
@@ -1067,9 +955,6 @@ lk_ix lk_dropdown_hit_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
 
   count = count_options(t, n);
 
-  /* When the list scrolls, only the part of a row inside the inner
-   * viewport is clickable — a half-scrolled row must not swallow
-   * clicks in the popup's padding/border band. */
   {
     lk_i32 row_h = option_row_height(cfg);
     lk_i32 pad = styles ? styles[n].padding : 0;
@@ -1092,20 +977,15 @@ lk_ix lk_dropdown_hit_popup(const lk_tree *t, lk_ix n, const lk_rect *rects,
     }
   }
 
-  /* Click inside popup but outside any option (padding zone) —
-   * consume as a hit on the dropdown itself so the click doesn't
-   * close the overlay. */
   return n;
 }
-
-/* ---- Registration ---- */
 
 lk_widget_def lk_dropdown_widget_def(void) {
   lk_widget_def def;
   memset(&def, 0, sizeof(def));
   def.measure = measure_dropdown;
-  def.layout = 0; /* leaf — options live in the overlay, not the tree
-                   * layout.  See docs/overlays.md. */
+  def.layout = 0;
+
   def.render = render_dropdown;
   def.event = event_dropdown;
   def.clips = 0;

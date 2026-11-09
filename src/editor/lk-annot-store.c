@@ -1,26 +1,4 @@
-/*
- * lk-annot-store.c -- annotation store (editor track, stage C).
- *
- * Straight lift of weft's annot_store.c, C89-ized with the lk
- * allocator triple.  Anchor transform semantics are preserved
- * exactly:
- *
- *   insert at pos: anchors after pos shift forward; anchors AT pos
- *   shift only with RIGHT bias (LEFT stays); anchors before pos are
- *   unchanged.
- *
- *   delete [pos, pos+len): anchors at or past the range end shift
- *   backward by len; anchors strictly inside collapse to pos; anchors
- *   at or before pos are unchanged.  Records whose span becomes
- *   empty or inverted (start >= end) are removed in the same pass.
- *
- * The weft edit hooks are replaced by a document subscription
- * (lk_annot_store_attach): each committed delta applies its delete
- * transform, then its insert transform, both at delta->start, and the
- * store's revision follows delta->after.  Layer dirty-marking matches
- * the weft hooks: edits set LK_LAYER_DIRTY without bumping the
- * version (only clear/clear_layer/set_dirty bump it).
- */
+
 
 #include <string.h>
 
@@ -32,8 +10,6 @@
 #define ANNOT_INITIAL_LAYER_CAP 8
 #define ANNOT_INITIAL_QUERY_CAP 16
 #define ANNOT_IDMAP_INITIAL_CAP 64
-
-/* ---- id -> index map (open addressing, linear probing) ---- */
 
 static void *annot_zalloc(lk_annot_store *s, lk_u32 bytes) {
   void *p = s->alloc(s->ud, bytes);
@@ -77,7 +53,6 @@ static void idmap_clear(lk_annot_idmap *m) {
   m->count = 0;
 }
 
-/* Insert without checking load factor (used during resize). */
 static void idmap_insert_raw(lk_u32 *keys, lk_u32 *values, lk_u32 cap,
                              lk_u32 key, lk_u32 value) {
   lk_u32 mask = cap - 1;
@@ -131,7 +106,7 @@ static int idmap_put(lk_annot_store *s, lk_annot_idmap *m, lk_u32 key,
   lk_u32 mask;
   lk_u32 idx;
 
-  if (m->count * 4 >= m->cap * 3) { /* load factor > 75% */
+  if (m->count * 4 >= m->cap * 3) {
     if (!idmap_grow(s, m)) {
       return 0;
     }
@@ -142,7 +117,7 @@ static int idmap_put(lk_annot_store *s, lk_annot_idmap *m, lk_u32 key,
 
   while (m->keys[idx] != 0) {
     if (m->keys[idx] == key) {
-      m->values[idx] = value; /* update existing */
+      m->values[idx] = value;
 
       return 1;
     }
@@ -157,7 +132,6 @@ static int idmap_put(lk_annot_store *s, lk_annot_idmap *m, lk_u32 key,
   return 1;
 }
 
-/* Returns 1 if found, writes *out_value. */
 static int idmap_get(const lk_annot_idmap *m, lk_u32 key, lk_u32 *out_value) {
   lk_u32 mask;
   lk_u32 idx;
@@ -195,7 +169,7 @@ static void idmap_remove(lk_annot_store *s, lk_annot_idmap *m, lk_u32 key) {
 
   while (m->keys[idx] != 0) {
     if (m->keys[idx] == key) {
-      /* remove and fix the probe chain (re-insertion deletion) */
+
       lk_u32 next;
 
       m->keys[idx] = 0;
@@ -218,8 +192,6 @@ static void idmap_remove(lk_annot_store *s, lk_annot_idmap *m, lk_u32 key) {
     idx = (idx + 1) & mask;
   }
 }
-
-/* ---- Internal helpers ---- */
 
 static char *annot_strdup(lk_annot_store *s, const char *str) {
   lk_u32 len;
@@ -293,7 +265,6 @@ static const lk_annot_layer *find_layer_const(const lk_annot_store *s,
   return NULL;
 }
 
-/* Create an anchor (returns 0 on failure). */
 static lk_u32 create_anchor(lk_annot_store *s, lk_u32 pos,
                             lk_anchor_bias bias) {
   lk_u32 id;
@@ -326,8 +297,6 @@ static lk_u32 create_anchor(lk_annot_store *s, lk_u32 pos,
   return id;
 }
 
-/* Fire the presentation release hook for a detaching value.  Exactly
- * once per detach: pres_type is zeroed here. */
 static void pres_detach(lk_annot_store *s, lk_annot_record *r) {
   if (r->pres_type != 0 && s->pres_release) {
     s->pres_release(s->pres_release_ud, r->pres_value);
@@ -374,7 +343,6 @@ static void record_free_meta(lk_annot_store *s, lk_annot_record *r) {
   r->meta_count = 0;
 }
 
-/* Remove an anchor by id (does not check if in use). */
 static void remove_anchor(lk_annot_store *s, lk_u32 id) {
   lk_u32 idx;
   lk_u32 last;
@@ -385,7 +353,6 @@ static void remove_anchor(lk_annot_store *s, lk_u32 id) {
 
   idmap_remove(s, &s->anchor_map, id);
 
-  /* move the last element into this slot */
   last = s->anchor_count - 1;
 
   if (idx < last) {
@@ -402,7 +369,6 @@ static int query_add(const lk_annot_store *s, lk_annot_query *q, lk_u32 id) {
         q->capacity == 0 ? ANNOT_INITIAL_QUERY_CAP : q->capacity * 2;
     lk_u32 *new_ids;
 
-    /* capture the store's allocator so query_free stays store-free */
     q->alloc = s->alloc;
     q->dealloc = s->dealloc;
     q->ud = s->ud;
@@ -426,8 +392,6 @@ static int query_add(const lk_annot_store *s, lk_annot_query *q, lk_u32 id) {
   return 1;
 }
 
-/* ---- Edit transforms (weft's on_insert/on_delete bodies) ---- */
-
 static void annot_apply_insert(lk_annot_store *s, lk_u32 pos, lk_u32 len) {
   lk_u32 i;
 
@@ -439,10 +403,10 @@ static void annot_apply_insert(lk_annot_store *s, lk_u32 pos, lk_u32 len) {
     lk_anchor *a = &s->anchors[i];
 
     if (a->pos > pos) {
-      a->pos += len; /* after the insert point: shift forward */
+      a->pos += len;
     } else if (a->pos == pos) {
       if (a->bias == LK_ANCHOR_RIGHT) {
-        a->pos += len; /* RIGHT moves with the insert; LEFT stays */
+        a->pos += len;
       }
     }
   }
@@ -465,13 +429,12 @@ static void annot_apply_delete(lk_annot_store *s, lk_u32 pos, lk_u32 len) {
     lk_anchor *a = &s->anchors[i];
 
     if (a->pos >= end) {
-      a->pos -= len; /* past the range: shift backward */
+      a->pos -= len;
     } else if (a->pos > pos) {
-      a->pos = pos; /* inside the range: collapse to its start */
+      a->pos = pos;
     }
   }
 
-  /* remove records whose span became empty or inverted */
   write_idx = 0;
 
   for (i = 0; i < s->record_count; i++) {
@@ -512,8 +475,6 @@ static void annot_apply_delete(lk_annot_store *s, lk_u32 pos, lk_u32 len) {
   }
 }
 
-/* ---- Document listener ---- */
-
 static void annot_on_doc(void *ud, const lk_document *d,
                          const lk_doc_delta *deltas, lk_u32 n) {
   lk_annot_store *s = (lk_annot_store *)ud;
@@ -533,8 +494,6 @@ static void annot_on_doc(void *ud, const lk_document *d,
     s->doc_rev = deltas[i].after;
   }
 }
-
-/* ---- Lifecycle ---- */
 
 lk_annot_store *lk_annot_store_new(void *(*alloc)(void *, lk_u32),
                                    void (*dealloc)(void *, void *), void *ud) {
@@ -560,7 +519,7 @@ lk_annot_store *lk_annot_store_new(void *(*alloc)(void *, lk_u32),
   s->anchors = (lk_anchor *)alloc(ud, ANNOT_INITIAL_ANCHOR_CAP *
                                           (lk_u32)sizeof(lk_anchor));
   s->anchor_cap = ANNOT_INITIAL_ANCHOR_CAP;
-  s->next_anchor_id = 1; /* 0 reserved as invalid */
+  s->next_anchor_id = 1;
 
   s->records = (lk_annot_record *)alloc(
       ud, ANNOT_INITIAL_RECORD_CAP * (lk_u32)sizeof(lk_annot_record));
@@ -716,8 +675,6 @@ const char *lk_annot_layer_name(const lk_annot_store *s, lk_u32 index) {
   return s->layers[index].name;
 }
 
-/* ---- Annotation CRUD ---- */
-
 lk_u32 lk_annot_add(lk_annot_store *s, lk_u32 start, lk_u32 end,
                     const char *layer, const char **keys, const char **values,
                     lk_u32 meta_count) {
@@ -805,7 +762,6 @@ lk_u32 lk_annot_add(lk_annot_store *s, lk_u32 start, lk_u32 end,
   r->pres_value = lk_v_none();
   idmap_put(s, &s->record_map, id, rec_idx);
 
-  /* auto-register the layer */
   if (layer && !find_layer(s, layer)) {
     lk_annot_register_layer(s, layer);
   }
@@ -858,7 +814,6 @@ int lk_annot_remove(lk_annot_store *s, lk_u32 id) {
   record_free_meta(s, &s->records[idx]);
   idmap_remove(s, &s->record_map, id);
 
-  /* move the last record into this slot */
   last = s->record_count - 1;
 
   if (idx < last) {
@@ -932,8 +887,6 @@ const char *lk_annot_get_meta(const lk_annot_store *s, lk_u32 id,
 
   return NULL;
 }
-
-/* ---- Queries ---- */
 
 void lk_annot_query_init(lk_annot_query *q) {
   if (q) {
@@ -1019,7 +972,6 @@ void lk_annot_in_range(const lk_annot_store *s, lk_u32 start, lk_u32 end,
       continue;
     }
 
-    /* overlap: span.start < end && span.end > start */
     if (start_a->pos < end && end_a->pos > start) {
       query_add(s, out, r->id);
     }
@@ -1042,8 +994,6 @@ void lk_annot_by_layer(const lk_annot_store *s, const char *layer,
     }
   }
 }
-
-/* ---- Range presentations (weft-surface S1) ---- */
 
 static lk_annot_record *find_record(lk_annot_store *s, lk_u32 id) {
   lk_u32 idx;
@@ -1069,7 +1019,7 @@ int lk_annot_set_present(lk_annot_store *s, lk_u32 id, lk_u32 type_id,
     return 0;
   }
 
-  pres_detach(s, r); /* fires the hook for any prior value */
+  pres_detach(s, r);
   r->pres_type = type_id;
   r->pres_value = value;
   s->change_seq++;
@@ -1094,8 +1044,6 @@ static lk_i32 record_layer_priority(const lk_annot_store *s,
   return l ? l->priority : 0;
 }
 
-/* Precedence: layer priority DESC -> smaller range -> record id ASC
- * (the insertion serial).  Returns nonzero when a should precede b. */
 static int pres_precedes(const lk_annot_store *s, const lk_annot_record *a,
                          lk_u32 a_start, lk_u32 a_end, const lk_annot_record *b,
                          lk_u32 b_start, lk_u32 b_end) {
@@ -1119,9 +1067,7 @@ static int pres_precedes(const lk_annot_store *s, const lk_annot_record *a,
 
 lk_u32 lk_annot_presentations_at(const lk_annot_store *s, lk_u32 pos,
                                  lk_presentation_hit *out, lk_u32 cap) {
-  /* Bounded insertion sort over the candidates: spans[] mirrors the
-   * record order in out[] so the comparator can reuse resolved
-   * anchor positions. */
+
   const lk_annot_record *recs[64];
   lk_u32 starts[64], ends[64];
   lk_u32 count = 0;
@@ -1152,7 +1098,6 @@ lk_u32 lk_annot_presentations_at(const lk_annot_store *s, lk_u32 pos,
       continue;
     }
 
-    /* Find the insertion point in precedence order. */
     at = count;
 
     for (k = 0; k < count; k++) {
@@ -1163,7 +1108,7 @@ lk_u32 lk_annot_presentations_at(const lk_annot_store *s, lk_u32 pos,
     }
 
     if (at >= cap) {
-      continue; /* below every kept candidate and the buffer is full */
+      continue;
     }
 
     if (count < cap) {
@@ -1186,11 +1131,11 @@ lk_u32 lk_annot_presentations_at(const lk_annot_store *s, lk_u32 pos,
 
     h->type_id = recs[i]->pres_type;
     h->value = recs[i]->pres_value;
-    h->locus_kind = 0; /* the offering widget names the locus */
+    h->locus_kind = 0;
     h->locus[0] = recs[i]->id;
     h->locus[1] = starts[i];
     h->locus[2] = ends[i];
-    h->locus[3] = 0; /* hit position: filled by the editor */
+    h->locus[3] = 0;
     h->locus[4] = s->doc_rev.hi;
     h->locus[5] = s->doc_rev.lo;
   }
@@ -1211,8 +1156,6 @@ lk_presentation_source lk_annot_presentation_source(lk_annot_store *s) {
 
   return src;
 }
-
-/* ---- Layer management ---- */
 
 void lk_annot_register_layer(lk_annot_store *s, const char *name) {
   lk_annot_layer *l;
@@ -1255,7 +1198,7 @@ void lk_annot_layer_set_priority(lk_annot_store *s, const char *layer,
     return;
   }
 
-  lk_annot_register_layer(s, layer); /* auto-register, like lk_annot_add */
+  lk_annot_register_layer(s, layer);
   l = find_layer(s, layer);
 
   if (l) {

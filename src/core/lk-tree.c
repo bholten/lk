@@ -305,9 +305,6 @@ void lk_tree_append_child(lk_tree *t, lk_ix parent, lk_ix child) {
   *link = child;
 }
 
-/* Set/append a prop on a node.
- * Phase 0: allows duplicates; validation can flag duplicates later if desired.
- */
 void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
   lk_node *n;
 
@@ -315,28 +312,14 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
     return;
   }
 
-  /* Ensure contiguous prop slice: we enforce "append-only per node"
-     in construction order. In Phase 0, easiest is: require user to add
-     props right after creating node, before adding any props to other nodes.
-     But that's annoying.
-
-     Instead: we store props in global arena and node has (off,len) slice.
-     For arbitrary append order, we'd need per-node dynamic list or "prop
-     blocks". For Phase 0, simplest compromise is to require props added
-     right after node creation (or accept that this function assumes it).
-  */
   n = &t->nodes[node];
 
-  /* Lazily set props_off when the first prop is added. Allows all
-     nodes to be created up front, then props grouped per node. */
   if (n->props_len == 0) {
     n->props_off = (lk_ix)t->prop_count;
   }
 
-  /* enforce contiguous append in global arena */
   if (n->props_off + n->props_len != t->prop_count) {
-    /* Props for this node are not at the arena tail — another node's
-       props were appended in between. Silently drop. */
+
     return;
   }
 
@@ -349,8 +332,6 @@ void lk_tree_add_prop(lk_tree *t, lk_ix node, lk_prop_key key, lk_value v) {
   t->prop_count++;
   n->props_len++;
 }
-
-/* ---- Presentation API ---- */
 
 void lk_tree_add_presentation_v(lk_tree *t, lk_ix node, lk_u32 ptype,
                                 const lk_value *pvalues, lk_u8 count) {
@@ -415,8 +396,6 @@ const lk_presentation *lk_tree_get_presentation(const lk_tree *t, lk_ix node) {
 
   return NULL;
 }
-
-/* ---- Tag API ---- */
 
 void lk_tree_add_tag(lk_tree *t, lk_ix node, lk_u32 tag_id) {
   lk_tag *tg;
@@ -579,8 +558,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
     }
   }
 
-  /* Duplicate ID check (O(n^2) in v0; fine for tests/MVP; optimize
-     later) */
   if (opts->forbid_duplicate_ids) {
     lk_u32 i, j;
 
@@ -620,7 +597,7 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
         if (stack && iter) {
           stack[sp] = t->root;
           iter[sp] = t->nodes[t->root].first_child;
-          color[t->root] = 1; /* grey */
+          color[t->root] = 1;
           sp++;
 
           while (sp > 0) {
@@ -628,7 +605,7 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
             lk_ix c = iter[sp - 1];
 
             if (c == 0) {
-              color[n] = 2; /* black */
+              color[n] = 2;
               sp--;
               continue;
             }
@@ -679,7 +656,6 @@ int lk_tree_validate(const lk_tree *t, const lk_validate_opts *opts,
   return 1;
 }
 
-/* TODO */
 static void wr_cstr(lk_write_fn wr, void *ud, const char *s) {
   if (!wr || !s) {
     return;
@@ -692,7 +668,6 @@ static void wr_u32(lk_write_fn wr, void *ud, lk_u32 x) {
   char buf[32];
   int n;
 
-  /* C89 snprintf isn't guaranteed; use a tiny manual conversion */
   char tmp[32];
   lk_u32 i = 0;
 
@@ -718,10 +693,6 @@ static void wr_u32(lk_write_fn wr, void *ud, lk_u32 x) {
   wr_cstr(wr, ud, buf);
 }
 
-/* UIV_RESOURCE dump value: typename="debugname"#id resolved through
- * the tree's borrowed resource table (e.g. editor="src-view"#17);
- * resource#id when the tree has no table or the ref is stale.
- * Deterministic, address-free. */
 static void wr_resource(const lk_tree *t, lk_write_fn wr, void *ud,
                         const lk_value *v) {
   lk_resource_ref ref;
@@ -840,7 +811,6 @@ static void dump_node(const lk_tree *t, lk_ix n, lk_write_fn wr, void *ud,
     wr_cstr(wr, ud, " }");
   }
 
-  /* Dump presentations on this node */
   {
     lk_u32 pi;
     int has_pres = 0;
@@ -970,8 +940,6 @@ lk_ix lk_tree_find_by_id(const lk_tree *t, lk_node_id id) {
   return 0;
 }
 
-/* ---- Public prop helpers ---- */
-
 lk_i32 lk_node_prop_i32(const lk_tree *t, lk_ix n, lk_prop_key key,
                         lk_i32 def) {
   const lk_node *nd = &t->nodes[n];
@@ -1050,7 +1018,6 @@ lk_u32 lk_node_text_id(const lk_tree *t, lk_ix n) {
   return 0;
 }
 
-/* Schema (lots of TODOs) */
 int lk_tree_validate_schema(const lk_tree *t, const lk_kind_schema *schema,
                             lk_u32 schema_count, lk_diag *diags,
                             lk_u32 diags_cap, lk_u32 *out_diags_len) {

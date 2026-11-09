@@ -1,20 +1,4 @@
-/*
- * lk-edit-history.c -- transactional undo/redo (editor track, stage A).
- *
- * The history is an ordinary document subscriber: attach subscribes,
- * and every committed transaction is recorded as one history entry
- * with its delta bytes copied (the notification-scoped pointers do
- * not outlive the callback).  Replays run as single
- * LK_ORIGIN_UNDO / LK_ORIGIN_REDO brackets, so they reach every
- * other observer through the same protocol as any edit; the history
- * ignores its own replays by origin and clears the redo stack on any
- * other recorded transaction.
- *
- * Stacks are unbounded, one entry per committed transaction (weft's
- * EditOp stack was also unbounded and uncoalesced; keystroke
- * coalescing is a stage-B command-layer bracketing policy, not a
- * history concern).
- */
+
 
 #include <string.h>
 
@@ -27,13 +11,10 @@ typedef struct hist_delta {
   lk_u32 start;
   lk_u32 deleted_len;
   lk_u32 inserted_len;
-  char *deleted;  /* owned copy, NULL when deleted_len == 0 */
-  char *inserted; /* owned copy, NULL when inserted_len == 0 */
+  char *deleted;
+  char *inserted;
 } hist_delta;
 
-/* One committed transaction.  serial is the stable identity stamped
- * at record time (monotonic from 1, never reused); it moves with the
- * entry between the undo and redo stacks. */
 typedef struct hist_entry {
   hist_delta *deltas;
   lk_u32 count;
@@ -53,19 +34,11 @@ struct lk_edit_history {
   lk_document *doc;
   lk_u32 sub_id;
 
-  /* Savepoint (lk_history_mark_saved): the undo_count at save time.
-   * saved_valid starts 0 and is cleared forever when a recorded
-   * transaction destroys the redo path back to the savepoint. */
   lk_u32 saved_undo_count;
   int saved_valid;
 
-  /* Next transaction serial (assigned only when a record actually
-   * lands -- an OOM drop must not advance it, so peeked serials
-   * always name a recorded transaction). */
   lk_u32 next_serial;
 };
-
-/* ---- Entry helpers ---- */
 
 static char *hist_copy_bytes(lk_edit_history *h, const char *src, lk_u32 len) {
   char *b;
@@ -106,8 +79,6 @@ static void hist_entry_free(lk_edit_history *h, hist_entry *e) {
   e->count = 0;
 }
 
-/* Deep-copy a committed transaction's deltas.  Returns 0 (with
- * nothing retained) on allocation failure. */
 static int hist_entry_copy(lk_edit_history *h, hist_entry *e,
                            const lk_doc_delta *deltas, lk_u32 n) {
   lk_u32 i;
@@ -178,8 +149,6 @@ static void hist_clear_stack(lk_edit_history *h, hist_entry *stack,
   *count = 0;
 }
 
-/* ---- Document listener ---- */
-
 static void hist_on_change(void *ud, const lk_document *d,
                            const lk_doc_delta *deltas, lk_u32 n) {
   lk_edit_history *h = (lk_edit_history *)ud;
@@ -192,16 +161,11 @@ static void hist_on_change(void *ud, const lk_document *d,
     return;
   }
 
-  /* our own replays come back through the same protocol */
   if (deltas[0].origin == LK_ORIGIN_UNDO ||
       deltas[0].origin == LK_ORIGIN_REDO) {
     return;
   }
 
-  /* Recording below the savepoint is about to destroy the redo path
-   * back to the saved state (the redo-stack clear below).  Decided
-   * BEFORE the push, applied only if the transaction is actually
-   * recorded — an OOM drop must not touch savepoint state. */
   below_savepoint = h->saved_valid && h->undo_count < h->saved_undo_count;
 
   if (!hist_entry_copy(h, &entry, deltas, n)) {
@@ -223,8 +187,6 @@ static void hist_on_change(void *ud, const lk_document *d,
 
   hist_clear_stack(h, h->redo_stack, &h->redo_count);
 }
-
-/* ---- Public API ---- */
 
 lk_edit_history *lk_history_new(void *(*alloc)(void *, lk_u32),
                                 void (*dealloc)(void *, void *), void *ud) {
@@ -294,7 +256,6 @@ int lk_history_undo(lk_edit_history *h, lk_document *d) {
   entry = h->undo_stack[h->undo_count - 1];
   h->undo_count--;
 
-  /* inverse of each delta, in reverse order, as one bracket */
   lk_doc_begin(d, LK_ORIGIN_UNDO);
 
   i = entry.count;
@@ -334,7 +295,6 @@ int lk_history_redo(lk_edit_history *h, lk_document *d) {
   entry = h->redo_stack[h->redo_count - 1];
   h->redo_count--;
 
-  /* recorded deltas replayed forward, as one bracket */
   lk_doc_begin(d, LK_ORIGIN_REDO);
 
   for (i = 0; i < entry.count; i++) {

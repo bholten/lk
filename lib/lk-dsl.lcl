@@ -18,21 +18,21 @@
 ;;; across widgets, compose with [Dict::merge $base $override].
 ;;; Unknown prop keys are hard errors (see _apply_props).
 
-;;; The Layer 2 DSL: `app`, `view`, `theme`, `translator`, `keybinding`,
-;;; `on`, `event_handler`, `clear_translators`, `screenshot`, `quit`, and one command
-;;; per widget kind, all exported
-;;; into the caller's scope.
+;;; The Layer 2 DSL: `app`, `view`, `theme`, `translator`,
+;;; `keybinding`, `on`, `event_handler`, `clear_translators`,
+;;; `screenshot`, `quit`, and one command per widget kind, all
+;;; exported into the caller's scope.
 ;;;
-;;; Every widget command shares one shape — `kind id ?props-dict?
-;;; ?body-block?` — with the two trailing args disambiguated by value
+;;; Every widget command shares one shape -- `kind id ?props-dict?
+;;; ?body-block?` -- with the two trailing args disambiguated by value
 ;;; shape: a dict is props, anything else is the body block.  Known
 ;;; prop keys: text, focusable, disabled, w, h, padding, gap, align,
 ;;; justify, text_align, text_valign, hidden, tooltip, split_ratio,
 ;;; split_controlled, controlled, grow, editor, image, filter, canvas,
-;;; spans, wrap, rows, row_h, row, value, checked, min, max,
-;;; step, columns, tag, present.  `tag` maps to `Lk::tag`, `present`
-;;; (a 2-element ptype + value list) to `Lk::present`, everything else
-;;; to `Lk::prop`.  Unknown keys and malformed trailing args are hard
+;;; spans, wrap, rows, row_h, row, value, checked, min, max, step,
+;;; columns, tag, present.  `tag` maps to `Lk::tag`, `present` (a
+;;; 2-element ptype + value list) to `Lk::present`, everything else to
+;;; `Lk::prop`.  Unknown keys and malformed trailing args are hard
 ;;; errors carrying the widget id.
 namespace LkDsl {
 
@@ -87,13 +87,13 @@ namespace LkDsl {
     let _known_props [String::join [Dict::keys $_prop_schema] ", "]
 
     ;; ---- Trailing-arg disambiguation ----
-    ;; kind id ?props-dict? ?body-block? — both optional, disambiguated
+    ;; kind id ?props-dict? ?body-block? -- both optional, disambiguated
     ;; by shape: a dict value is props, anything else is the body block.
     ;; Strictness (v2): more than two trailing args is an error; with
     ;; two, the first must be a dict and the second must not be; a lone
     ;; numeric arg (e.g. `button "x" 42`) or a stale `-flag` arg is an
     ;; error.  A lone non-dict, non-numeric, non-dash arg is the body
-    ;; (blocks are plain strings in Lcl — not distinguishable by type).
+    ;; (blocks are plain strings in Lcl -- not distinguishable by type).
     ;; Returns #{props <dict> body <block>}.
     proc _split_args {kind id rest} {
         var props #{}
@@ -145,7 +145,7 @@ namespace LkDsl {
 
     ;; ---- Prop application ----
     ;; Walks the props dict.  Unknown keys are hard errors carrying the
-    ;; widget id and the known-key list — no silent swallowing.
+    ;; widget id and the known-key list -- no silent swallowing.
     proc _apply_props {kind id node props} {
         foreach key [Dict::keys $props] {
             if [not [has? $_prop_schema $key]] {
@@ -158,7 +158,7 @@ namespace LkDsl {
                 Lk::tag $_tree $node $val
             } else {
                 if [== $key present] {
-                    ;; present (ptype value-or-list) — a list of two elements
+                    ;; present (ptype value-or-list) -- a list of two elements
                     Lk::present $_tree $node [get $val 0] [get $val 1]
                 } else {
                     Lk::prop $_tree $node $key $val
@@ -557,7 +557,7 @@ namespace LkDsl {
     ;;; Drop every translator and keybinding registered so far (wraps
     ;;; `Lk::clear_translators` on the app's ui).  For keymaps that
     ;;; change at runtime: clear, then re-run the `translator` /
-    ;;; `keybinding` forms from the new table — typically from the
+    ;;; `keybinding` forms from the new table -- typically from the
     ;;; view body when a keymap generation counter changes, so the
     ;;; rebinding is live on the next frame.  Safe from any handler.
     ;;;
@@ -608,7 +608,7 @@ namespace LkDsl {
         Lk::window_screenshot $_win $path
     }
 
-    ;;; Leave the run loop after the current frame — from a command
+    ;;; Leave the run loop after the current frame -- from a command
     ;;; handler, the event handler, or the view body.
     ;;;
     ;;;   keybinding q ctrl Quit
@@ -625,9 +625,121 @@ namespace LkDsl {
 
     ;;; Declare the view: the body re-runs every frame to rebuild the
     ;;; tree under an implicit root window node.  Keep widget ids
-    ;;; stable across frames — retained state and focus follow ids.
+    ;;; stable across frames -- retained state and focus follow ids.
     proc view {body} {
         set! _view_body $body
+    }
+
+    ;; ---- Internal: the file-picker fallback ----
+    ;;
+    ;; Where the backend has no native dialogs (a terminal), the Lk::
+    ;; dialog procs call the window's Lk::file_dialog_fallback, which
+    ;; `app` points here: a modal with a path input, Open/Save and
+    ;; Cancel, completing the script's handler exactly as the native
+    ;; dialog would (a 1-element list, or empty for cancel).  State
+    ;; lives in _picker while it is open; the subtree is appended to
+    ;; the root every frame by _frame; ESC (core's modal pre-step)
+    ;; shows up as the overlay count dropping below the push depth.
+    ;; Restyle with `rule column #{tag file_picker} #{...}`.
+    var _picker #{}
+    var _picker_bound 0
+
+    proc _picker_open {save handler filters default} {
+        if [not [empty? $_picker]] {
+            error "file dialog: a picker is already open"
+        }
+
+        var hint ""
+
+        foreach f $filters {
+            let one "[get $f 0] ([get $f 1])"
+
+            if [empty? $hint] {
+                set! hint $one
+            } else {
+                set! hint "$hint, $one"
+            }
+        }
+
+        if [== $_picker_bound 0] {
+            set! _picker_bound 1
+            Lk::theme_rule $_ui column file_picker "" #{bg (40 44 54) padding 12 gap 8 border_width 1 border_color (90 96 112)}
+            Lk::add_translator $_ui value_changed lkdsl_picker_path "" "" "" _lkdsl_picker_edit ""
+            Lk::add_translator $_ui key_down lkdsl_picker_path "" return "" _lkdsl_picker_ok ""
+            Lk::add_translator $_ui pointer_down lkdsl_picker "" "" "" _lkdsl_picker ""
+            set! _cmd_handlers [put $_cmd_handlers _lkdsl_picker_edit [lambda {cmd} {
+                LkDsl::_picker_edit [get $cmd source_value]
+            }]]
+            set! _cmd_handlers [put $_cmd_handlers _lkdsl_picker_ok [lambda {cmd} {
+                LkDsl::_picker_submit
+            }]]
+            set! _cmd_handlers [put $_cmd_handlers _lkdsl_picker [lambda {cmd} {
+                if [== [get [get $cmd args] 0] ok] {
+                    LkDsl::_picker_submit
+                } else {
+                    LkDsl::_picker_cancel
+                }
+            }]]
+        }
+
+        Lk::overlay_push $_ui #{kind modal anchor center content_root_id lkdsl_picker}
+        set! _picker #{save $save handler $handler path $default hint $hint
+                       title [if $save {"Save file"} {"Open file"}]
+                       verb [if $save {"Save"} {"Open"}]
+                       depth [Lk::overlay_count $_ui]
+                       built 0 focus_pending 1}
+    }
+
+    proc _picker_edit {text} {
+        if [not [empty? $_picker]] {
+            set! _picker [put $_picker path $text]
+        }
+    }
+
+    ;; Complete: forget the picker FIRST so the handler may open the
+    ;; next dialog at once.
+    proc _picker_finish {paths} {
+        let handler [get $_picker handler]
+
+        set! _picker #{}
+        apply $handler $paths
+    }
+
+    proc _picker_submit {} {
+        if [empty? $_picker] { return }
+
+        let path [get $_picker path]
+
+        if [empty? $path] { return }
+
+        Lk::overlay_pop $_ui
+        _picker_finish [list $path]
+    }
+
+    proc _picker_cancel {} {
+        if [empty? $_picker] { return }
+
+        Lk::overlay_pop $_ui
+        _picker_finish ()
+    }
+
+    proc _picker_build {} {
+        let st $_picker
+
+        column "lkdsl_picker" #{hidden 1 tag file_picker} {
+            label "lkdsl_picker_title" #{text [get $st title]}
+            text_input "lkdsl_picker_path" #{text [get $st path] w 360 focusable 1
+                                             present (lkdsl_picker_path (p))}
+
+            if [not [empty? [get $st hint]]] {
+                label "lkdsl_picker_hint" #{text [get $st hint]}
+            }
+
+            row "lkdsl_picker_row" #{gap 8} {
+                button "lkdsl_picker_ok" #{text [get $st verb] focusable 1 present (lkdsl_picker (ok))}
+                button "lkdsl_picker_cancel" #{text "Cancel" focusable 1 present (lkdsl_picker (cancel))}
+            }
+        }
     }
 
     ;; ---- Internal: dispatch commands ----
@@ -653,6 +765,27 @@ namespace LkDsl {
         ;; Eval the user's view body
         eval $_view_body
 
+        ;; The file-picker fallback rides along under the root while
+        ;; open; a vanished modal (ESC) is a cancel.
+        if [not [empty? $_picker]] {
+            if [< [Lk::overlay_count $_ui] [get $_picker depth]] {
+                _picker_finish ()
+            } else {
+                _picker_build
+
+                ;; Focus needs the node in a COMMITTED tree: the frame
+                ;; after the first build.
+                if [get $_picker focus_pending] {
+                    if [get $_picker built] {
+                        Lk::focus_set $_ui lkdsl_picker_path
+                        set! _picker [put $_picker focus_pending 0]
+                    } else {
+                        set! _picker [put $_picker built 1]
+                    }
+                }
+            }
+        }
+
         set! _parent_stack ()
     }
 
@@ -660,8 +793,8 @@ namespace LkDsl {
     ;;; body-block`.
     ;;;
     ;;; Props: `width` and `height` (default 800x600), `font` (a .ttf
-    ;;; path), `font_size` (default 16), and `icon` (an image path —
-    ;;; PNG with SDL3_image, BMP always — applied best-effort via
+    ;;; path), `font_size` (default 16), and `icon` (an image path --
+    ;;; PNG with SDL3_image, BMP always -- applied best-effort via
     ;;; `Lk::window_icon`: an unreadable icon is not an error); unknown
     ;;; keys hard-error.
     ;;; The body runs once to register `theme`, `translator`,
@@ -736,15 +869,20 @@ namespace LkDsl {
             Lk::window_icon $_win $icon
         }
 
-        ;; Eval body — registers theme, translators, on-handlers, view, event_handler
+        ;; Native dialogs where the backend has them, the picker modal
+        ;; where it has not (a terminal); scripts call the same procs.
+        Lk::file_dialog_fallback $_win [lambda {save handler filters default} {
+            LkDsl::_picker_open $save $handler $filters $default
+        }]
+
+        ;; Eval body -- registers theme, translators, on-handlers, view, event_handler
         eval $body
 
-        ;; Install command dispatcher if any on-handlers were registered
-        if [not [empty? $_cmd_handlers]] {
-            Lk::set_command_handler $_ui [lambda {cmd} {
-                LkDsl::_dispatch_command $cmd
-            }]
-        }
+        ;; The command dispatcher: the app's `on` handlers and the
+        ;; prelude's own (the file picker), so always installed.
+        Lk::set_command_handler $_ui [lambda {cmd} {
+            LkDsl::_dispatch_command $cmd
+        }]
 
         ;; Run the window loop
         Lk::window_run $_win [lambda {tree} { LkDsl::_frame $tree }]

@@ -28,7 +28,7 @@
 #endif
 
 #include "lcl-lk.h"
-#include "lk-sdl.h"
+#include <lk-window.h>
 
 int main(int argc, char **argv) {
   lcl_interp *interp;
@@ -50,12 +50,10 @@ int main(int argc, char **argv) {
 
   lcl_register_core(interp);
   lcl_register_lk(interp);
-  lcl_lk_set_args(argc - 2, argv + 2); /* everything after the script */
+  lcl_lk_set_args(argc - 2, argv + 2);
 
 #ifdef LK_HAVE_LCL_IO
-  /* File IO stays a package: core Lcl is IO-free by design and lk is
-   * a UI library (docs/weft-surface.md section 3).  The runner is
-   * where the Io::* procs belong. */
+
   lcl_register_io(interp);
 #endif
 
@@ -64,8 +62,7 @@ int main(int argc, char **argv) {
 #endif
 
 #ifdef LK_HAVE_LCL_RANDOM
-  /* xoshiro128** streams (Xoshiro::new/int/float/shuffle) -- runner
-   * only, like Io:: and Regex::; scripts probe with catch. */
+
   lcl_register_random(interp);
 #endif
 
@@ -81,8 +78,6 @@ int main(int argc, char **argv) {
   lcl_register_posix(interp);
 #endif
 
-  /* The DSL prelude ships inside lcl_lk.  LK_DSL_FILE=<path> evaluates
-   * a file instead -- editing lib/lk-dsl.lcl without a rebuild. */
   {
     const char *dsl_file = getenv("LK_DSL_FILE");
     int dsl_rc;

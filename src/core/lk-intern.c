@@ -14,7 +14,6 @@ static lk_u32 lk_hash_bytes(const char *p, lk_u32 n) {
     h *= 16777619u;
   }
 
-  /* Avoid 0 to keep "none" sentinel if you ever need it */
   if (h == 0) {
     h = 1;
   }
@@ -87,7 +86,6 @@ static int it_grow_table(lk_intern *it, lk_u32 new_cap) {
   it->tab_cap = new_cap;
   it->tab_len = 0;
 
-  /* rehash */
   for (i = 0; i < old_cap; i++) {
     struct lk_intern_entry e = old[i];
 
@@ -95,7 +93,6 @@ static int it_grow_table(lk_intern *it, lk_u32 new_cap) {
       continue;
     }
 
-    /* insertt */
     {
       lk_u32 mask = new_cap - 1;
       lk_u32 idx = e.hash & mask;
@@ -233,9 +230,6 @@ lk_intern *lk_intern_new(void *(*alloc)(void *, lk_u32),
 
   memset(it, 0, sizeof(*it));
 
-  /* Callers passing a custom alloc must pass the matching dealloc,
-   * otherwise memory from a custom allocator would be released with
-   * the system deallocator. */
   it->alloc = alloc ? alloc : lk_sys_alloc;
   it->dealloc = dealloc ? dealloc : lk_sys_dealloc;
   it->ud = alloc_ud;
@@ -265,7 +259,6 @@ void lk_intern_destroy(lk_intern *it) {
     it_dealloc(it, it->by_id);
   }
 
-  /* best effort free */
   it_dealloc(it, it);
 }
 
@@ -328,7 +321,7 @@ lk_node_id lk_intern_id(lk_intern *it, lk_str s) {
       e->hash = h;
       e->str_off = off;
       e->str_len = s.len;
-      e->id = (lk_node_id)(it->by_id_len + 1); /* IDs start at 1 */
+      e->id = (lk_node_id)(it->by_id_len + 1);
       it->tab_len++;
 
       it->by_id[it->by_id_len] = e;

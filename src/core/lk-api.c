@@ -1,16 +1,8 @@
-/*
- * lk-api.c — Binding-safe accessor functions.
- *
- * Trivial one-liner wrappers that expose struct fields through function
- * calls so language bindings never reach into struct internals.
- * All null-safe with bounds checking.
- */
+
 
 #include <string.h>
 
 #include <lk.h>
-
-/* ---- Node field accessors ---- */
 
 lk_node_id lk_node_id_get(const lk_tree *t, lk_ix n) {
   if (!t || n == 0 || n >= t->node_count) {
@@ -52,8 +44,6 @@ lk_ix lk_node_next_sibling(const lk_tree *t, lk_ix n) {
   return t->nodes[n].next_sibling;
 }
 
-/* ---- Tree accessors ---- */
-
 lk_u32 lk_tree_node_count(const lk_tree *t) {
   if (!t) {
     return 0;
@@ -78,8 +68,6 @@ lk_intern *lk_tree_intern(const lk_tree *t) {
   return t->intern;
 }
 
-/* ---- Changeset accessors ---- */
-
 lk_u32 lk_changeset_count(const lk_changeset *cs) {
   if (!cs) {
     return 0;
@@ -96,8 +84,6 @@ const lk_change *lk_changeset_get(const lk_changeset *cs, lk_u32 idx) {
   return &cs->changes[idx];
 }
 
-/* ---- Command queue accessors ---- */
-
 lk_u32 lk_command_queue_count(const lk_command_queue *q) {
   if (!q) {
     return 0;
@@ -113,8 +99,6 @@ const lk_command *lk_command_queue_get(const lk_command_queue *q, lk_u32 idx) {
 
   return &q->cmds[idx];
 }
-
-/* ---- Command field accessors ---- */
 
 lk_u32 lk_command_name(const lk_command *cmd) {
   if (!cmd) {
@@ -196,8 +180,6 @@ lk_value lk_command_source_value(const lk_command *cmd) {
   return cmd->source_value;
 }
 
-/* ---- UI accessors ---- */
-
 lk_intern *lk_ui_intern(const lk_ui *ui) {
   if (!ui) {
     return NULL;
@@ -205,8 +187,6 @@ lk_intern *lk_ui_intern(const lk_ui *ui) {
 
   return ui->intern;
 }
-
-/* ---- Binding-friendly const char* accessors ---- */
 
 lk_ix lk_tree_add_node_c(lk_tree *t, const char *id_str, lk_kind kind) {
   if (!id_str) {
@@ -232,8 +212,6 @@ const char *lk_node_text_cstr(const lk_tree *t, lk_ix n) {
   return lk_intern_cstr(t->intern, sid);
 }
 
-/* ---- Event init helpers ---- */
-
 void lk_event_init_pointer(lk_event *ev, lk_u8 type, lk_i32 x, lk_i32 y,
                            lk_u8 button) {
   if (!ev) {
@@ -257,8 +235,6 @@ void lk_event_init_key(lk_event *ev, lk_u8 type, lk_u16 keycode, lk_u8 mods) {
   ev->data.key.keycode = keycode;
   ev->mods = mods;
 }
-
-/* ---- Layout convenience ---- */
 
 int lk_layout_simple(const lk_tree *t, lk_i32 viewport_w, lk_i32 viewport_h,
                      lk_rect *rects) {

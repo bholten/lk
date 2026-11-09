@@ -1,0 +1,50 @@
+;; tools/tui-picker-smoke.lcl -- the DSL's file-picker fallback, for
+;; tools/tui-pty-smoke.py.  Two buttons call the ordinary dialog procs;
+;; on a backend without native dialogs the prelude's picker modal
+;; answers them, and the label shows what the handler received.
+;; Run it by hand too:  build/lcl_lk_tui tools/tui-picker-smoke.lcl
+
+var result "none"
+
+app "Picker smoke" #{width 640 height 320} {
+
+    translator pointer_down act Act
+    keybinding q ctrl Quit
+
+    on Quit [lambda {cmd} { quit }]
+
+    on Act [lambda {cmd} {
+        let verb [get [get $cmd args] 0]
+
+        if [== $verb open] {
+            Lk::open_file_dialog ${LkDsl::_win} [lambda {paths} {
+                if [len $paths] {
+                    set! result "opened [get $paths 0]"
+                } else {
+                    set! result "cancelled"
+                }
+            }] (("Text" "txt")) "/tmp/x.txt"
+        }
+
+        if [== $verb save] {
+            Lk::save_file_dialog ${LkDsl::_win} [lambda {paths} {
+                if [len $paths] {
+                    set! result "saved [get $paths 0]"
+                } else {
+                    set! result "cancelled"
+                }
+            }] () "out.txt"
+        }
+    }]
+
+    view {
+        column "main" #{padding 8 gap 8} {
+            row "buttons" #{gap 8} {
+                button "open" #{text "Open..." focusable 1 present (act (open))}
+                button "save" #{text "Save..." focusable 1 present (act (save))}
+            }
+            label "result" #{text "result: $result"}
+            label "caps" #{text "caps: [String::join [Lk::window_caps ${LkDsl::_win}] { }]"}
+        }
+    }
+}

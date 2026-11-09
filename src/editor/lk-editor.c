@@ -1,29 +1,4 @@
-/*
- * lk-editor.c -- editor view state + command implementations (editor
- * track, stage B2; docs/editor.md sections 6 and 9).
- *
- * State: cursor byte offset (codepoint-boundary-aligned), selection
- * anchor (sentinel = none), sticky x-pixel for vertical motion
- * (resolved lazily on the first UP/DOWN after a horizontal move),
- * anchored viewport {top_byte, y_offset} over VISUAL ROWS, the wrap
- * cache + horizontal scroll (docs/editor-wrap.md), drag flag, tab
- * settings, growable scratch for visible-row extraction, and a
- * transient per-frame geometry block written by
- * lk_editor_layout_node.
- *
- * The editor subscribes to its own document: LK_ORIGIN_UNDO/REDO
- * transactions derive the cursor from the deltas (end of the last
- * inserted range, start of the last deleted one); its own command
- * transactions are skipped (commands set the cursor directly); any
- * foreign transaction clamps cursor/selection/viewport to the new
- * document shape (full foreign-edit adjustment is deferred).
- *
- * Motion/edit semantics are ported from weft's editor.c (word rules,
- * boundary behavior of vertical motion); layout/wrap/blink stayed
- * behind.  weft's byte target_column generalizes to a sticky x-PIXEL
- * resolved per line via index_from_x -- identical under the monospace
- * stub, proportional-correct for free.
- */
+
 
 #include <string.h>
 
@@ -48,25 +23,17 @@
 #define ED_FALLBACK_BASELINE 12
 #define ED_FALLBACK_PAGE_LINES 20
 #define ED_TAB_SIZE 4
-#define ED_SCROLL_BAR_W 6 /* the lk-scroll.c SCROLL_BAR_W convention */
+#define ED_SCROLL_BAR_W 6
 #define ED_SCROLL_THUMB_MIN 8
 
-/* One visible VISUAL ROW extracted into the vis scratch (a whole
- * document line when wrapping is off). */
 typedef struct ed_line {
-  lk_u32 line;      /* document line index */
-  lk_u32 row;       /* visual row within that line (0 when unwrapped) */
-  lk_u32 doc_start; /* byte offset of the row start in the document */
-  lk_u32 doc_len;   /* row length in bytes, excluding the \n */
-  lk_u32 off;       /* offset of the row's bytes in e->vis */
+  lk_u32 line;
+  lk_u32 row;
+  lk_u32 doc_start;
+  lk_u32 doc_len;
+  lk_u32 off;
 } ed_line;
 
-/* Per-document-line wrap cache entry (docs/editor-wrap.md section 1).
- * breaks[] holds the 2nd..Nth row starts RELATIVE to the line start
- * (row_count == break_count + 1); an unwrapped line allocates
- * nothing.  An entry is valid iff generation == e->wrap_generation
- * (generation 0 is reserved invalid; e->wrap_generation starts at
- * 1). */
 typedef struct ed_line_wrap {
   lk_u32 *breaks;
   lk_u32 break_count;
@@ -74,65 +41,41 @@ typedef struct ed_line_wrap {
   lk_u32 generation;
 } ed_line_wrap;
 
-/* One tab-split (and, when spans are active, span-split) run segment,
- * in absolute pixels.  flags/fg/bg are copied out of the matching
- * span at layout time so segments never dangle into a replaced span
- * array; flags == 0 means "style->fg, no bg, no underline". */
 typedef struct ed_seg {
-  lk_u32 off; /* into e->vis */
+  lk_u32 off;
   lk_u32 len;
   lk_i32 x, y, w;
-  lk_u8 flags; /* LK_SPAN_* */
+  lk_u8 flags;
   lk_color fg, bg;
 } ed_seg;
 
-/* Transient per-frame geometry (docs/editor.md section 7): stashed by
- * the layout hook, read by render/hit-testing.  Application-owned --
- * the editor adds zero entries to lk_state. */
 typedef struct ed_geom {
   int valid;
-  const void *tree; /* claim stamp (see lk_editor_layout_node) */
+  const void *tree;
   lk_node_id node_id;
-  lk_rect rect; /* content rect */
+  lk_rect rect;
   lk_i32 line_h;
-  lk_i32 baseline; /* top of line -> text baseline, for underlines */
+  lk_i32 baseline;
   lk_u32 first_line;
   lk_u32 vis_count;
-  lk_i32 scroll_x; /* horizontal scroll this geometry was built with */
-  /* Per-caret cursor bars and selection rects (stage E2): the counts
-   * live here (zeroed with the block each layout); the growable
-   * arrays live on lk_editor (cursor_xy / sel_rects) so the memset
-   * never drops owned buffers.  cursor_xy holds x,y pairs for the
-   * VISIBLE carets only, in caret (document) order; sel_rects holds
-   * up to 3 rects per caret (head/body/tail), caret-major. */
+  lk_i32 scroll_x;
+
   lk_u32 cursor_count;
   lk_u32 sel_count;
-  /* Scrollbar extent (docs/editor-wrap.md section 6 model): total
-   * visual rows over the whole document and the pixel offset of the
-   * viewport top within that extent — exact rows for wrap-measured
-   * lines, estimator rows otherwise (arithmetic only, no backend
-   * calls).  Consumed by the overlay scrollbar in render. */
+
   lk_u32 sb_total_rows;
   lk_u32 sb_top_px;
   lk_u16 font_id, font_size;
-  const lk_text_backend *tb; /* backend this snapshot was built with
-                                (lk_editor_pos_at resolves against the
-                                last completed layout, backend and
-                                all) */
+  const lk_text_backend *tb;
+
 } ed_geom;
 
-/* One caret: an oriented half-open range [min(cursor,anchor),
- * max(cursor,anchor)), empty when there is no anchor (or the anchor
- * equals the cursor).  docs/editor-multicursor.md section 2. */
 typedef struct ed_caret {
-  lk_u32 cursor;   /* codepoint-aligned byte offset */
-  lk_u32 anchor;   /* ED_NO_ANCHOR = no selection */
-  lk_i32 sticky_x; /* ED_STICKY_NONE = unset; x within the VISUAL ROW */
+  lk_u32 cursor;
+  lk_u32 anchor;
+  lk_i32 sticky_x;
 } ed_caret;
 
-/* Caret-set snapshot around one editor-originated transaction, keyed
- * by the history's transaction serial (docs/editor-multicursor.md
- * section 5.2).  serial 0 = empty slot. */
 typedef struct ed_caret_snap {
   lk_u32 serial;
   ed_caret *before;
@@ -150,73 +93,46 @@ struct lk_editor {
   lk_edit_history *hist;
   lk_u32 sub_id;
 
-  /* The caret set (docs/editor-multicursor.md).  Invariant: count
-   * >= 1, normalized (sorted; non-empty ranges pairwise disjoint;
-   * no empty caret strictly inside a non-empty range; no duplicate
-   * empties).  primary indexes the caret the single-caret public
-   * API reports and the viewport follows. */
   ed_caret *carets;
   lk_u32 caret_count, caret_cap;
   lk_u32 caret_primary;
 
-  /* Snapshot ring for undo/redo caret restore + the last serial this
-   * editor adopted (guards against history dropping a record on
-   * allocation failure: adopt only when the serial ADVANCED). */
   ed_caret_snap snaps[ED_SNAP_RING];
   lk_u32 snap_head;
   lk_u32 last_adopted_serial;
 
   lk_editor_viewport vp;
   int drag;
-  int sb_drag;    /* scrollbar thumb drag in progress */
-  lk_i32 sb_grab; /* pointer y minus thumb top at grab time */
+  int sb_drag;
+  lk_i32 sb_grab;
 
-  /* Alt+drag box selection (stage E3, docs/editor-multicursor.md
-   * section 9.3): the anchor corner as a (line, visual row, content-
-   * relative x-pixel) triple -- stable during the drag (no edits
-   * happen mid-drag) and viewport-independent, so the walk works
-   * even after the viewport scrolls away from the anchor. */
   int box;
   lk_u32 box_line, box_row;
   lk_i32 box_x;
-  int editable; /* read-only policy gates USER mutations only */
+  int editable;
   lk_u32 tab_size;
-  int in_command; /* inside one of our own doc transactions */
-  int in_replay;  /* inside a history replay THIS editor invoked
-                     (LK_ED_UNDO/REDO) -- ed_on_doc jumps the cursor
-                     to the replay site only for the invoking view;
-                     every other view treats the replay as a foreign
-                     edit and transforms */
-  int pending_scroll;
-  lk_i32 scroll_x; /* horizontal scroll px; forced 0 while wrapping */
+  int in_command;
+  int in_replay;
 
-  /* wrap engine (docs/editor-wrap.md).  wrap[] is one entry per
-   * document line, spliced in lockstep with the line index by
-   * ed_on_doc; it is materialized only while wrap_mode != NONE.
-   * The wrap key (width/font/tab/backend POINTER) is stamped by
-   * layout; any change bumps wrap_generation -- one integer write,
-   * never a sweep. */
-  lk_u32 wrap_mode; /* lk_editor_wrap_mode */
+  int pending_scroll;
+  lk_i32 scroll_x;
+
+  lk_u32 wrap_mode;
   ed_line_wrap *wrap;
   lk_u32 wrap_count, wrap_cap;
   lk_u32 wrap_generation;
-  lk_i32 wrap_w; /* wrap key: content width px (0 = no layout yet) */
+  lk_i32 wrap_w;
   const void *wrap_tb;
   lk_u16 wrap_font_id, wrap_font_size;
   lk_u32 wrap_tab;
 
-  /* scroll-extent estimator (docs/editor-wrap.md section 6): running
-   * pixel/byte totals over measured lines; consumed ONLY at the
-   * scroll-extent edge, never by the wrap engine itself. */
   lk_u32 est_px, est_bytes;
 
-  /* last-known metrics (survive geometry invalidation) */
   lk_i32 line_h;
   lk_i32 space_adv;
-  lk_i32 page_lines; /* 0 = no layout yet */
+  lk_i32 page_lines;
   lk_u16 font_id, font_size;
 
-  /* layout scratch: visible line bytes + per-line/per-segment info */
   char *vis;
   lk_u32 vis_len, vis_cap;
   ed_line *lines;
@@ -224,34 +140,26 @@ struct lk_editor {
   ed_seg *segs;
   lk_u32 seg_count, seg_cap;
 
-  /* per-caret geometry arrays (stage E2; counts in ed_geom) */
   lk_i32 *cursor_xy;
-  lk_u32 cursor_xy_cap; /* capacity in PAIRS */
+  lk_u32 cursor_xy_cap;
   lk_rect *sel_rects;
   lk_u32 sel_rects_cap;
 
-  /* command-time single-line extraction buffer */
   char *line_buf;
   lk_u32 line_buf_cap;
 
-  /* wrap-measurement line buffer (separate from line_buf: break
-   * finding runs while callers hold line_buf text) */
   char *wrap_buf;
   lk_u32 wrap_buf_cap;
 
-  /* styled-span snapshot (deep copy; docs/editor.md section 10) */
   lk_edit_span *spans;
   lk_u32 span_count, span_cap;
   lk_revision span_rev;
   lk_u32 span_range_start, span_range_end;
 
-  /* interior presentation source (weft-surface S1); zeroed = none */
   lk_presentation_source psrc;
 
   ed_geom geom;
 };
-
-/* ---- Allocation helpers ---- */
 
 static void *ed_grow_buf(lk_editor *e, void *old, lk_u32 old_bytes,
                          lk_u32 new_bytes) {
@@ -370,8 +278,6 @@ static int ed_sel_rects_reserve(lk_editor *e, lk_u32 needed) {
   return 1;
 }
 
-/* Append one selection rect (grow-as-needed; allocation failure just
- * drops the rect -- degraded highlight, never a crash). */
 static void ed_sel_rect_push(lk_editor *e, lk_i32 x, lk_i32 y, lk_i32 w,
                              lk_i32 h) {
   lk_rect *sr;
@@ -430,14 +336,10 @@ static int ed_line_buf_reserve(lk_editor *e, lk_u32 needed) {
   return 1;
 }
 
-/* ---- Codepoint stepping over the document ---- */
-
 static int ed_is_cont(unsigned char b) {
   return (b & 0xC0u) == 0x80u;
 }
 
-/* Clamp pos to the document length and snap it down to a codepoint
- * boundary. */
 static lk_u32 ed_snap(const lk_document *d, lk_u32 pos) {
   lk_u32 len = lk_doc_len(d);
 
@@ -482,8 +384,6 @@ static lk_u32 ed_next_cp(const lk_document *d, lk_u32 pos) {
   return pos;
 }
 
-/* Decode the codepoint at pos (weft's decode_codepoint_at, over
- * lk_doc_get_byte).  Invalid sequences degrade to the raw byte. */
 static lk_u32 ed_cp_at(const lk_document *d, lk_u32 pos, lk_u32 doc_len) {
   unsigned char b;
   lk_u32 n;
@@ -525,8 +425,6 @@ static lk_u32 ed_cp_at(const lk_document *d, lk_u32 pos, lk_u32 doc_len) {
   return cp;
 }
 
-/* ---- Word classification (ported from weft utf8_is_word_char) ---- */
-
 static int ed_is_word_cp(lk_u32 cp) {
   if ((cp >= 'a' && cp <= 'z') || (cp >= 'A' && cp <= 'Z')) {
     return 1;
@@ -541,39 +439,36 @@ static int ed_is_word_cp(lk_u32 cp) {
   }
 
   if (cp >= 0x00C0u && cp <= 0x024Fu) {
-    return 1; /* Latin Extended */
+    return 1;
   }
 
   if (cp >= 0x0300u && cp <= 0x036Fu) {
-    return 1; /* combining diacritics */
+    return 1;
   }
 
   if (cp >= 0x0370u && cp <= 0x03FFu) {
-    return 1; /* Greek */
+    return 1;
   }
 
   if (cp >= 0x0400u && cp <= 0x04FFu) {
-    return 1; /* Cyrillic */
+    return 1;
   }
 
   if (cp >= 0x3040u && cp <= 0x30FFu) {
-    return 1; /* Hiragana + Katakana */
+    return 1;
   }
 
   if (cp >= 0x4E00u && cp <= 0x9FFFu) {
-    return 1; /* CJK unified */
+    return 1;
   }
 
   if (cp >= 0xAC00u && cp <= 0xD7AFu) {
-    return 1; /* Hangul */
+    return 1;
   }
 
   return 0;
 }
 
-/* Word-left target (weft editor_move_cursor_word_left): back one
- * codepoint, skip non-word backwards, then skip word chars backwards
- * to the word start. */
 static lk_u32 ed_word_left(const lk_document *d, lk_u32 pos) {
   lk_u32 doc_len = lk_doc_len(d);
 
@@ -604,8 +499,6 @@ static lk_u32 ed_word_left(const lk_document *d, lk_u32 pos) {
   return pos;
 }
 
-/* Word-right target (weft editor_move_cursor_word_right): skip word
- * chars forward, then skip non-word chars to the next word start. */
 static lk_u32 ed_word_right(const lk_document *d, lk_u32 pos) {
   lk_u32 doc_len = lk_doc_len(d);
 
@@ -628,12 +521,6 @@ static lk_u32 ed_word_right(const lk_document *d, lk_u32 pos) {
   return pos;
 }
 
-/* The word containing (or ending at) pos: [lo, hi) spanning the
- * maximal run of word codepoints around pos.  A position not on a
- * word cp is given one look-behind (the caret sits AFTER the last
- * letter of a word it just typed -- both reference editors count
- * that as "on the word").  Returns 0 when neither side is a word cp
- * (whitespace, empty line).  Stage E3 SELECT_NEXT_MATCH expansion. */
 static int ed_word_at(const lk_document *d, lk_u32 pos, lk_u32 *out_lo,
                       lk_u32 *out_hi) {
   lk_u32 doc_len = lk_doc_len(d);
@@ -671,15 +558,6 @@ static int ed_word_at(const lk_document *d, lk_u32 pos, lk_u32 *out_lo,
   return hi > lo;
 }
 
-/* ---- Tab-segment pixel geometry ----
- *
- * A literal \t splits a line into segments; x advances to the next
- * (tab_size * space-advance) stop after each segment.  The same
- * segment walk backs x_from_index, index_from_x, and the render-time
- * run positions (precomputed at layout).  With no backend, a
- * monospace fallback of space_adv pixels per codepoint keeps the
- * shape identical (matches the stub for its default metrics). */
-
 static lk_i32 ed_advance(const lk_editor *e) {
   return e->space_adv > 0 ? e->space_adv : ED_FALLBACK_ADVANCE;
 }
@@ -690,7 +568,6 @@ static lk_i32 ed_tab_px(const lk_editor *e) {
   return px > 0 ? px : 1;
 }
 
-/* Count codepoints in p[0..ix). */
 static lk_u32 ed_count_cp(const char *p, lk_u32 len, lk_u32 ix) {
   lk_u32 i = 0;
   lk_u32 n = 0;
@@ -707,7 +584,6 @@ static lk_u32 ed_count_cp(const char *p, lk_u32 len, lk_u32 ix) {
   return n;
 }
 
-/* Pixel x of byte ix within a single tab-free run. */
 static lk_i32 ed_run_x(const lk_editor *e, const lk_text_backend *tb,
                        const char *p, lk_u32 len, lk_u32 ix) {
   lk_str run;
@@ -726,7 +602,6 @@ static lk_i32 ed_run_x(const lk_editor *e, const lk_text_backend *tb,
   return (lk_i32)ed_count_cp(p, len, ix) * ed_advance(e);
 }
 
-/* Nearest codepoint boundary to pixel x within a tab-free run. */
 static lk_u32 ed_run_ix(const lk_editor *e, const lk_text_backend *tb,
                         const char *p, lk_u32 len, lk_i32 x) {
   lk_str run;
@@ -766,7 +641,6 @@ static lk_u32 ed_run_ix(const lk_editor *e, const lk_text_backend *tb,
   return i;
 }
 
-/* Pixel x of byte ix within a line, with tab expansion. */
 static lk_i32 ed_line_x_from_ix(const lk_editor *e, const lk_text_backend *tb,
                                 const char *p, lk_u32 len, lk_u32 ix) {
   lk_i32 x = 0;
@@ -801,9 +675,6 @@ static lk_i32 ed_line_x_from_ix(const lk_editor *e, const lk_text_backend *tb,
   return x;
 }
 
-/* Nearest boundary to pixel x within a line, with tab expansion.
- * Positions inside a tab span snap to the nearer of its two edges
- * (ties round forward, matching the stub's rounding). */
 static lk_u32 ed_line_ix_from_x(const lk_editor *e, const lk_text_backend *tb,
                                 const char *p, lk_u32 len, lk_i32 x) {
   lk_i32 seg_x = 0;
@@ -844,8 +715,6 @@ static lk_u32 ed_line_ix_from_x(const lk_editor *e, const lk_text_backend *tb,
   return len;
 }
 
-/* ---- Segment emission (tab runs, span-split into sub-pieces) ---- */
-
 static int ed_push_seg(lk_editor *e, lk_u32 off, lk_u32 len, lk_i32 x, lk_i32 y,
                        lk_i32 w, lk_u8 flags, lk_color fg, lk_color bg) {
   ed_seg seg;
@@ -867,8 +736,6 @@ static int ed_push_seg(lk_editor *e, lk_u32 off, lk_u32 len, lk_i32 x, lk_i32 y,
   return 1;
 }
 
-/* Snap a byte offset within run[0..len) down to a codepoint boundary
- * (sloppy producers can hand span edges that split a sequence). */
 static lk_u32 ed_snap_run_ix(const char *run, lk_u32 len, lk_u32 ix) {
   if (ix > len) {
     ix = len;
@@ -881,13 +748,6 @@ static lk_u32 ed_snap_run_ix(const char *run, lk_u32 len, lk_u32 ix) {
   return ix;
 }
 
-/* Emit one tab-free run as segments: a single segment when no
- * revision-matched spans overlap it, otherwise span-split sub-pieces
- * whose x positions come from the same x_from_index walk the plain
- * segments use.  run/run_len are the run's bytes (already in e->vis
- * at vis_off), doc_off its document byte offset, x/y/w its absolute
- * pixel geometry, spans_on the layout-time staleness verdict.
- * Returns 0 only on allocation failure. */
 static int ed_emit_run(lk_editor *e, const lk_text_backend *tb, const char *run,
                        lk_u32 run_len, lk_u32 vis_off, lk_u32 doc_off, lk_i32 x,
                        lk_i32 y, lk_i32 w, int spans_on) {
@@ -918,7 +778,7 @@ static int ed_emit_run(lk_editor *e, const lk_text_backend *tb, const char *run,
     b = ed_snap_run_ix(run, run_len, b);
 
     if (a < pos) {
-      a = pos; /* overlap guard for sloppy producers */
+      a = pos;
     }
 
     if (b <= a) {
@@ -960,11 +820,6 @@ static int ed_emit_run(lk_editor *e, const lk_text_backend *tb, const char *run,
   return 1;
 }
 
-/* ---- Line extraction (command-time, single line) ---- */
-
-/* Extract document line `line` into e->line_buf.  Writes length and
- * line start; returns the byte pointer (NULL on allocation failure,
- * with *out_len forced to 0). */
 static const char *ed_line_text(lk_editor *e, lk_u32 line, lk_u32 *out_len,
                                 lk_u32 *out_start) {
   lk_u32 ls = lk_doc_line_start(e->doc, line);
@@ -989,8 +844,6 @@ static const char *ed_line_text(lk_editor *e, lk_u32 line, lk_u32 *out_len,
   return e->line_buf;
 }
 
-/* ---- Wrap cache (docs/editor-wrap.md sections 1-3) ---- */
-
 static int ed_wrap_buf_reserve(lk_editor *e, lk_u32 needed) {
   lk_u32 nc;
   char *nb;
@@ -1012,7 +865,6 @@ static int ed_wrap_buf_reserve(lk_editor *e, lk_u32 needed) {
   return 1;
 }
 
-/* Wrapping is effective only once layout has stamped a width. */
 static int ed_wrapping(const lk_editor *e) {
   return e->wrap_mode != LK_EDITOR_WRAP_NONE && e->wrap != NULL &&
          e->wrap_w > 0;
@@ -1038,13 +890,6 @@ static int ed_break_push(lk_editor *e, ed_line_wrap *w, lk_u32 rel) {
   return 1;
 }
 
-/* THE character-fit floor: byte length of the longest prefix of the
- * tab-free segment seg[0..len) whose pixel extent fits in avail.
- * One backend fit query (nearest boundary) plus one floor-correction
- * -- never per-codepoint accumulation.  Word wrap post-processes
- * this result in ed_measure_breaks (which holds the row-local bytes
- * the backward whitespace scan needs); nothing outside the break
- * finder changes. */
 static lk_u32 ed_fit_prefix(const lk_editor *e, const lk_text_backend *tb,
                             const char *seg, lk_u32 len, lk_i32 avail) {
   lk_u32 ix;
@@ -1066,22 +911,6 @@ static lk_u32 ed_fit_prefix(const lk_editor *e, const lk_text_backend *tb,
   return ix;
 }
 
-/* Find the wrap breaks of one line (p[0..len), no \n).  Tab stops are
- * relative to the CURRENT VISUAL ROW's x = 0; a tab that would land
- * past the width breaks first.  Empty-row progress guarantee: when
- * nothing fits on an empty row, one boundary is taken anyway.
- * WORD mode is a post-processing of the character-fit floor: prefer
- * the most recent breakable boundary at-or-before it within the
- * current row -- a boundary whose preceding codepoint is an ASCII
- * space (0x20) or a tab (a tab boundary is inherently breakable; no
- * other Unicode is special-cased, so NBSP never breaks).  The break
- * lands AFTER the whitespace: trailing spaces stay on the upper row.
- * With no breakable boundary in the row (an unbreakable run wider
- * than the viewport) the char-fit floor stands unchanged, progress
- * guarantee included.  The scan is over row-local bytes already in
- * hand -- no extra backend queries.
- * Writes the final row's end x to *out_last_x (for the estimator).
- * Returns 0 only on allocation failure. */
 static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
                              ed_line_wrap *w, const char *p, lk_u32 len,
                              lk_i32 *out_last_x) {
@@ -1104,7 +933,7 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
 
         row_start = i;
         x = 0;
-        continue; /* re-place the tab on the fresh row */
+        continue;
       }
 
       x = stop;
@@ -1132,7 +961,7 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
       fit = ed_fit_prefix(e, tb, p + i, j - i, width - x);
 
       if (fit == 0 && i == row_start) {
-        /* progress guarantee */
+
         fit = lk_utf8_next(p, len, i) - i;
       }
 
@@ -1146,10 +975,7 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
         lk_u32 brk = i + fit;
 
         if (e->wrap_mode == LK_EDITOR_WRAP_WORD) {
-          /* Whitespace at the floor hangs past the width (the break
-           * lands after it, 2026-08-28 -- shared with STYLED_TEXT);
-           * otherwise prefer the most recent boundary after a space
-           * or tab in (row_start, brk]. */
+
           lk_u32 b = brk;
 
           while (b < j && p[b] == ' ') {
@@ -1163,7 +989,7 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
           }
 
           if (b >= len) {
-            x = width; /* only spaces remain: they hang, line done */
+            x = width;
             i = len;
             continue;
           }
@@ -1189,9 +1015,6 @@ static int ed_measure_breaks(lk_editor *e, const lk_text_backend *tb,
   return 1;
 }
 
-/* Ensure the line's wrap entry is valid at the current generation,
- * measuring lazily on demand.  NULL when wrapping is off (every line
- * is one row). */
 static const ed_line_wrap *ed_wrap_line(lk_editor *e, const lk_text_backend *tb,
                                         lk_u32 line) {
   ed_line_wrap *w;
@@ -1226,7 +1049,6 @@ static const ed_line_wrap *ed_wrap_line(lk_editor *e, const lk_text_backend *tb,
       return NULL;
     }
 
-    /* estimator update: rows before the last are full-ish */
     e->est_px += w->break_count * (lk_u32)e->wrap_w + (lk_u32)last_x;
     e->est_bytes += len;
 
@@ -1254,12 +1076,6 @@ static lk_u32 ed_row_end_rel(const ed_line_wrap *w, lk_u32 row,
   return (w && row < w->break_count) ? w->breaks[row] : line_len;
 }
 
-/* Half-open row ownership (pinned, docs/editor-wrap.md section 3):
- * row i owns caret positions [row_start_i, row_start_i+1); a position
- * exactly at a wrap break belongs to the NEXT row; the final row
- * additionally owns the end-of-line caret.  EVERY consumer -- cursor
- * xy, vertical motion, ROW commands, selection rects, clicks,
- * scroll-to-cursor -- routes through here. */
 static void ed_pos_to_row(lk_editor *e, const lk_text_backend *tb, lk_u32 pos,
                           lk_u32 *out_line, lk_u32 *out_row) {
   lk_u32 line = lk_doc_pos_to_line(e->doc, pos);
@@ -1277,7 +1093,6 @@ static void ed_pos_to_row(lk_editor *e, const lk_text_backend *tb, lk_u32 pos,
   *out_row = row;
 }
 
-/* Step one visual row forward/backward; 0 at the document edge. */
 static int ed_row_next(lk_editor *e, const lk_text_backend *tb, lk_u32 *line,
                        lk_u32 *row) {
   if (*row + 1 < ed_row_count_of(ed_wrap_line(e, tb, *line))) {
@@ -1325,11 +1140,6 @@ static lk_u32 ed_rows_back_n(lk_editor *e, const lk_text_backend *tb,
   return done;
 }
 
-/* Anchor that bottom-aligns row (bl, br) in a view_h viewport: back
- * up q-1 rows (r == 0) or q rows with y_offset = line_h - r.  Only
- * the walked rows' lines get measured -- this is both the bottom
- * scroll clamp and the distant scroll-to-cursor placement, so it is
- * viewport-bounded by construction. */
 static void ed_bottom_anchor(lk_editor *e, const lk_text_backend *tb, lk_u32 bl,
                              lk_u32 br, lk_i32 line_h, lk_i32 view_h,
                              lk_u32 *al, lk_u32 *ar, lk_i32 *ay) {
@@ -1344,9 +1154,6 @@ static void ed_bottom_anchor(lk_editor *e, const lk_text_backend *tb, lk_u32 bl,
   *ay = (got < need || r == 0) ? 0 : line_h - r;
 }
 
-/* Estimated rows of an unmeasured line (docs/editor-wrap.md section
- * 6): max(1, ceil(len * avg_px_per_byte / wrap_width)), the average
- * running over measured lines with the space advance as seed. */
 static lk_u32 ed_est_rows(const lk_editor *e, lk_u32 line_len) {
   lk_u64 num;
   lk_u64 den;
@@ -1370,8 +1177,6 @@ static lk_u32 ed_est_rows(const lk_editor *e, lk_u32 line_len) {
   return est ? (lk_u32)est : 1;
 }
 
-/* Exact rows for a valid entry, estimate otherwise (scroll-extent
- * edge only). */
 static lk_u32 ed_rows_or_est(const lk_editor *e, lk_u32 line) {
   if (e->wrap && line < e->wrap_count &&
       e->wrap[line].generation == e->wrap_generation) {
@@ -1381,8 +1186,6 @@ static lk_u32 ed_rows_or_est(const lk_editor *e, lk_u32 line) {
   return ed_est_rows(e, lk_doc_line_end(e->doc, line) -
                             lk_doc_line_start(e->doc, line));
 }
-
-/* ---- Wrap array lifecycle + delta splicing (section 7) ---- */
 
 static void ed_wrap_release(lk_editor *e) {
   lk_u32 i;
@@ -1426,7 +1229,6 @@ static int ed_wrap_reserve(lk_editor *e, lk_u32 needed) {
   return 1;
 }
 
-/* Fresh all-invalid array sized to the current document. */
 static int ed_wrap_materialize(lk_editor *e) {
   lk_u32 lc = lk_doc_line_count(e->doc);
 
@@ -1442,8 +1244,6 @@ static int ed_wrap_materialize(lk_editor *e) {
   return 1;
 }
 
-/* Insert n fresh invalid entries at index at (entries below shift by
- * index only -- relative offsets make that free). */
 static int ed_wrap_splice_in(lk_editor *e, lk_u32 at, lk_u32 n) {
   if (at > e->wrap_count) {
     at = e->wrap_count;
@@ -1464,7 +1264,6 @@ static int ed_wrap_splice_in(lk_editor *e, lk_u32 at, lk_u32 n) {
   return 1;
 }
 
-/* Remove n entries at index at, freeing their breaks arrays. */
 static void ed_wrap_splice_out(lk_editor *e, lk_u32 at, lk_u32 n) {
   lk_u32 i;
 
@@ -1503,10 +1302,6 @@ static lk_u32 ed_count_nl(const char *p, lk_u32 len) {
   return n;
 }
 
-/* ---- Selection helpers ---- */
-
-/* ---- Caret set (docs/editor-multicursor.md) ---- */
-
 static ed_caret *ed_primary(lk_editor *e) {
   return &e->carets[e->caret_primary];
 }
@@ -1515,8 +1310,6 @@ static const ed_caret *ed_primary_c(const lk_editor *e) {
   return &e->carets[e->caret_primary];
 }
 
-/* Caret c's non-empty selection range, ed_sel_range's old contract
- * per caret: 1 + normalized [lo, hi) when active, 0 otherwise. */
 static int ed_caret_sel_range(const ed_caret *c, lk_u32 *lo, lk_u32 *hi) {
   if (c->anchor == ED_NO_ANCHOR || c->anchor == c->cursor) {
     return 0;
@@ -1533,7 +1326,6 @@ static int ed_caret_sel_range(const ed_caret *c, lk_u32 *lo, lk_u32 *hi) {
   return 1;
 }
 
-/* Half-open locus [lo, hi) of caret c; lo == hi for an empty caret. */
 static void ed_caret_range(const ed_caret *c, lk_u32 *lo, lk_u32 *hi) {
   if (!ed_caret_sel_range(c, lo, hi)) {
     *lo = c->cursor;
@@ -1541,8 +1333,6 @@ static void ed_caret_range(const ed_caret *c, lk_u32 *lo, lk_u32 *hi) {
   }
 }
 
-/* Standard motion prologue: extending creates the anchor at the old
- * cursor if none; plain motion clears the selection. */
 static void ed_motion_begin(ed_caret *c, int select) {
   if (select) {
     if (c->anchor == ED_NO_ANCHOR) {
@@ -1561,10 +1351,6 @@ static int ed_carets_reserve(lk_editor *e, lk_u32 needed) {
     return 1;
   }
 
-  /* Copy the FULL old capacity, not just caret_count: bulk builders
-   * (the box rebuild) write entries past caret_count before
-   * committing the new count, and a mid-build grow must not drop
-   * them. */
   new_cap = ed_grow_cap(e->caret_cap, needed, ED_INITIAL_CARET_CAP);
   nc = (ed_caret *)ed_grow_buf(e, e->carets,
                                e->caret_cap * (lk_u32)sizeof(ed_caret),
@@ -1580,7 +1366,6 @@ static int ed_carets_reserve(lk_editor *e, lk_u32 needed) {
   return 1;
 }
 
-/* Collapse the set to one caret (no anchor, sticky reset). */
 static void ed_collapse_to(lk_editor *e, lk_u32 pos) {
   e->caret_count = 1;
   e->caret_primary = 0;
@@ -1589,10 +1374,6 @@ static void ed_collapse_to(lk_editor *e, lk_u32 pos) {
   e->carets[0].sticky_x = ED_STICKY_NONE;
 }
 
-/* Merge caret src into dst per the section-3 rules: union range,
- * orientation from the primary participant else from dst (the stable
- * survivor), sticky reset.  Empty-into-non-empty absorption is the
- * degenerate union. */
 static void ed_caret_merge(lk_editor *e, lk_u32 dst_ix, const ed_caret *src,
                            int src_is_primary) {
   ed_caret *dst = &e->carets[dst_ix];
@@ -1604,9 +1385,6 @@ static void ed_caret_merge(lk_editor *e, lk_u32 dst_ix, const ed_caret *src,
   lo = dlo < slo ? dlo : slo;
   hi = dhi > shi ? dhi : shi;
 
-  /* Orientation: the primary participant's, unless it is an empty
-   * caret (no orientation to impose); else the stable survivor's
-   * (dst).  section 3 rule 5. */
   orient = dst;
 
   if (src_is_primary && src->anchor != ED_NO_ANCHOR) {
@@ -1618,10 +1396,10 @@ static void ed_caret_merge(lk_editor *e, lk_u32 dst_ix, const ed_caret *src,
     dst->anchor = ED_NO_ANCHOR;
   } else if (orient->anchor != ED_NO_ANCHOR &&
              orient->cursor < orient->anchor) {
-    dst->cursor = lo; /* cursor-at-low orientation */
+    dst->cursor = lo;
     dst->anchor = hi;
   } else {
-    dst->cursor = hi; /* cursor-at-high */
+    dst->cursor = hi;
     dst->anchor = lo;
   }
 
@@ -1632,16 +1410,10 @@ static void ed_caret_merge(lk_editor *e, lk_u32 dst_ix, const ed_caret *src,
   }
 }
 
-/* Normalize the caret set to the pinned invariant (section 3): sort
- * by (lo, hi); merge non-empty pairs that PROPERLY overlap (touching
- * coexists); absorb an empty caret strictly inside a non-empty
- * range; merge equal-position empties.  Primary identity follows its
- * caret through sort and merge. */
 static void ed_normalize(lk_editor *e) {
   lk_u32 i;
   lk_u32 w;
 
-  /* Insertion sort by (lo, hi), tracking the primary's index. */
   for (i = 1; i < e->caret_count; i++) {
     ed_caret key = e->carets[i];
     int key_primary = e->caret_primary == i;
@@ -1673,7 +1445,6 @@ static void ed_normalize(lk_editor *e) {
     }
   }
 
-  /* Single merge pass over the sorted set. */
   w = 0;
 
   for (i = 1; i < e->caret_count; i++) {
@@ -1686,13 +1457,13 @@ static void ed_normalize(lk_editor *e) {
     ed_caret_range(b, &blo, &bhi);
 
     if (alo < ahi && blo < bhi) {
-      merge = blo < ahi; /* proper overlap; touching coexists */
+      merge = blo < ahi;
     } else if (alo < ahi) {
-      merge = blo > alo && blo < ahi; /* empty strictly inside */
+      merge = blo > alo && blo < ahi;
     } else if (blo < bhi) {
-      merge = 0; /* empty a at b's start is a boundary: coexists */
+      merge = 0;
     } else {
-      merge = blo == alo; /* duplicate empties */
+      merge = blo == alo;
     }
 
     if (merge) {
@@ -1712,8 +1483,6 @@ static void ed_normalize(lk_editor *e) {
 
   e->caret_count = w + 1;
 }
-
-/* ---- Caret snapshots (section 5.2) ---- */
 
 static void ed_snap_slot_free(lk_editor *e, ed_caret_snap *s) {
   if (s->before) {
@@ -1737,9 +1506,6 @@ static ed_caret *ed_carets_copy(lk_editor *e, const ed_caret *src, lk_u32 n) {
   return c;
 }
 
-/* Record {serial -> before/after caret sets} in the ring, evicting
- * the oldest slot.  All-or-nothing on allocation failure (a snapshot
- * with only one side would restore garbage). */
 static void ed_snap_record(lk_editor *e, lk_u32 serial, const ed_caret *before,
                            lk_u32 before_count, lk_u32 before_primary) {
   ed_caret_snap *s = &e->snaps[e->snap_head];
@@ -1761,10 +1527,6 @@ static void ed_snap_record(lk_editor *e, lk_u32 serial, const ed_caret *before,
   e->snap_head = (e->snap_head + 1) % ED_SNAP_RING;
 }
 
-/* Restore the before (want_after == 0) or after set of the snapshot
- * for serial.  Positions are exact by the LIFO argument (section
- * 5.2) but clamp + snap defensively anyway.  Returns 1 when a
- * snapshot was found and applied. */
 static int ed_snap_restore(lk_editor *e, lk_u32 serial, int want_after) {
   lk_u32 i;
 
@@ -1806,11 +1568,6 @@ static int ed_snap_restore(lk_editor *e, lk_u32 serial, int want_after) {
   return 0;
 }
 
-/* Post-commit snapshot adoption: associate the caret sets around the
- * transaction with its history serial -- but only when the serial
- * ADVANCED past the last one seen (history drops records on
- * allocation failure; a stale serial must not adopt a snapshot that
- * belongs to an older transaction). */
 static void ed_snap_adopt(lk_editor *e, const ed_caret *before,
                           lk_u32 before_count, lk_u32 before_primary) {
   lk_u32 serial;
@@ -1829,8 +1586,6 @@ static void ed_snap_adopt(lk_editor *e, const ed_caret *before,
   ed_snap_record(e, serial, before, before_count, before_primary);
 }
 
-/* ---- Document listener ---- */
-
 static void ed_on_doc(void *ud, const lk_document *d,
                       const lk_doc_delta *deltas, lk_u32 n) {
   lk_editor *e = (lk_editor *)ud;
@@ -1839,15 +1594,8 @@ static void ed_on_doc(void *ud, const lk_document *d,
     return;
   }
 
-  /* Geometry is stale after any committed change; the next layout
-   * recomputes it. */
   e->geom.valid = 0;
 
-  /* Viewport anchor transform, per delta in sequential order.
-   * Affinity is pinned RIGHT: an insertion exactly at top_byte
-   * (top_byte == p, hence the >=) shifts the anchor past the
-   * inserted bytes, so the content being read stays at the top of
-   * the viewport. */
   {
     lk_u32 di;
 
@@ -1865,20 +1613,11 @@ static void ed_on_doc(void *ud, const lk_document *d,
       }
 
       if (il > 0 && e->vp.top_byte >= p) {
-        e->vp.top_byte += il; /* RIGHT affinity */
+        e->vp.top_byte += il;
       }
     }
   }
 
-  /* Wrap-cache splice (docs/editor-wrap.md section 7), per delta in
-   * sequential order: dirty the touched line, add fresh invalid
-   * entries for inserted newlines, drop entries for deleted ones.
-   * Entries below shift by index only (relative break offsets).
-   * pos_to_line queries the post-transaction document; the line
-   * index AT delta.start is unchanged by the delta itself and by
-   * later deltas at or after it, which covers every transaction the
-   * editor, history, or an ascending multi-edit producer emits.  The
-   * count check below resyncs anything exotic. */
   if (e->wrap) {
     lk_u32 di;
 
@@ -1898,7 +1637,7 @@ static void ed_on_doc(void *ud, const lk_document *d,
 
       if (ins_nl > del_nl) {
         if (!ed_wrap_splice_in(e, line + 1, ins_nl - del_nl)) {
-          ed_wrap_release(e); /* degrade; rebuilt by the count check */
+          ed_wrap_release(e);
           break;
         }
       } else if (del_nl > ins_nl) {
@@ -1910,17 +1649,9 @@ static void ed_on_doc(void *ud, const lk_document *d,
       ed_wrap_materialize(e);
     }
   } else if (e->wrap_mode != LK_EDITOR_WRAP_NONE) {
-    ed_wrap_materialize(e); /* recover from a failed splice */
+    ed_wrap_materialize(e);
   }
 
-  /* Keep the styled-span copy usable through this transaction: if it
-   * was current when the transaction began, forward-transform it per
-   * delta — the same position rules the annot store applies to its
-   * default anchors (start stays at an insert point, end moves) — and
-   * restamp, so the frame between the edit and the producer's next
-   * run stays styled instead of blinking unstyled.  The producer
-   * still re-stamps truth next frame.  A copy that was already stale
-   * stays stale (transforming from a wrong base would be wrong). */
   if (e->span_count > 0 && lk_revision_equal(e->span_rev, deltas[0].before)) {
     lk_u32 di;
     lk_u32 si;
@@ -1970,26 +1701,14 @@ static void ed_on_doc(void *ud, const lk_document *d,
   if ((deltas[0].origin == LK_ORIGIN_UNDO ||
        deltas[0].origin == LK_ORIGIN_REDO) &&
       e->in_replay) {
-    /* The replay THIS editor invoked: fallback placement -- collapse
-     * to one caret at the replay site (end of the last inserted
-     * range, start of the last deleted one).  When a caret-set
-     * snapshot exists for this transaction, the command layer
-     * overwrites this immediately after the replay returns
-     * (docs/editor-multicursor.md section 5.2); this branch is what
-     * survives when the snapshot is missing.  Other views over the
-     * same document take the foreign-transform branch below. */
+
     const lk_doc_delta *last = &deltas[n - 1];
 
     ed_collapse_to(e, last->inserted_len ? last->start + last->inserted_len
                                          : last->start);
     e->pending_scroll = 1;
   } else if (!e->in_command) {
-    /* Foreign transaction we did not initiate (including undo/redo
-     * invoked from another view or from script): transform every
-     * caret's cursor and anchor per delta in sequential order —
-     * delete first, then insert, the annot-store position rules with
-     * RIGHT bias on insert (matching the viewport affinity pinned in
-     * include/lk-editor.h). */
+
     lk_u32 di;
     lk_u32 ci;
 
@@ -2019,7 +1738,7 @@ static void ed_on_doc(void *ud, const lk_document *d,
 
         if (il > 0) {
           if (c->cursor >= p) {
-            c->cursor += il; /* RIGHT bias */
+            c->cursor += il;
           }
 
           if (c->anchor != ED_NO_ANCHOR && c->anchor >= p) {
@@ -2032,20 +1751,15 @@ static void ed_on_doc(void *ud, const lk_document *d,
     for (ci = 0; ci < e->caret_count; ci++) {
       ed_caret *c = &e->carets[ci];
 
-      /* A selection collapsed by the transform is no selection. */
       if (c->anchor == c->cursor) {
         c->anchor = ED_NO_ANCHOR;
       }
 
       c->sticky_x = ED_STICKY_NONE;
 
-      /* Positions from the transform are byte-exact, but the
-       * codepoint boundary snap is a cheap invariant worth
-       * keeping. */
       c->cursor = ed_snap(d, c->cursor);
     }
 
-    /* A foreign delete can collapse two carets onto one locus. */
     ed_normalize(e);
   }
 
@@ -2054,8 +1768,6 @@ static void ed_on_doc(void *ud, const lk_document *d,
     e->vp.y_offset = 0;
   }
 }
-
-/* ---- Lifecycle ---- */
 
 lk_editor *lk_editor_new(void *(*alloc)(void *, lk_u32),
                          void (*dealloc)(void *, void *), void *ud,
@@ -2098,7 +1810,7 @@ lk_editor *lk_editor_new(void *(*alloc)(void *, lk_u32),
   e->tab_size = ED_TAB_SIZE;
   e->line_h = ED_FALLBACK_LINE_H;
   e->space_adv = ED_FALLBACK_ADVANCE;
-  e->wrap_generation = 1; /* entry generation 0 is reserved invalid */
+  e->wrap_generation = 1;
   e->sub_id = lk_doc_subscribe(doc, ed_on_doc, e);
 
   return e;
@@ -2161,8 +1873,6 @@ void lk_editor_destroy(lk_editor *e) {
 
   e->dealloc(e->ud, e);
 }
-
-/* ---- Accessors ---- */
 
 lk_document *lk_editor_doc(const lk_editor *e) {
   return e ? e->doc : NULL;
@@ -2265,8 +1975,6 @@ int lk_editor_editable(const lk_editor *e) {
   return e ? e->editable : 1;
 }
 
-/* ---- Wrap modes (docs/editor-wrap.md section 5) ---- */
-
 int lk_editor_set_wrap_mode(lk_editor *e, lk_editor_wrap_mode m) {
   if (!e) {
     return 0;
@@ -2334,8 +2042,6 @@ lk_u32 lk_editor_wrap_rows(const lk_editor *e, lk_u32 line) {
   return e->wrap[line].break_count + 1;
 }
 
-/* ---- Styled spans (docs/editor.md section 10) ---- */
-
 void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap) {
   if (!e) {
     return;
@@ -2353,7 +2059,7 @@ void lk_editor_set_spans(lk_editor *e, const lk_edit_span_snapshot *snap) {
         e, e->spans, 0, nc * (lk_u32)sizeof(lk_edit_span));
 
     if (!nb) {
-      return; /* allocation failure degrades to "no spans" */
+      return;
     }
 
     e->spans = nb;
@@ -2388,8 +2094,6 @@ int lk_editor_dragging(const lk_editor *e) {
   return e ? e->drag : 0;
 }
 
-/* ---- Resource integration ---- */
-
 static const lk_resource_type g_editor_type = {"editor", NULL};
 
 const lk_resource_type *lk_editor_type(void) {
@@ -2419,11 +2123,6 @@ lk_editor *lk_editor_from_node(const lk_resources *rs, const lk_tree *t,
   return NULL;
 }
 
-/* ---- Command layer ---- */
-
-/* One editing transaction bracket.  origin = 16 + cmd id, so every
- * observer (history, annot store, other views) can tell which command
- * produced a change. */
 static void ed_begin(lk_editor *e, lk_editor_cmd_id cmd) {
   e->in_command = 1;
   lk_doc_begin(e->doc, 16u + (lk_u32)cmd);
@@ -2434,39 +2133,11 @@ static void ed_commit(lk_editor *e) {
   e->in_command = 0;
 }
 
-/* One planned per-caret edit: delete [lo, hi) (possibly empty), then
- * (when the command inserts) insert the command's bytes at lo.
- * Index-parallel to the caret array until the engine sorts it;
- * primary marks the plan carrying the primary caret's lineage. */
 typedef struct ed_plan {
   lk_u32 lo, hi;
   int primary;
 } ed_plan;
 
-/* THE multi-caret edit engine (docs/editor-multicursor.md section
- * 4.2): one editing command = ONE transaction.  plans[] is
- * index-parallel to the caret set (built against the pre-transaction
- * document).  The engine sorts plans ascending by (lo, hi), coalesces
- * ranges that properly overlap (their carets merge; an empty plan
- * strictly inside a non-empty one is absorbed -- same rules as
- * normalization, defensively), applies everything ascending inside
- * one begin/commit bracket, and computes the post-edit caret set in
- * the same loop.
- *
- * Shift arithmetic (pinned): two lk_u32 accumulators, subtract-first
- * -- adjusted = (lo - del_total) + ins_total.  lo >= del_total holds
- * by construction (everything deleted so far lies strictly below lo,
- * plans being sorted and disjoint), and the result is bounded by the
- * final document length, so every intermediate stays in lk_u32.  No
- * signed shift, no wider type (the lk_revision precedent).
- *
- * do_insert: every plan inserts ins/ins_len at its (adjusted) lo
- * (INSERT_TEXT, PASTE).  Without it, empty-range plans mutate
- * nothing -- their caret just transforms through the shift (DELETE
- * at a document edge, CUT on a caret with no selection).
- *
- * Returns 1 when any document mutation ran; 0 leaves the caret set
- * untouched. */
 static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd, ed_plan *plans,
                           lk_u32 nplans, const char *ins, lk_u32 ins_len,
                           int do_insert) {
@@ -2496,7 +2167,6 @@ static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd, ed_plan *plans,
 
   plans[e->caret_primary].primary = 1;
 
-  /* Insertion sort by (lo, hi); the primary flag rides its plan. */
   for (i = 1; i < nplans; i++) {
     ed_plan key = plans[i];
     lk_u32 j = i;
@@ -2510,9 +2180,6 @@ static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd, ed_plan *plans,
     plans[j] = key;
   }
 
-  /* Coalesce: proper range overlap merges (union); an empty plan
-   * strictly inside a non-empty one is absorbed.  Primary lineage
-   * ORs into the survivor. */
   w = 0;
 
   for (i = 1; i < nplans; i++) {
@@ -2544,13 +2211,8 @@ static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd, ed_plan *plans,
 
   nplans = w + 1;
 
-  /* Snapshot "before" side (best-effort: allocation failure just
-   * skips adoption; undo then takes the fallback path). */
   before = ed_carets_copy(e, e->carets, e->caret_count);
 
-  /* Apply ascending in one bracket; the post-edit caret set is
-   * computed in the same loop (in_command suppresses the editor's
-   * own foreign-transform, so nothing else will place these). */
   ed_begin(e, cmd);
   any = 0;
 
@@ -2595,9 +2257,6 @@ static int ed_apply_plans(lk_editor *e, lk_editor_cmd_id cmd, ed_plan *plans,
   return any;
 }
 
-/* Build the per-caret plan array (transient), one entry per caret:
- * the caret's selection when active, else the empty range at its
- * cursor.  Callers refine ranges for delete-shaped commands. */
 static ed_plan *ed_plans_new(lk_editor *e) {
   ed_plan *plans =
       (ed_plan *)e->alloc(e->ud, e->caret_count * (lk_u32)sizeof(ed_plan));
@@ -2628,8 +2287,6 @@ static ed_plan *ed_plans_new(lk_editor *e) {
   return plans;
 }
 
-/* Insert bytes at every caret, replacing active selections, as ONE
- * transaction. */
 static int ed_edit_insert(lk_editor *e, lk_editor_cmd_id cmd, const char *ptr,
                           lk_u32 len) {
   ed_plan *plans;
@@ -2651,8 +2308,6 @@ static int ed_edit_insert(lk_editor *e, lk_editor_cmd_id cmd, const char *ptr,
   return did;
 }
 
-/* Per-caret delete: the selection when active, else the range
- * derive(doc, cursor) -> [lo, hi) (empty at a document edge). */
 static int ed_edit_delete(lk_editor *e, lk_editor_cmd_id cmd,
                           void (*derive)(const lk_document *, lk_u32, lk_u32 *,
                                          lk_u32 *)) {
@@ -2700,13 +2355,6 @@ static void ed_derive_fwd_word(const lk_document *d, lk_u32 pos, lk_u32 *lo,
   *hi = ed_word_right(d, pos);
 }
 
-/* Copy the caret set's selections to the clipboard (stage E4,
- * docs/editor-multicursor.md section 7): per-caret selection texts
- * joined with "\n" in document order (the normalized set IS document
- * order); carets without a selection contribute nothing.  0 when no
- * caret has a selection or there is no clipboard (NULL ui degrades
- * to a no-op).  The single-caret case is byte-identical to the old
- * behavior. */
 static int ed_copy(lk_editor *e, lk_ui *ui) {
   lk_u32 lo;
   lk_u32 hi;
@@ -2731,7 +2379,6 @@ static int ed_copy(lk_editor *e, lk_ui *ui) {
     return 0;
   }
 
-  /* pieces - 1 newline separators + the terminator = pieces extra */
   buf = (char *)e->alloc(e->ud, total + pieces);
 
   if (!buf) {
@@ -2763,13 +2410,10 @@ static int ed_copy(lk_editor *e, lk_ui *ui) {
 static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
                              lk_i32 *track_h, lk_i32 *thumb_y, lk_i32 *thumb_h);
 
-/* Lines per page from the last layout; 20 when no layout ran yet. */
 static lk_i32 ed_page_size(const lk_editor *e) {
   return e->page_lines > 0 ? e->page_lines : ED_FALLBACK_PAGE_LINES;
 }
 
-/* Bounds of visual row (line, row): absolute start byte, byte length
- * (no \n), and whether it is the line's final row. */
 static void ed_row_bounds(lk_editor *e, const lk_text_backend *tb, lk_u32 line,
                           lk_u32 row, lk_u32 *out_start, lk_u32 *out_len,
                           int *out_final) {
@@ -2786,11 +2430,6 @@ static void ed_row_bounds(lk_editor *e, const lk_text_backend *tb, lk_u32 line,
   }
 }
 
-/* Vertical motion of one caret by delta VISUAL ROWS with sticky-x
- * resolution in the target row (a row is a whole line when wrapping
- * is off, so the pre-wrap behavior is the degenerate case).
- * Boundary behavior mirrors weft: UP on the first row goes to 0,
- * DOWN on the last row goes to the end (sticky x preserved). */
 static int ed_move_vert(lk_editor *e, lk_ui *ui, ed_caret *c, lk_i32 delta,
                         int select) {
   const lk_text_backend *tb = ui ? ui->text : NULL;
@@ -2851,9 +2490,6 @@ static int ed_move_vert(lk_editor *e, lk_ui *ui, ed_caret *c, lk_i32 delta,
 
     ix = ed_line_ix_from_x(e, tb, text + (rstart - tstart), rlen, c->sticky_x);
 
-    /* A non-final row's end position IS the wrap break, which the
-     * NEXT row owns -- clamp inside the row so the caret lands where
-     * the motion aimed. */
     if (!final && ix >= rlen && rlen > 0) {
       ix = lk_utf8_prev(text + (rstart - tstart), rlen, rlen);
     }
@@ -2866,7 +2502,6 @@ static int ed_move_vert(lk_editor *e, lk_ui *ui, ed_caret *c, lk_i32 delta,
   return c->cursor != old_cursor || (had_sel && !select);
 }
 
-/* Plain caret placement shared by LINE/DOC start/end motion. */
 static int ed_move_to(lk_editor *e, ed_caret *c, lk_u32 pos, int select) {
   lk_u32 lo;
   lk_u32 hi;
@@ -2893,9 +2528,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
     return 0;
   }
 
-  /* Read-only policy: user mutations are rejected here, the one
-   * choke point every input path funnels through.  Motion,
-   * selection, copy, and scrolling fall through untouched. */
   if (!e->editable) {
     switch (cmd) {
     case LK_ED_INSERT_TEXT:
@@ -2937,7 +2569,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       ed_caret *c = &e->carets[i];
 
       if (!select && ed_caret_sel_range(c, &lo, &hi)) {
-        /* Collapse to the selection's left edge (standard). */
+
         c->cursor = lo;
         c->anchor = ED_NO_ANCHOR;
         c->sticky_x = ED_STICKY_NONE;
@@ -3069,9 +2701,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       ed_pos_to_row(e, ui ? ui->text : NULL, c->cursor, &cl, &cr);
       ed_row_bounds(e, ui ? ui->text : NULL, cl, cr, &rstart, &rlen, NULL);
 
-      /* Row end: the wrap break for a non-final row (owned by the
-       * NEXT row per the pinned rule -- the caret renders at its
-       * start), the line end for the final row. */
       changed |= ed_move_to(
           e, c, cmd == LK_ED_MOVE_ROW_START ? rstart : rstart + rlen, select);
     }
@@ -3111,7 +2740,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       return 0;
     }
 
-    /* Collapse to ONE caret spanning the document (pinned). */
     ed_collapse_to(e, lk_doc_len(e->doc));
     e->carets[0].anchor = 0;
 
@@ -3124,10 +2752,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       return 0;
     }
 
-    /* Delete EVERY caret's selection in one transaction (carets
-     * without a selection just transform through the shift).  E1
-     * note: the copy above is still primary-only until the E4
-     * clipboard stage lands the joined form. */
     return ed_edit_delete(e, cmd, NULL);
 
   case LK_ED_PASTE: {
@@ -3154,12 +2778,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       return 0;
     }
 
-    /* in_replay marks this editor as the invoking view: its ed_on_doc
-     * places the fallback caret; other views transform (foreign).
-     * The peeked serial then selects the caret-set snapshot recorded
-     * when this transaction committed -- restoring the exact pre-edit
-     * set (docs/editor-multicursor.md section 5.2); a miss leaves the
-     * fallback placement. */
     serial = lk_history_peek_undo_serial(e->hist);
     e->in_replay = 1;
     ok = lk_history_undo(e->hist, e->doc);
@@ -3202,9 +2820,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
     pos = ed_snap(e->doc, arg->set_cursor.pos);
 
     if (arg->set_cursor.extend) {
-      /* Extend moves the PRIMARY caret only, preserving the others
-       * (docs/editor-multicursor.md section 4.2) -- a drag sweeping
-       * the primary over another caret absorbs it via normalize. */
+
       ed_caret *c = ed_primary(e);
 
       if (c->anchor == ED_NO_ANCHOR) {
@@ -3232,9 +2848,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
     pos = ed_snap(e->doc, arg->set_cursor.pos);
 
-    /* Toggle: a caret already exactly at pos is removed instead
-     * (never below one caret; primary succession = nearest after,
-     * else before -- section 2.1). */
     for (i = 0; i < e->caret_count; i++) {
       if (e->carets[i].cursor == pos) {
         lk_u32 r = i;
@@ -3277,11 +2890,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
 
   case LK_ED_ADD_CURSOR_ABOVE:
   case LK_ED_ADD_CURSOR_BELOW: {
-    /* Clone EVERY caret one visual row in the requested direction
-     * (docs/editor-multicursor.md section 4.3 -- the algebraic
-     * reading: sparse rows 1,3 add-below -> 1,2,3,4), union with the
-     * existing set, normalize.  The clone of the old primary becomes
-     * primary.  Carets on the document's edge row clone nowhere. */
+
     lk_i32 d = cmd == LK_ED_ADD_CURSOR_ABOVE ? -1 : 1;
     lk_u32 n0 = e->caret_count;
     lk_u32 old_primary = e->caret_primary;
@@ -3310,7 +2919,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       ed_pos_to_row(e, tb, clone.cursor, &l1, &r1);
 
       if (l1 == l0 && r1 == r0) {
-        continue; /* edge row: no wraparound */
+        continue;
       }
 
       e->carets[e->caret_count] = clone;
@@ -3341,12 +2950,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
     lk_u32 phi;
 
     if (!ed_caret_sel_range(ed_primary(e), &plo, &phi)) {
-      /* Word-expand mode (section 6): the PRIMARY must acquire a
-       * word or the whole command no-ops (a whitespace primary must
-       * not wedge the command out of ever reaching match mode by
-       * expanding only secondaries).  Secondaries without a
-       * selection expand where they can; carets not on a word stay
-       * empty; no new caret is added. */
+
       lk_u32 wlo;
       lk_u32 whi;
 
@@ -3382,11 +2986,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       return changed;
     }
 
-    /* Match mode: literal byte search for the primary selection via
-     * lk_doc_find, starting at the PRIMARY's end (other carets are
-     * an exclusion set, never the traversal head), wrapping once;
-     * matches overlapping any existing caret's range are skipped;
-     * the first hit becomes a new caret and primary. */
     {
       lk_u32 nlen = phi - plo;
       char *needle;
@@ -3421,7 +3020,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
         }
 
         if (wrapped && mpos >= plo) {
-          break; /* came back around to the primary: exhausted */
+          break;
         }
 
         {
@@ -3520,7 +3119,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
       ed_pos_to_row(e, tb, e->vp.top_byte, &al, &ar);
 
       if (n <= distant) {
-        /* near: walk visual rows, measuring only the walked lines */
+
         lk_u32 k;
 
         for (k = 0; k < n; k++) {
@@ -3534,10 +3133,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
           }
         }
       } else if (arg->lines > 0) {
-        /* distant down: consume exact-or-ESTIMATED rows per line
-         * (cheap arithmetic, no backend calls) to pick the target
-         * line, then measure just that line -- the scroll-extent
-         * edge is the one sanctioned estimate consumer. */
+
         lk_u32 skip = n;
         lk_u32 avail = ed_rows_or_est(e, al) - ar;
 
@@ -3558,7 +3154,7 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
           }
         }
       } else {
-        /* distant up: same estimate consumption backwards */
+
         lk_u32 skip = n;
         lk_u32 avail = ar;
 
@@ -3588,8 +3184,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
                        ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
     }
 
-    /* Precise bottom clamping happens at the next layout, which knows
-     * the viewport height. */
     return e->vp.top_byte != old_top || e->vp.y_offset != old_off;
   }
 
@@ -3597,9 +3191,6 @@ int lk_editor_command(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
   }
 }
 
-/* ---- Layout hook body (transient geometry) ---- */
-
-/* Lexicographic visual-row order. */
 static int ed_rowpos_cmp(lk_u32 l1, lk_u32 r1, lk_u32 l2, lk_u32 r2) {
   if (l1 != l2) {
     return l1 < l2 ? -1 : 1;
@@ -3632,12 +3223,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     return;
   }
 
-  /* One-editor-one-node claim check.  lk_ui alternates its two trees
-   * between frames, so a still-valid stamp with the SAME tree pointer
-   * but a different node id means a second claimant inside the same
-   * layout pass (debug-only heuristic; an intermittently attached
-   * editor whose node id changes can false-positive).  Release: last
-   * claimant wins -- the block simply gets restamped. */
   LK_ED_ASSERT(!(e->geom.valid && e->geom.tree == (const void *)t &&
                  e->geom.node_id != t->nodes[n].id));
 
@@ -3673,10 +3258,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     baseline = ED_FALLBACK_BASELINE;
   }
 
-  /* Staleness policy (pinned, docs/editor.md section 10): the span
-   * snapshot participates only when its revision matches the document
-   * NOW -- and any later edit invalidates this whole geometry block,
-   * so a frame can never draw misplaced styling. */
   spans_on = e->span_count > 0 &&
              lk_revision_equal(e->span_rev, lk_doc_revision(e->doc));
 
@@ -3686,9 +3267,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   q = view_h > 0 ? (lk_u32)(view_h / line_h) : 0;
   want_scroll = e->pending_scroll;
 
-  /* Wrap key check (docs/editor-wrap.md section 1): any change in
-   * width/font/tab/backend-pointer bumps the generation -- one
-   * integer write, never a sweep. */
   if (e->wrap_mode != LK_EDITOR_WRAP_NONE) {
     lk_i32 ww = content->w > 0 ? content->w : 0;
 
@@ -3705,12 +3283,9 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
       e->est_bytes = 0;
     }
 
-    e->scroll_x = 0; /* horizontal scroll is a NONE-mode feature */
+    e->scroll_x = 0;
   }
 
-  /* Resolve the anchor: clamp into the document, snap top_byte to
-   * the visual-row start at-or-before it (local resolution: only the
-   * anchor's own line is measured). */
   if (e->vp.top_byte > lk_doc_len(e->doc)) {
     e->vp.top_byte = lk_doc_len(e->doc);
   }
@@ -3725,11 +3300,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     e->vp.y_offset = line_h - 1;
   }
 
-  /* Bottom clamp.  Skipped when there are more than q+1 whole LINES
-   * below the anchor (rows >= lines, so the anchor is provably above
-   * the maximum) -- this keeps a mid-document viewport from ever
-   * measuring doc-end lines.  Otherwise back-walk from the last row,
-   * measuring at most a viewport's worth of lines. */
   if (view_h <= 0) {
     al = 0;
     ar = 0;
@@ -3751,17 +3321,10 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     }
   }
 
-  /* Pending scroll-to-cursor: bring the cursor ROW fully into view
-   * (top-aligned when above, bottom-aligned when below).  Two paths
-   * by construction: near targets walk at most q+1 rows; distant
-   * targets (outside the materialized window by line count alone)
-   * re-anchor directly at the cursor row and back up a viewport --
-   * never a walk over the intervening lines. */
   if (want_scroll && view_h > 0) {
     lk_u32 cl;
     lk_u32 cr;
 
-    /* Scroll-to-cursor follows the PRIMARY caret only (pinned). */
     ed_pos_to_row(e, tb, ed_primary(e)->cursor, &cl, &cr);
 
     if (ed_rowpos_cmp(cl, cr, al, ar) < 0 ||
@@ -3773,7 +3336,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
       int below;
 
       if (cl - al > q + 1) {
-        below = 1; /* distant: provably past the viewport */
+        below = 1;
       } else {
         lk_u32 l = al;
         lk_u32 r = ar;
@@ -3804,10 +3367,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   e->vp.top_byte = lk_doc_line_start(e->doc, al) +
                    ed_row_start_rel(ed_wrap_line(e, tb, al), ar);
 
-  /* Scrollbar extent: total visual rows and the rows above the
-   * resolved anchor, exact-or-estimated per line (the scroll-extent
-   * edge is the one sanctioned estimate consumer; cheap arithmetic,
-   * no backend calls). */
   {
     lk_u32 li;
     lk_u32 sb_total = 0;
@@ -3830,10 +3389,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     e->geom.sb_top_px = (lk_u32)sb_top;
   }
 
-  /* Horizontal scroll (NONE mode only, docs/editor-wrap.md section
-   * 4): follow the cursor with a ~2-space margin, then soft-clamp
-   * against the widest MEASURED visible line (documented: lines
-   * outside the viewport do not extend the range). */
   if (e->wrap_mode == LK_EDITOR_WRAP_NONE) {
     lk_i32 margin = 2 * ed_advance(e);
 
@@ -3897,9 +3452,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     }
   }
 
-  /* Visible rows: rows intersecting [0, view_h), walked forward from
-   * the anchor (virtualization: cost is viewport-, never document-,
-   * proportional). */
   vis_needed = view_h > 0
                    ? (lk_u32)((view_h + e->vp.y_offset + line_h - 1) / line_h)
                    : 0;
@@ -3941,10 +3493,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
       e->lines[vis_count].doc_len = rlen;
       e->lines[vis_count].off = e->vis_len;
 
-      /* Segment walk (shared shape with ed_line_x_from_ix); tab
-       * stops are relative to the ROW's x = 0, matching the break
-       * finder; each tab-free run is further span-split by
-       * ed_emit_run when a revision-matched snapshot overlaps it. */
       p = e->vis + e->vis_len;
       x = 0;
       i = 0;
@@ -3986,10 +3534,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     }
   }
 
-  /* Cursor geometry, one x,y pair per VISIBLE caret in caret
-   * (document) order (only carets whose row is visible emit;
-   * ownership of a position at a wrap break comes from
-   * ed_pos_to_row: the NEXT row). */
   {
     lk_u32 ci;
 
@@ -4020,11 +3564,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
     }
   }
 
-  /* Selection rects, per caret in caret order (up to 3 each: head
-   * partial row, body block, tail partial row), clipped to the
-   * visible range.  Zero-width pieces are dropped.  Row membership
-   * of the endpoints comes from ed_pos_to_row, so selection geometry
-   * can never disagree with the cursor by a row. */
   if (vis_count > 0) {
     lk_u32 ci;
 
@@ -4073,7 +3612,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
           int c_hi = ed_rowpos_cmp(ln->line, ln->row, hl, hr);
 
           if (c_lo == 0) {
-            /* head */
+
             lk_i32 x0 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
                                           lo - ln->doc_start);
             lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
@@ -4085,7 +3624,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
                                x1 - x0, line_h);
             }
           } else if (c_lo > 0 && c_hi < 0) {
-            /* body row (fully covered) */
+
             if (!have_body) {
               b0 = k;
               have_body = 1;
@@ -4105,7 +3644,7 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
           const ed_line *ln = &e->lines[k];
 
           if (ln->line == hl && ln->row == hr) {
-            /* tail */
+
             lk_i32 x1 = ed_line_x_from_ix(e, tb, e->vis + ln->off, ln->doc_len,
                                           hi - ln->doc_start);
 
@@ -4136,8 +3675,6 @@ void lk_editor_layout_node(lk_editor *e, const lk_tree *t, lk_ix n,
   e->geom.tb = cfg ? cfg->text : NULL;
 }
 
-/* ---- Render hook body (pure geometry, no backend) ---- */
-
 void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
                            const lk_rect *rect, const lk_style *style,
                            const lk_state *state, lk_render_list *out) {
@@ -4152,18 +3689,14 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
   nid = t->nodes[n].id;
 
   if (!e->geom.valid || e->geom.node_id != nid) {
-    return; /* no layout yet, or another node claimed the editor */
+    return;
   }
 
-  /* Clip our own text to the node rect (the engine's clip for
-   * clips = 1 kinds only wraps children, and the editor is a leaf). */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_CLIP_BEGIN;
   cmd.rect = *rect;
   lk_render_list_push(out, cmd);
 
-  /* Span backgrounds first: selection rects and the cursor render
-   * above them, exactly as they did before spans existed. */
   for (i = 0; i < e->seg_count; i++) {
     const ed_seg *seg = &e->segs[i];
 
@@ -4181,9 +3714,6 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
     lk_render_list_push(out, cmd);
   }
 
-  /* Selection highlight, all carets' rects in caret order (same
-   * color as the text input widget; a dedicated style field is
-   * deliberately not added in this stage). */
   for (i = 0; i < e->geom.sel_count; i++) {
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_FILL_RECT;
@@ -4195,9 +3725,6 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
     lk_render_list_push(out, cmd);
   }
 
-  /* One DRAW_RUN per visible line segment through the byte arena
-   * (span sub-segments carry their own fg; underlines are 1-px fills
-   * at the text baseline + 1). */
   for (i = 0; i < e->seg_count; i++) {
     const ed_seg *seg = &e->segs[i];
     lk_u32 run_off;
@@ -4224,31 +3751,21 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
     cmd.font_size = e->geom.font_size;
     cmd.run_off = run_off;
     cmd.run_len = seg->len;
-    lk_render_list_push(out, cmd);
 
     if (seg->flags & LK_SPAN_UNDERLINE) {
-      memset(&cmd, 0, sizeof(cmd));
-      cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect.x = seg->x;
-      cmd.rect.y = seg->y + e->geom.baseline + 1;
-      cmd.rect.w = seg->w;
-      cmd.rect.h = 1;
-      cmd.color = run_fg;
-      lk_render_list_push(out, cmd);
+      cmd.text_attr |= LK_TA_UNDERLINE;
     }
+
+    lk_render_list_push(out, cmd);
   }
 
-  /* Cursor bars, one per VISIBLE caret -- only when this node holds
-   * keyboard focus (the LKS_FOCUSED flag is kept in sync by the
-   * lk_focus_* functions, same mechanism as the text input
-   * widget). */
   if (state && e->geom.cursor_count > 0) {
     lk_value f = lk_state_get(state, nid, LKS_FOCUSED);
 
     if (f.tag == UIV_I32 && f.as.i != 0) {
       for (i = 0; i < e->geom.cursor_count; i++) {
         memset(&cmd, 0, sizeof(cmd));
-        cmd.op = LK_ROP_FILL_RECT;
+        cmd.op = LK_ROP_CARET;
         cmd.rect.x = e->cursor_xy[i * 2];
         cmd.rect.y = e->cursor_xy[i * 2 + 1];
         cmd.rect.w = 1;
@@ -4259,19 +3776,6 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
     }
   }
 
-  /* Overlay scrollbar: thumb drags and track clicks page (see
-   * lk_editor_scrollbar_down); wheel scrolls too.  Drawn last inside
-   * the node clip so it overlays text and cursor (the lk-scroll.c
-   * feel, where the bar paints over the content edge), and reserving
-   * NO width: a bar that reserved width would change the wrap width,
-   * changing the row count, changing the overflow that decides
-   * whether the bar exists — a feedback loop this overlay style
-   * deliberately avoids.  Geometry comes from the section-6
-   * scroll-extent model stamped by layout (sb_total_rows /
-   * sb_top_px: exact rows for measured lines, estimator rows
-   * otherwise) via ed_scrollbar_geom, which the pointer hit shares.
-   * Hidden when the content fits; wrap NONE horizontal overflow gets
-   * no horizontal bar in v1. */
   {
     lk_i32 track_y;
     lk_i32 track_h;
@@ -4281,7 +3785,6 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
     if (ed_scrollbar_geom(e, &track_y, &track_h, &thumb_y, &thumb_h)) {
       lk_i32 bar_x = rect->x + rect->w - ED_SCROLL_BAR_W;
 
-      /* Track */
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
       cmd.rect.x = bar_x;
@@ -4291,7 +3794,6 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
       cmd.color = style->scrollbar_track;
       lk_render_list_push(out, cmd);
 
-      /* Thumb */
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
       cmd.rect.x = bar_x;
@@ -4308,12 +3810,6 @@ void lk_editor_render_node(const lk_editor *e, const lk_tree *t, lk_ix n,
   lk_render_list_push(out, cmd);
 }
 
-/* ---- Overlay scrollbar ---- */
-
-/* Scrollbar geometry from the last layout's scroll-extent stamp:
- * track = the content rect's vertical span, thumb = viewport share
- * (ED_SCROLL_THUMB_MIN floor, never leaves the track).  Returns 1 when
- * the bar is shown (content overflows), 0 otherwise. */
 static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
                              lk_i32 *track_h, lk_i32 *thumb_y,
                              lk_i32 *thumb_h) {
@@ -4340,8 +3836,6 @@ static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
     h = th;
   }
 
-  /* Estimator drift can put the anchor past the derived extent; clamp
-   * so the thumb never leaves the track. */
   if (top_px > max_top) {
     top_px = max_top;
   }
@@ -4354,10 +3848,6 @@ static int ed_scrollbar_geom(const lk_editor *e, lk_i32 *track_y,
   return 1;
 }
 
-/* Absolute visual row of the viewport anchor and the total row count
- * -- the same exact-or-estimated arithmetic the layout stamp uses, so
- * pointer mapping and the drawn thumb agree.  Recomputed from vp on
- * every call (several drag moves may land between two layouts). */
 static void ed_scroll_extent(lk_editor *e, const lk_text_backend *tb,
                              lk_u32 *out_top, lk_u32 *out_total) {
   lk_u32 lcount = lk_doc_line_count(e->doc);
@@ -4422,11 +3912,6 @@ int lk_editor_scrollbar_down(lk_editor *e, lk_ui *ui, lk_i32 x, lk_i32 y) {
     return 0;
   }
 
-  /* The drawn bar hugs the NODE's right edge, which layout never sees;
-   * the hit band is everything from the content rect's rightmost bar
-   * width outward (the node rect bounds it via hit-testing), so it
-   * covers the drawn bar at or beyond the content edge and is a bit
-   * generous toward the text. */
   if (x < e->geom.rect.x + e->geom.rect.w - ED_SCROLL_BAR_W || y < track_y ||
       y >= track_y + track_h) {
     return 0;
@@ -4439,7 +3924,6 @@ int lk_editor_scrollbar_down(lk_editor *e, lk_ui *ui, lk_i32 x, lk_i32 y) {
     return 2;
   }
 
-  /* Track click: page toward the pointer. */
   memset(&arg, 0, sizeof(arg));
   arg.lines = y < thumb_y ? -ed_page_size(e) : ed_page_size(e);
   lk_editor_command(e, ui, LK_ED_SCROLL_LINES, &arg);
@@ -4479,8 +3963,6 @@ void lk_editor_scrollbar_move(lk_editor *e, lk_ui *ui, lk_i32 y) {
     rel = range;
   }
 
-  /* Thumb offset -> extent pixel -> absolute visual row (the inverse
-   * of the render mapping); row granularity is the thumb's precision. */
   total_px = (lk_u64)e->geom.sb_total_rows * (lk_u64)e->geom.line_h;
   max_top = total_px - (lk_u64)track_h;
   top_px = ((lk_u64)rel * max_top) / (lk_u64)range;
@@ -4496,8 +3978,6 @@ void lk_editor_scrollbar_end(lk_editor *e) {
     e->sb_drag = 0;
   }
 }
-
-/* ---- Pointer hit mapping ---- */
 
 int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
                       lk_i32 y, lk_u32 *out_pos) {
@@ -4530,11 +4010,6 @@ int lk_editor_hit_pos(const lk_editor *e, const lk_text_backend *tb, lk_i32 x,
   return 1;
 }
 
-/* ---- Box selection (stage E3, docs/editor-multicursor.md 9.3) ---- */
-
-/* Window point -> (line, visual row, content-relative x) against the
- * last layout snapshot; clamped into the visible rows (no
- * autoscroll in v1).  0 when no valid geometry exists. */
 static int ed_box_point(const lk_editor *e, lk_i32 x, lk_i32 y,
                         lk_u32 *out_line, lk_u32 *out_row, lk_i32 *out_x) {
   lk_i32 rel;
@@ -4563,15 +4038,6 @@ static int ed_box_point(const lk_editor *e, lk_i32 x, lk_i32 y,
   return 1;
 }
 
-/* Rebuild the caret set from the box between the stored anchor and
- * the pointer at (cl, cr, cx): one caret per visual row, selection
- * between the anchor-x and pointer-x bytes of that row (zero-width
- * when they coincide -- short rows clamp both edges to the row
- * end).  The walk STARTS at the pointer row (which becomes primary)
- * and proceeds toward the anchor, so the pinned cap rule -- keep the
- * rows nearest the active end -- is the natural truncation.  The
- * anchor triple is viewport-independent: the walk keeps working
- * after the viewport scrolls away from it. */
 static void ed_box_rebuild(lk_editor *e, const lk_text_backend *tb, lk_u32 cl,
                            lk_u32 cr, lk_i32 cx) {
   lk_u32 l = cl;
@@ -4618,11 +4084,11 @@ static void ed_box_rebuild(lk_editor *e, const lk_text_backend *tb, lk_u32 cl,
   }
 
   if (n == 0) {
-    return; /* allocation failure: keep the previous set */
+    return;
   }
 
   e->caret_count = n;
-  e->caret_primary = 0; /* the pointer row's caret */
+  e->caret_primary = 0;
   ed_normalize(e);
 }
 
@@ -4676,10 +4142,9 @@ void lk_editor_box_end(lk_editor *e) {
 
 int lk_editor_pos_at(const lk_editor *e, lk_i32 x, lk_i32 y, lk_u32 *out_pos) {
   if (!e || !out_pos || !e->geom.valid) {
-    return 0; /* before first layout / snapshot invalidated by an edit */
+    return 0;
   }
 
-  /* Outside the laid-out rect: no clamping (pinned contract). */
   if (x < e->geom.rect.x || x >= e->geom.rect.x + e->geom.rect.w ||
       y < e->geom.rect.y || y >= e->geom.rect.y + e->geom.rect.h) {
     return 0;
@@ -4687,8 +4152,6 @@ int lk_editor_pos_at(const lk_editor *e, lk_i32 x, lk_i32 y, lk_u32 *out_pos) {
 
   return lk_editor_hit_pos(e, e->geom.tb, x, y, out_pos);
 }
-
-/* ---- Interior presentations (weft-surface S1) ---- */
 
 #define ED_PRES_HIT_CAP 8
 
@@ -4752,8 +4215,6 @@ int lk_editor_offer_presentations(lk_editor *e, lk_ui *ui, const lk_tree *t,
     count = ED_PRES_HIT_CAP;
   }
 
-  /* Stamp the editor-owned locus words: the kind vocabulary and the
-   * hit position (the source filled annot id / range / revision). */
   locus_kind = t->intern ? lk_intern_cid(t->intern, "editor-range") : 0;
 
   for (i = 0; i < count; i++) {

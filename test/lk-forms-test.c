@@ -328,6 +328,7 @@ static void test_checkbox_render(void) {
     lk_u32 i;
     int fills = 0;
     int accent_fill = 0;
+    int outlines = 0;
 
     memset(&rl, 0, sizeof(rl));
     lk_style_resolve(lk_ui_theme(ui), cur, NULL, styles);
@@ -341,11 +342,19 @@ static void test_checkbox_render(void) {
             rl.cmds[i].color.b == 220) {
           accent_fill++;
         }
+      } else if (rl.cmds[i].op == LK_ROP_STROKE_RECT) {
+        /* the 1 px box outline: square, in the theme border colour */
+        outlines++;
+        CHECK_EQ((unsigned)rl.cmds[i].stroke, 1u);
+        CHECK_EQ(rl.cmds[i].rect.w, rl.cmds[i].rect.h);
+        CHECK(rl.cmds[i].color.r == 120 && rl.cmds[i].color.g == 120 &&
+              rl.cmds[i].color.b == 140);
       }
     }
 
-    /* window bg + 4 outline edges + mark = 6 fills */
-    CHECK_EQ(fills, 6);
+    /* window bg + mark = 2 fills; the outline is ONE STROKE_RECT */
+    CHECK_EQ(fills, 2);
+    CHECK_EQ(outlines, 1);
     CHECK_EQ(accent_fill, 1);
     CHECK_EQ(count_text(ui, &rl, "On"), 1);
 

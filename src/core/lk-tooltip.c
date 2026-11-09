@@ -1,26 +1,12 @@
-/*
- * lk-tooltip.c — Tooltip overlay producer (docs/overlays.md step 6).
- *
- * Tooltips are a prop, not a widget kind: any node may carry
- * UIP_TOOLTIP (interned string).  Hover transitions — routed here from
- * lk_hover_set / lk_hover_clear — pop the previous tooltip overlay and
- * push a new one when the freshly hovered node has tooltip text.
- *
- * The overlay is passive: dismiss_on_outside = 0 and traps_focus = 0,
- * and lk-overlay.c never hit-tests LK_OVERLAY_TOOLTIP, so it is
- * transparent to the pointer.  Content is procedural
- * (content_root_id = 0): geometry and paint live below, dispatched
- * from lk_render_build_overlays.
- */
+
 
 #include <string.h>
 
 #include "lk-tooltip.h"
 #include <lk.h>
 
-#define LK_TOOLTIP_PAD 5 /* px between text and tooltip edge */
+#define LK_TOOLTIP_PAD 5
 
-/* Interned tooltip text id of node n, or 0 when absent. */
 static lk_u32 tooltip_text_id(const lk_tree *t, lk_ix n) {
   const lk_node *nd;
   lk_u16 i;
@@ -51,7 +37,6 @@ void lk_tooltip_hover_changed(lk_ui *ui, lk_node_id hovered_id) {
     return;
   }
 
-  /* Pop any existing tooltip overlay (at most one in practice). */
   i = ui->overlay_count;
 
   while (i > 0) {
@@ -90,11 +75,21 @@ void lk_tooltip_hover_changed(lk_ui *ui, lk_node_id hovered_id) {
     memset(&ov, 0, sizeof(ov));
     ov.kind = LK_OVERLAY_TOOLTIP;
     ov.anchor_mode = LK_ANCHOR_BELOW;
-    ov.dismiss_on_outside = 0; /* passive: outside clicks pass through */
+    ov.dismiss_on_outside = 0;
     ov.traps_focus = 0;
     ov.owner_id = hovered_id;
-    ov.content_root_id = 0; /* procedural */
+    ov.content_root_id = 0;
     lk_overlay_push(ui, &ov);
+  }
+}
+
+static void tooltip_pads(const lk_layout_cfg *cfg, lk_i32 *px, lk_i32 *py) {
+  if (cfg && cfg->grid_w > 0 && cfg->grid_h > 0) {
+    *px = cfg->grid_w * 2;
+    *py = 0;
+  } else {
+    *px = LK_TOOLTIP_PAD;
+    *py = LK_TOOLTIP_PAD;
   }
 }
 
@@ -102,6 +97,8 @@ lk_rect lk_tooltip_rect(const lk_tree *t, lk_ix n, const lk_overlay *ov,
                         const lk_rect *rects, const lk_layout_cfg *cfg) {
   lk_text_metrics m;
   lk_u32 sid;
+  lk_i32 px, py;
+  lk_rect r;
 
   m.w = 0;
   m.h = 0;
@@ -116,9 +113,15 @@ lk_rect lk_tooltip_rect(const lk_tree *t, lk_ix n, const lk_overlay *ov,
     cfg->text->measure(cfg->text->ud, s, font_id, font_size, &m);
   }
 
-  return lk_anchor_resolve(ov, rects[n], cfg ? cfg->viewport_w : 0,
-                           cfg ? cfg->viewport_h : 0, m.w + LK_TOOLTIP_PAD * 2,
-                           m.h + LK_TOOLTIP_PAD * 2);
+  tooltip_pads(cfg, &px, &py);
+  r = lk_anchor_resolve(ov, rects[n], cfg ? cfg->viewport_w : 0,
+                        cfg ? cfg->viewport_h : 0, m.w + px * 2, m.h + py * 2);
+
+  if (cfg) {
+    lk_rect_snap_grid(&r, cfg->grid_w, cfg->grid_h);
+  }
+
+  return r;
 }
 
 void lk_tooltip_render(const lk_tree *t, lk_ix n, const lk_overlay *ov,
@@ -144,8 +147,7 @@ void lk_tooltip_render(const lk_tree *t, lk_ix n, const lk_overlay *ov,
   st = (cfg && cfg->styles) ? &cfg->styles[n] : NULL;
 
   if (st) {
-    /* Owner style with fg/bg swapped: light plate, dark text on the
-     * default dark theme.  Theme-rule styling can layer on later. */
+
     bg = st->fg;
     fg = st->bg;
   } else {
@@ -159,38 +161,30 @@ void lk_tooltip_render(const lk_tree *t, lk_ix n, const lk_overlay *ov,
     fg.a = 255;
   }
 
-  /* Background plate */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = r;
   cmd.color = bg;
   lk_render_list_push(out, cmd);
 
-  /* 1 px border in the text color */
   memset(&cmd, 0, sizeof(cmd));
-  cmd.op = LK_ROP_FILL_RECT;
+  cmd.op = LK_ROP_STROKE_RECT;
   cmd.color = fg;
-  cmd.rect.x = r.x;
-  cmd.rect.y = r.y;
-  cmd.rect.w = r.w;
-  cmd.rect.h = 1;
-  lk_render_list_push(out, cmd); /* top */
-  cmd.rect.y = r.y + r.h - 1;
-  lk_render_list_push(out, cmd); /* bottom */
-  cmd.rect.y = r.y;
-  cmd.rect.w = 1;
-  cmd.rect.h = r.h;
-  lk_render_list_push(out, cmd); /* left */
-  cmd.rect.x = r.x + r.w - 1;
-  lk_render_list_push(out, cmd); /* right */
+  cmd.rect = r;
+  cmd.stroke = 1;
+  lk_render_list_push(out, cmd);
 
-  /* Text */
-  memset(&cmd, 0, sizeof(cmd));
-  cmd.op = LK_ROP_DRAW_TEXT;
-  cmd.rect.x = r.x + LK_TOOLTIP_PAD;
-  cmd.rect.y = r.y + LK_TOOLTIP_PAD;
-  cmd.rect.w = r.w - LK_TOOLTIP_PAD * 2;
-  cmd.rect.h = r.h - LK_TOOLTIP_PAD * 2;
+  {
+    lk_i32 px, py;
+
+    tooltip_pads(cfg, &px, &py);
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.op = LK_ROP_DRAW_TEXT;
+    cmd.rect.x = r.x + px;
+    cmd.rect.y = r.y + py;
+    cmd.rect.w = r.w - px * 2;
+    cmd.rect.h = r.h - py * 2;
+  }
   cmd.color = fg;
   cmd.str_id = sid;
 

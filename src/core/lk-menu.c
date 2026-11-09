@@ -1,25 +1,10 @@
-/*
- * lk-menu.c -- the context-menu popup (docs/context-menu.md sections
- * 2, 4, 5).
- *
- * A menu is LK_OVERLAY_CONTEXT_MENU with content_root_id == 0: its
- * items are copied onto the ui when it opens (explicit items, or the
- * producer's candidates), the popup is laid out through
- * lk_anchor_resolve like every overlay, and it is gone whenever no
- * such overlay is on the stack -- ESC and outside clicks pop it
- * through the generic overlay paths without telling this file, so
- * every entry point re-derives "open" from the stack.  The menu is
- * not a node: it takes no focus; keys reach it through the event
- * pre-step while it is topmost.
- */
+
 
 #include <string.h>
 
 #include "lk-memory.h"
 #include "lk-menu.h"
 #include <lk.h>
-
-/* ---- state ---- */
 
 static struct lk_menu_state *menu_state(lk_ui *ui) {
   if (!ui->menu) {
@@ -115,9 +100,6 @@ lk_rect lk_menu_rect(const lk_ui *ui) {
   return ui->menu->rect;
 }
 
-/* Pop the menu overlay when it is on the stack (topmost or not: a menu
- * is dismissible, so anything above it means it should already be
- * gone -- pop down to it). */
 void lk_menu_close(lk_ui *ui) {
   while (lk_menu_overlay(ui)) {
     lk_overlay_pop(ui);
@@ -129,8 +111,6 @@ void lk_menu_close(lk_ui *ui) {
     ui->menu->placed = 0;
   }
 }
-
-/* ---- opening ---- */
 
 static int menu_reserve(lk_ui *ui, struct lk_menu_state *m, lk_u32 n) {
   lk_menu_item *ni;
@@ -275,8 +255,6 @@ lk_u32 lk_menu_open_context_at_focus(lk_ui *ui, const lk_tree *t) {
   }
 }
 
-/* ---- geometry ---- */
-
 static const lk_text_backend *menu_backend(const lk_ui *ui,
                                            const lk_layout_cfg *cfg) {
   if (cfg && cfg->text) {
@@ -345,14 +323,32 @@ lk_rect lk_menu_layout(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
     lh = 16;
   }
 
-  m->row_h = lh + LK_MENU_PAD_Y * 2;
+  {
+    lk_i32 gw = cfg ? cfg->grid_w : 0;
+    lk_i32 gh = cfg ? cfg->grid_h : 0;
+
+    if (gh > 0) {
+
+      m->row_h = ((lh + gh - 1) / gh) * gh;
+      m->sep_h = gh;
+      m->pad_y = gh;
+    } else {
+      m->row_h = lh + LK_MENU_PAD_Y * 2;
+      m->sep_h = m->row_h / 2;
+      m->pad_y = LK_MENU_PAD_Y;
+    }
+
+    m->pad_x = gw > 0 ? gw * 2 : LK_MENU_PAD_X;
+    m->sep_inset = gw > 0 ? gw : LK_MENU_PAD_X / 2;
+    m->text_dy = (m->row_h - lh) / 2;
+  }
 
   for (i = 0; i < m->count; i++) {
     const lk_menu_item *it = &m->items[i];
     lk_i32 lw, aw;
 
     if (it->separator) {
-      h += m->row_h / 2;
+      h += m->sep_h;
       continue;
     }
 
@@ -370,9 +366,8 @@ lk_rect lk_menu_layout(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
     h += m->row_h;
   }
 
-  w = label_w + (accel_w > 0 ? LK_MENU_ACCEL_GAP + accel_w : 0) +
-      LK_MENU_PAD_X * 2;
-  h += LK_MENU_PAD_Y * 2;
+  w = label_w + (accel_w > 0 ? LK_MENU_ACCEL_GAP + accel_w : 0) + m->pad_x * 2;
+  h += m->pad_y * 2;
 
   oix = ov->owner_id ? lk_tree_find_by_id(t, ov->owner_id) : 0;
 
@@ -382,19 +377,22 @@ lk_rect lk_menu_layout(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
 
   m->rect = lk_anchor_resolve(ov, owner_rect, cfg ? cfg->viewport_w : 0,
                               cfg ? cfg->viewport_h : 0, w, h);
+
+  if (cfg) {
+    lk_rect_snap_grid(&m->rect, cfg->grid_w, cfg->grid_h);
+  }
+
   m->placed = 1;
 
   return m->rect;
 }
 
-/* The item index at window y inside the popup, -1 for padding /
- * separators. */
 static lk_i32 menu_row_at(const struct lk_menu_state *m, lk_i32 y) {
-  lk_i32 top = m->rect.y + LK_MENU_PAD_Y;
+  lk_i32 top = m->rect.y + m->pad_y;
   lk_u32 i;
 
   for (i = 0; i < m->count; i++) {
-    lk_i32 rh = m->items[i].separator ? m->row_h / 2 : m->row_h;
+    lk_i32 rh = m->items[i].separator ? m->sep_h : m->row_h;
 
     if (y >= top && y < top + rh) {
       return m->items[i].separator ? -1 : (lk_i32)i;
@@ -416,8 +414,6 @@ int lk_menu_contains(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
 
   return r.w > 0 && point_in(&r, x, y);
 }
-
-/* ---- render ---- */
 
 static lk_color dim(lk_color c, lk_u8 pct) {
   c.r = (lk_u8)((lk_u32)c.r * pct / 100);
@@ -485,7 +481,6 @@ void lk_menu_render(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
     return;
   }
 
-  /* Plate from the root's resolved style, with fixed fallbacks. */
   bg = (st && st->bg.a > 0) ? st->bg : rgba(30, 30, 30, 255);
   bg.r = (lk_u8)(bg.r + (255 - bg.r) / 8);
   bg.g = (lk_u8)(bg.g + (255 - bg.g) / 8);
@@ -496,17 +491,19 @@ void lk_menu_render(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
   fg = st ? st->fg : rgba(220, 220, 220, 255);
   accent = (st && st->accent.a > 0) ? st->accent : rgba(80, 140, 220, 255);
 
-  fill(out, r, border);
+  fill(out, r, bg);
   {
-    lk_rect inner = r;
-    inner.x += 1;
-    inner.y += 1;
-    inner.w -= 2;
-    inner.h -= 2;
-    fill(out, inner, bg);
+    lk_render_cmd cmd;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.op = LK_ROP_STROKE_RECT;
+    cmd.rect = r;
+    cmd.color = border;
+    cmd.stroke = 1;
+    lk_render_list_push(out, cmd);
   }
 
-  y = r.y + LK_MENU_PAD_Y;
+  y = r.y + m->pad_y;
 
   for (i = 0; i < m->count; i++) {
     const lk_menu_item *it = &m->items[i];
@@ -514,12 +511,12 @@ void lk_menu_render(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
     if (it->separator) {
       lk_rect line;
 
-      line.x = r.x + LK_MENU_PAD_X / 2;
-      line.y = y + m->row_h / 4;
-      line.w = r.w - LK_MENU_PAD_X;
+      line.x = r.x + m->sep_inset;
+      line.y = y + m->sep_h / 2;
+      line.w = r.w - m->sep_inset * 2;
       line.h = 1;
       fill(out, line, border);
-      y += m->row_h / 2;
+      y += m->sep_h;
       continue;
     }
 
@@ -537,21 +534,18 @@ void lk_menu_render(lk_ui *ui, const lk_overlay *ov, const lk_rect *rects,
       lk_color lc = it->enabled ? fg : dim(fg, 45);
       lk_color ac = it->enabled ? dim(fg, 60) : dim(fg, 35);
 
-      text(out, r.x + LK_MENU_PAD_X, y + LK_MENU_PAD_Y, it->label, lc, st);
+      text(out, r.x + m->pad_x, y + m->text_dy, it->label, lc, st);
 
       if (it->accel != 0) {
         lk_i32 aw = text_w(tb, st, ui->intern, it->accel);
 
-        text(out, r.x + r.w - LK_MENU_PAD_X - aw, y + LK_MENU_PAD_Y, it->accel,
-             ac, st);
+        text(out, r.x + r.w - m->pad_x - aw, y + m->text_dy, it->accel, ac, st);
       }
     }
 
     y += m->row_h;
   }
 }
-
-/* ---- events ---- */
 
 int lk_menu_activate(lk_ui *ui, lk_u32 i) {
   lk_menu_item it;
@@ -562,7 +556,7 @@ int lk_menu_activate(lk_ui *ui, lk_u32 i) {
     return 0;
   }
 
-  it = ui->menu->items[i]; /* copy: emission may reopen a menu */
+  it = ui->menu->items[i];
   t = lk_ui_tree(ui);
   lk_menu_close(ui);
 
@@ -627,7 +621,6 @@ int lk_menu_route(lk_ui *ui, const lk_tree *t, lk_event *ev) {
   m = ui->menu;
   ov = lk_menu_overlay(ui);
 
-  /* Keys: only while the menu is the topmost overlay. */
   if (ev->type == LK_EVENT_KEY_DOWN) {
     lk_u16 kc = ev->data.key.keycode;
 
@@ -669,12 +662,12 @@ int lk_menu_route(lk_ui *ui, const lk_tree *t, lk_event *ev) {
         }
       }
 
-      return 1; /* the focused widget never sees keys under a menu */
+      return 1;
     }
   }
 
-  if (ev->type == LK_EVENT_TEXT) {
-    return 1; /* typed text goes nowhere while a menu is up */
+  if (ev->type == LK_EVENT_TEXT || ev->type == LK_EVENT_PASTE) {
+    return 1;
   }
 
   if (ev->type == LK_EVENT_POINTER_MOVE || ev->type == LK_EVENT_POINTER_DOWN ||
@@ -685,7 +678,7 @@ int lk_menu_route(lk_ui *ui, const lk_tree *t, lk_event *ev) {
     (void)t;
 
     if (!m->placed || !point_in(&m->rect, x, y)) {
-      return 0; /* outside: the host's dismiss pass decides */
+      return 0;
     }
 
     if (ev->type == LK_EVENT_POINTER_MOVE) {

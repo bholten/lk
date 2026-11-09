@@ -1,16 +1,4 @@
-/*
- * lk-editor-widget.c -- UIK_EDITOR vtable (editor track, stage B2;
- * docs/editor.md section 7).
- *
- * The widget is PURE translation: it resolves the attached lk_editor
- * through the UIP_EDITOR resource ref and forwards to the command
- * layer (events) or the editor's layout/render bodies (geometry).  No
- * editing logic lives here.
- *
- * Degradation: a node with no ref, a stale ref, or a wrong-typed ref
- * renders background only and lets every event bubble (the split-pane
- * degradation convention).
- */
+
 
 #include <string.h>
 
@@ -19,10 +7,6 @@
 #define ED_WHEEL_LINES 3
 #define ED_TAB_SPACES_MAX 16
 
-/* ---- Measure ---- */
-
-/* Greedy leaf: intrinsic 0x0, sized by its container.  W/H props are
- * honored here (and again by the engine's generic override). */
 static void measure_editor(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
                            lk_i32 *out_h) {
@@ -32,14 +16,6 @@ static void measure_editor(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = lk_node_prop_i32(t, n, UIP_H, 0);
 }
 
-/* ---- Layout ---- */
-
-/* Leaf with a non-NULL hook: the engine calls layout whenever the
- * pointer is set, children or not, and this hook is where the final
- * content rect and cfg->text meet -- all backend-dependent geometry
- * (viewport resolve, visible-line extraction, tab segments, cursor
- * and selection pixels) is stashed in the editor's transient block
- * here.  Returns 0: no children to recurse into. */
 static int layout_editor(const lk_tree *t, lk_ix n, const lk_size *sizes,
                          const lk_rect *content, const lk_layout_cfg *cfg,
                          lk_rect *rects) {
@@ -55,18 +31,14 @@ static int layout_editor(const lk_tree *t, lk_ix n, const lk_size *sizes,
   return 0;
 }
 
-/* ---- Render ---- */
-
 static void render_editor(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
                           const lk_widget_geom *geom, lk_render_list *out) {
   const lk_editor *e;
   lk_render_cmd cmd;
 
-  (void)geom; /* the editor owns its transient geometry block */
+  (void)geom;
 
-  /* Background fill (also the degraded rendering for a missing or
-   * stale editor ref). */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
@@ -81,8 +53,6 @@ static void render_editor(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
   lk_editor_render_node(e, t, n, rect, style, state, out);
 }
-
-/* ---- Event translation ---- */
 
 static int ed_cmd(lk_editor *e, lk_ui *ui, lk_editor_cmd_id cmd,
                   const lk_editor_cmd_arg *arg) {
@@ -119,19 +89,6 @@ static int ed_set_cursor(lk_editor *e, lk_ui *ui, lk_u32 pos, int extend) {
 
   return ed_cmd(e, ui, LK_ED_SET_CURSOR, &arg);
 }
-
-/* ---- Bindings as data (docs/editor-keys-reflection.md) ----
- *
- * These tables ARE the dispatch: event_editor_key walks ed_key_table,
- * the pointer/wheel cases classify through ed_pointer_table.  Rows
- * for one key are ordered most-specific first.  Docs are one line
- * and spelled in the Lk::editor_command vocabulary; keep them honest,
- * Weft prints them.
- *
- * Every key row's mask includes LK_MOD_ALT: the keyboard tables bind
- * no Alt chords, so a chord holding Alt always bubbles to the app
- * (alt+arrows, ctrl+alt+anything).  Only the pointer table uses Alt
- * (box select). */
 
 #define EDK(key, mods, mask, cmd, act, ext, doc)                               \
   {(lk_u16)(key),                                                              \
@@ -293,8 +250,7 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
       lk_editor_key_lookup(ev->data.key.keycode, ev->mods);
 
   if (!b) {
-    /* unlisted, or a chord the row's mask reserves for the app
-     * (ctrl+shift+d, ctrl+enter, shift+tab, ...) */
+
     return 0;
   }
 
@@ -302,8 +258,7 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
   case LK_EDK_INSERT_NEWLINE: ed_insert_bytes(e, ui, "\n", 1); return 1;
 
   case LK_EDK_INSERT_TAB: {
-    /* Plain TAB inserts tab_size spaces (v1 pinned policy); focus
-     * escape is ESC-then-TAB. */
+
     char spaces[ED_TAB_SPACES_MAX];
     lk_u32 ts = lk_editor_tab_size(e);
 
@@ -318,10 +273,7 @@ static int event_editor_key(lk_editor *e, lk_ui *ui, lk_event *ev) {
   }
 
   case LK_EDK_COLLAPSE_IF_MULTI:
-    /* ESC collapses a multi-caret set (consumed); with a single
-     * caret it bubbles exactly as before.  (An open overlay is
-     * popped by the lk_event_route pre-step BEFORE widget dispatch,
-     * so the popup wins the first press -- correct priority.) */
+
     if (lk_editor_caret_count(e) > 1) {
       ed_cmd(e, ui, (lk_editor_cmd_id)b->cmd, NULL);
 
@@ -354,7 +306,7 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   e = lk_editor_from_node(t->resources, t, n);
 
   if (!e) {
-    return 0; /* unresolvable editor: everything bubbles */
+    return 0;
   }
 
   nid = t->nodes[n].id;
@@ -369,6 +321,16 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
     return 1;
 
+  case LK_EVENT_PASTE:
+
+    if (ev->data.paste.len == 0 || !ev->data.paste.ptr) {
+      return 0;
+    }
+
+    ed_insert_bytes(e, ui, ev->data.paste.ptr, ev->data.paste.len);
+
+    return 1;
+
   case LK_EVENT_KEY_DOWN: return event_editor_key(e, ui, ev);
 
   case LK_EVENT_POINTER_DOWN: {
@@ -376,10 +338,6 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     lk_u8 btn = ev->data.pointer.button;
     const lk_editor_pointer_binding *pb;
 
-    /* Overlay scrollbar first: a primary click on the bar never
-     * reaches presentations or cursor placement.  Thumb = capture
-     * drag (like a selection drag, but no focus/cursor change); track
-     * = page toward the pointer. */
     if (btn == (lk_u8)LK_POINTER_BUTTON_ANY ||
         btn == (lk_u8)LK_POINTER_BUTTON_PRIMARY) {
       int sb = lk_editor_scrollbar_down(e, ui, ev->data.pointer.x,
@@ -396,18 +354,13 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
     if (!lk_editor_hit_pos(e, ui ? ui->text : NULL, ev->data.pointer.x,
                            ev->data.pointer.y, &pos)) {
-      return 0; /* no layout geometry yet: bubble (click-to-focus) */
+      return 0;
     }
 
-    /* From here the gesture tables decide (an unspecified synthetic
-     * button counts as primary). */
     if (btn == (lk_u8)LK_POINTER_BUTTON_ANY) {
       btn = (lk_u8)LK_POINTER_BUTTON_PRIMARY;
     }
 
-    /* Alt+primary starts a box selection (stage E3) and deliberately
-     * SKIPS the presentation offer: an explicit editing gesture, not
-     * a click (docs/editor-multicursor.md section 9.3). */
     pb = lk_editor_pointer_lookup((lk_u8)LK_EDG_DRAG, btn, ev->mods);
 
     if (pb && pb->action == (lk_u8)LK_EDP_BOX_SELECT) {
@@ -421,28 +374,16 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
       return 1;
     }
 
-    /* Interior presentations FIRST (docs/weft-surface.md section 1.5):
-     * offer candidates at the hit position; a fired translation
-     * consumes the click with no focus change, no cursor move, no
-     * selection mutation, and no pointer capture (pinned).  This
-     * outranks ctrl+click add-caret: an app translator bound to
-     * ctrl+click keeps right-of-way. */
     if (lk_editor_offer_presentations(e, ui, t, n, ev, pos)) {
       return 1;
     }
 
-    /* No translation: the click table decides; a button/chord with no
-     * row (middle, secondary) takes no default action and bubbles. */
     pb = lk_editor_pointer_lookup((lk_u8)LK_EDG_CLICK, btn, ev->mods);
 
     if (!pb) {
       return 0;
     }
 
-    /* Ctrl+primary toggles a caret at the hit position (stage E3).
-     * An ADD starts a drag so the new PRIMARY caret extends while
-     * the rest stay put; a remove (or a refused add) just consumes
-     * the click. */
     if (pb->action == (lk_u8)LK_EDP_ADD_CURSOR) {
       lk_u32 before = lk_editor_caret_count(e);
       lk_editor_cmd_arg arg;
@@ -462,8 +403,6 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
     ed_set_cursor(e, ui, pos, 0);
 
-    /* We consume the click, so the host's built-in click-to-focus
-     * never sees it -- take focus and the pointer capture here. */
     lk_focus_set(ui, t, nid);
     lk_capture_set(ui, nid);
     lk_editor_set_drag(e, 1);
@@ -529,9 +468,6 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     const lk_editor_pointer_binding *pb =
         lk_editor_pointer_lookup((lk_u8)LK_EDG_WHEEL, 0, ev->mods);
 
-    /* In NONE mode, native wheel-dx and SHIFT+wheel-dy (the SCROLL_X
-     * row) scroll horizontally; vertical behavior is unchanged
-     * otherwise. */
     if (lk_editor_wrap_mode_get(e) == LK_EDITOR_WRAP_NONE) {
       hticks = ev->data.wheel.dx;
 
@@ -551,8 +487,6 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
       ed_cmd(e, ui, LK_ED_SCROLL_LINES, &arg);
     }
 
-    /* Always consumed: the editor owns its viewport and never leaks
-     * wheel events to an ancestor UIK_SCROLL. */
     return 1;
   }
 
@@ -560,10 +494,6 @@ static int event_editor(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 }
 
-/* ---- Registration ---- */
-
-/* Context-menu discovery: byte under the point, then the source's
- * candidates (docs/context-menu.md section 1). */
 static lk_u32 presentations_at_editor(lk_ui *ui, const lk_tree *t, lk_ix n,
                                       lk_i32 x, lk_i32 y,
                                       lk_presentation_hit *out, lk_u32 cap) {

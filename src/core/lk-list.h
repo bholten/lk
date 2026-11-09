@@ -1,6 +1,5 @@
-/*
- * lk-list.h -- internal: the UIK_LIST widget def (docs/table.md).
- */
+
+
 #ifndef LK_LIST_H
 #define LK_LIST_H
 
@@ -13,4 +12,4 @@
 
 lk_widget_def lk_list_widget_def(void);
 
-#endif /* LK_LIST_H */
+#endif

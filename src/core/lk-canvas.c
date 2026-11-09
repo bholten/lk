@@ -1,16 +1,4 @@
-/*
- * lk-canvas.c -- lk_canvas display list + UIK_CANVAS widget
- * (docs/canvas.md).
- *
- * An lk_canvas is an application-owned retained op buffer -- lines,
- * polylines, rects, text -- in canvas-local integer pixels.  The
- * UIK_CANVAS leaf references one through a UIP_CANVAS resource ref
- * (the image-track ownership model) and replays it every frame,
- * translated to its rect and clipped to it.  Nothing is cached and
- * nothing is interned: point and text bytes live in the canvas's own
- * arena, and the replay copies them into the render list's arena so
- * the list stays a self-contained value.
- */
+
 
 #include <string.h>
 
@@ -18,16 +6,15 @@
 #include "lk-memory.h"
 #include <lk.h>
 
-/* Same ceiling as lk_image: keeps sizes comfortably inside lk_u32. */
 #define LK_CANVAS_MAX_DIM 16384u
 
 enum canvas_op_kind {
-  CV_LINE = 1, /* a, b, c, d = x0, y0, x1, y1 */
-  CV_POLYLINE, /* off/len = point count, packed lk_i32 xy in bytes */
-  CV_RECT,     /* a, b, c, d = x, y, w, h (outline) */
+  CV_LINE = 1,
+  CV_POLYLINE,
+  CV_RECT,
   CV_FILL_RECT,
-  CV_TEXT,       /* a, b = x, y; off/len = byte range */
-  CV_CLIP_BEGIN, /* a, b, c, d = x, y, w, h */
+  CV_TEXT,
+  CV_CLIP_BEGIN,
   CV_CLIP_END
 };
 
@@ -36,12 +23,12 @@ typedef struct canvas_op {
   lk_u8 stroke;
   lk_color color;
   lk_i32 a, b, c, d;
-  lk_u32 off; /* byte offset into the arena (POLYLINE / TEXT) */
-  lk_u32 len; /* POLYLINE: point count; TEXT: byte length */
+  lk_u32 off;
+  lk_u32 len;
 } canvas_op;
 
 struct lk_canvas {
-  lk_u32 w, h; /* size hint */
+  lk_u32 w, h;
 
   canvas_op *ops;
   lk_u32 op_count, op_cap;
@@ -49,7 +36,7 @@ struct lk_canvas {
   char *bytes;
   lk_u32 bytes_count, bytes_cap;
 
-  lk_u32 clip_depth; /* sub-clips currently open (append-time) */
+  lk_u32 clip_depth;
 
   void *(*alloc)(void *, lk_u32);
   void (*dealloc)(void *, void *);
@@ -134,8 +121,6 @@ lk_u32 lk_canvas_op_count(const lk_canvas *c) {
   return c ? c->op_count : 0;
 }
 
-/* ---- growth ---- */
-
 static int canvas_reserve_ops(lk_canvas *c, lk_u32 extra) {
   lk_u32 need = c->op_count + extra;
   lk_u32 new_cap;
@@ -168,8 +153,6 @@ static int canvas_reserve_ops(lk_canvas *c, lk_u32 extra) {
   return 1;
 }
 
-/* Copy len bytes into the arena; writes the start offset.  len 0
- * writes the current offset and copies nothing. */
 static int canvas_push_bytes(lk_canvas *c, const void *ptr, lk_u32 len,
                              lk_u32 *out_off) {
   lk_u32 need = c->bytes_count + len;
@@ -224,8 +207,6 @@ static canvas_op *canvas_append(lk_canvas *c, lk_u8 kind, lk_color color,
   return op;
 }
 
-/* ---- ops ---- */
-
 int lk_canvas_line(lk_canvas *c, lk_i32 x0, lk_i32 y0, lk_i32 x1, lk_i32 y1,
                    lk_color color, lk_u8 stroke) {
   canvas_op *op;
@@ -258,7 +239,6 @@ int lk_canvas_polyline(lk_canvas *c, const lk_i32 *xy, lk_u32 n_points,
     return 0;
   }
 
-  /* Bytes first so an op-array failure can roll them back cheaply. */
   saved_bytes = c->bytes_count;
 
   if (!canvas_push_bytes(c, xy, n_points * 2u * (lk_u32)sizeof(lk_i32), &off)) {
@@ -355,15 +335,11 @@ int lk_canvas_text(lk_canvas *c, lk_i32 x, lk_i32 y, const char *ptr,
   return 1;
 }
 
-/* ---- Resource integration ---- */
-
 static const lk_resource_type g_canvas_type = {"canvas", NULL};
 
 const lk_resource_type *lk_canvas_type(void) {
   return &g_canvas_type;
 }
-
-/* ---- sub-clip ---- */
 
 int lk_canvas_clip_begin(lk_canvas *c, lk_rect r) {
   canvas_op *op;
@@ -453,8 +429,6 @@ lk_canvas *lk_canvas_from_node(const lk_resources *rs, const lk_tree *t,
   return (lk_canvas *)lk_resource_get(rs, ref, &g_canvas_type);
 }
 
-/* ---- Widget ---- */
-
 static void measure_canvas(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
                            lk_i32 *out_h) {
@@ -472,9 +446,6 @@ static void measure_canvas(const lk_tree *t, lk_ix n, const lk_size *sizes,
   }
 }
 
-/* Emit one DRAW_LINES for n points, translating by (ox, oy) as the
- * points are copied through a stack window (no per-op allocation;
- * the render list's arena is the only destination). */
 static int emit_lines(lk_render_list *out, const lk_i32 *xy, lk_u32 n,
                       lk_i32 ox, lk_i32 oy, lk_color color, lk_u8 stroke) {
   lk_render_cmd cmd;
@@ -550,12 +521,11 @@ static void render_canvas(const lk_tree *t, lk_ix n, const lk_rect *rect,
   const lk_canvas *c;
   lk_render_cmd cmd;
   lk_u32 i;
-  lk_u32 open = 0; /* sub-clips opened by the replay, closed below */
+  lk_u32 open = 0;
 
   (void)state;
   (void)geom;
 
-  /* Background (also the degrade for a missing/stale ref). */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
@@ -594,8 +564,7 @@ static void render_canvas(const lk_tree *t, lk_ix n, const lk_rect *rect,
       break;
 
     case CV_RECT: {
-      /* Outline as a closed 5-point polyline over the rect's edge
-       * pixels (w/h are extents, so the far edge is at x + w - 1). */
+
       lk_i32 xy[10];
       lk_i32 x1 = op->a + (op->c > 0 ? op->c - 1 : 0);
       lk_i32 y1 = op->b + (op->d > 0 ? op->d - 1 : 0);
@@ -671,7 +640,6 @@ static void render_canvas(const lk_tree *t, lk_ix n, const lk_rect *rect,
     }
   }
 
-  /* Close sub-clips the list left open, then the canvas's own. */
   while (open > 0) {
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_CLIP_END;

@@ -992,8 +992,8 @@ static void test_theme_rule_bad_font_size(void) {
   END_TEST();
 }
 
-#ifdef LK_HAVE_SDL
-#include "lk-sdl.h" /* lk_image_load_mem for the hermetic BMP test */
+#ifdef LK_HAVE_WINDOW
+#include <lk-window.h> /* lk_image_load_mem for the hermetic BMP test */
 
 /* defined later in this file (the editor-track harness section) */
 static void eval_expect_err(lcl_interp *interp, const char *src,
@@ -1204,7 +1204,7 @@ static void test_dialog_errors(void) {
   lcl_interp_free(interp);
   END_TEST();
 }
-#endif /* LK_HAVE_SDL */
+#endif /* LK_HAVE_WINDOW */
 
 static void test_set_command_handler(void) {
   lcl_interp *interp;
@@ -5553,7 +5553,7 @@ static void test_args_proc(void) {
   END_TEST();
 }
 
-#ifdef LK_HAVE_SDL
+#ifdef LK_HAVE_WINDOW
 /* Headless like the dialog tests: only the contracts that error before
  * any window exists. */
 static void test_screenshot_stop_errors(void) {
@@ -5575,6 +5575,10 @@ static void test_screenshot_stop_errors(void) {
   eval_expect_err(interp, "Lk::window_stop", "Lk::window_stop", "1 argument",
                   NULL);
   eval_expect_err(interp, "Lk::window_stop $ui", "expected lk_window opaque",
+                  NULL, NULL);
+  eval_expect_err(interp, "Lk::window_caps", "Lk::window_caps", "1 argument",
+                  NULL);
+  eval_expect_err(interp, "Lk::window_caps $ui", "expected lk_window opaque",
                   NULL, NULL);
 
   lcl_interp_free(interp);
@@ -7575,7 +7579,7 @@ int main(void) {
   test_theme_rule_font_keys();
   test_theme_rule_bad_font_id();
   test_theme_rule_bad_font_size();
-#ifdef LK_HAVE_SDL
+#ifdef LK_HAVE_WINDOW
   test_register_font_arity();
   test_register_font_bad_window();
   test_window_icon_errors();
@@ -7696,7 +7700,7 @@ int main(void) {
   test_dsl_list_window();
   test_list_value_prop();
   test_args_proc();
-#ifdef LK_HAVE_SDL
+#ifdef LK_HAVE_WINDOW
   test_screenshot_stop_errors();
 #endif
   test_node_rect();

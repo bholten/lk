@@ -1,21 +1,4 @@
-/*
- * lk-list.c -- UIK_LIST: the virtualized list (docs/table.md).
- *
- * A scroll container that positions by index instead of by stacking.
- * The application builds only the rows it wants shown, each carrying
- * its index in UIP_ROW; the list places them at row * row_h inside an
- * extent of UIP_ROWS * UIP_ROW_H pixels, scrolls that extent (wheel,
- * a draggable bar, keys), and reports the visible window through the
- * geometry scratch (geom->list) so the next frame can build exactly
- * those rows -- the frame callback is the row source.
- *
- * State: LKS_SCROLL_Y (px, the scroll contract), LKS_CURSOR_ROW (the
- * keyboard position, -1 = none; VALUE prop is the initial one,
- * CONTROLLED suppresses the write), LKS_LIST_DRAGGING (thumb drag).
- * Every cursor change enqueues VALUE_CHANGED with the row as a decimal
- * string.  The cursor is position, not selection: selection is the
- * application's, expressed as tags on the rows it builds.
- */
+
 
 #include <stdio.h>
 #include <string.h>
@@ -23,8 +6,6 @@
 #include "lk-list.h"
 #include "lk-memory.h"
 #include <lk.h>
-
-/* ---- helpers ---- */
 
 static lk_i32 clamp(lk_i32 v, lk_i32 lo, lk_i32 hi) {
   if (v < lo) {
@@ -94,8 +75,6 @@ static int inset_of(const lk_tree *t, lk_ix n, const lk_style *styles) {
 
   return pad + bw;
 }
-
-/* ---- measure / layout ---- */
 
 static void measure_list(const lk_tree *t, lk_ix n, const lk_size *sizes,
                          const lk_layout_cfg *cfg, lk_i32 *out_w,
@@ -169,12 +148,10 @@ static int layout_list(const lk_tree *t, lk_ix n, const lk_size *sizes,
     ch = t->nodes[ch].next_sibling;
   }
 
-  /* The visible window + the content rect, for the next frame's build
-   * and for the event handlers (bar drag, ensure-visible). */
   if (cfg->geom) {
     lk_widget_geom *g = &cfg->geom[n];
     lk_i32 first = scroll_y / row_h;
-    lk_i32 last = (scroll_y + content->h - 1) / row_h; /* inclusive */
+    lk_i32 last = (scroll_y + content->h - 1) / row_h;
     lk_i32 count;
 
     if (content->h <= 0 || rows == 0) {
@@ -234,8 +211,6 @@ int lk_list_range(const lk_ui *ui, lk_node_id id, lk_i32 *first,
   return 1;
 }
 
-/* ---- render ---- */
-
 static void render_list(const lk_tree *t, lk_ix n, const lk_rect *rect,
                         const lk_style *style, const lk_state *state,
                         const lk_widget_geom *geom, lk_render_list *out) {
@@ -285,8 +260,6 @@ static void render_list(const lk_tree *t, lk_ix n, const lk_rect *rect,
   }
 }
 
-/* ---- events ---- */
-
 static void emit_cursor(lk_ui *ui, lk_ix n, lk_i32 row) {
   char buf[16];
   lk_event vev;
@@ -307,7 +280,6 @@ static const lk_widget_geom *list_geom(const lk_ui *ui, lk_ix n) {
   return &ui->geom[n];
 }
 
-/* Scroll so that `row` is inside the viewport (no-op when it is). */
 static void ensure_visible(lk_ui *ui, const lk_tree *t, lk_ix n, lk_i32 row) {
   const lk_widget_geom *g = list_geom(ui, n);
   lk_state *st = lk_ui_state(ui);
@@ -354,8 +326,6 @@ int lk_list_scroll_to_row(lk_ui *ui, lk_node_id id, lk_i32 row) {
   return 1;
 }
 
-/* Set the cursor if it changed: state write (unless controlled),
- * ensure visible, VALUE_CHANGED. */
 static void cursor_set(lk_ui *ui, const lk_tree *t, lk_ix n, lk_i32 row) {
   lk_state *st = lk_ui_state(ui);
   lk_i32 rows = list_rows(t, n);
@@ -380,7 +350,6 @@ static void cursor_set(lk_ui *ui, const lk_tree *t, lk_ix n, lk_i32 row) {
   emit_cursor(ui, n, row);
 }
 
-/* The materialized row (direct child of n) on the path from target. */
 static lk_ix row_child_of(const lk_tree *t, lk_ix n, lk_ix target) {
   lk_ix c = target;
 
@@ -391,7 +360,6 @@ static lk_ix row_child_of(const lk_tree *t, lk_ix n, lk_ix target) {
   return (c != 0 && t->nodes[c].parent == n) ? c : 0;
 }
 
-/* Bar geometry from the stashed content rect. */
 static int bar_geom(const lk_ui *ui, const lk_tree *t, lk_ix n, lk_rect *track,
                     lk_rect *thumb) {
   const lk_widget_geom *g = list_geom(ui, n);
@@ -435,9 +403,6 @@ static int event_list(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
-  /* A primary click bubbling up from a materialized row moves the
-   * cursor there and focuses the list -- and does NOT consume: the
-   * row's own presentations / translators still fire. */
   if (ev->type == LK_EVENT_POINTER_DOWN && ev->target != n) {
     lk_ix row = row_child_of(t, n, ev->target);
 
@@ -478,7 +443,6 @@ static int event_list(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
-  /* The bar: thumb drag with capture, track click pages. */
   if (ev->type == LK_EVENT_POINTER_DOWN) {
     lk_rect track, thumb;
 
@@ -511,7 +475,6 @@ static int event_list(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
       return 1;
     }
 
-    /* Empty space inside the list: take focus, nothing else. */
     if (lk_node_prop_bool(t, n, UIP_FOCUSABLE)) {
       lk_focus_set(ui, t, nid);
       return 1;
@@ -589,8 +552,6 @@ static int event_list(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
   return 0;
 }
-
-/* ---- registration ---- */
 
 lk_widget_def lk_list_widget_def(void) {
   lk_widget_def def;
