@@ -39,6 +39,7 @@ jobs:
         # cell buffer; --snap leaves .txt/.ans pages.  Six pages or fail.
         if: matrix.lcl == 'ON'
         run: |
+          mkdir -p tour-tui
           build/lcl_lk_tui examples/tour-dsl.lcl --snap "$PWD/tour-tui"
           test "$(ls tour-tui/tour-*.txt | wc -l)" -eq 6
           build/lcl_lk_tui examples/log-dsl.lcl --snap "$PWD/tour-tui"

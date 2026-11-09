@@ -1040,6 +1040,9 @@ static void tui_service_screenshot(lk_window *win) {
   if (f) {
     tui_write_txt(win, f);
     fclose(f);
+  } else {
+    fprintf(stderr, "lk: screenshot: cannot write %s: %s\n", buf,
+            strerror(errno));
   }
 
   memcpy(buf + stem, ".ans", 5);
@@ -1048,6 +1051,9 @@ static void tui_service_screenshot(lk_window *win) {
   if (f) {
     tui_write_ans(win, f);
     fclose(f);
+  } else {
+    fprintf(stderr, "lk: screenshot: cannot write %s: %s\n", buf,
+            strerror(errno));
   }
 
   free(buf);
