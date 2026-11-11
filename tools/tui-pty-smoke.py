@@ -265,6 +265,38 @@ def scenario_picker(binary):
           "picker app quit with status 0")
 
 
+def scenario_edit_no_blank(binary):
+    """A keystroke in an editor must not paint the editor empty for a
+    frame.  Input lands after layout; the editor drops its geometry on
+    every document change, so the step has to lay out again before it
+    renders (the bug: one blank frame, then a full repaint)."""
+    print("-- editing never blanks the editor (Tour, Editor page)")
+    scr = Screen(100, 37)
+    pid, fd = spawn([binary, "examples/tour-dsl.lcl"], 100, 37, {"COLORTERM": "truecolor"})
+    pump(fd, scr, quiet=0.5)
+    os.write(fd, b"nnn")  # text -> inputs -> layout -> editor (focuses it)
+    pump(fd, scr, quiet=0.5)
+    check("A second paragraph" in scr.text(), "Editor page up")
+
+    chunks = []
+    os.write(fd, b"x")
+    pump(fd, scr_after := Screen(100, 37), capture=chunks)
+    flushes = b"".join(chunks).split(b"\x1b[?25l")[1:]
+    seen = []
+
+    for part in flushes:  # replay the keystroke one flush at a time
+        scr.feed(part)
+        seen.append("A second paragraph" in scr.text())
+
+    check(len(flushes) > 0 and all(seen),
+          f"the paragraph stayed on screen through every flush of one keystroke ({seen})")
+    check("xThe editor widget" in scr.text(), "and the typed character landed")
+    os.write(fd, b"\x11")
+    status = wait_exit(pid)
+    check(status != -1 and os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0,
+          "quit with status 0")
+
+
 def scenario_256(binary):
     """LK_TUI_COLOR=256: SGR uses the xterm palette, never 38;2."""
     print("-- 256-colour fallback")
@@ -383,6 +415,7 @@ def main():
     check(scr.kitty_flags is None, "kitty flags popped on exit")
 
     scenario_picker(binary)
+    scenario_edit_no_blank(binary)
     scenario_256(binary)
 
     if failures:

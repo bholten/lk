@@ -64,6 +64,8 @@ app "Budget" #{font $font font_size 16 width 720 height 500} {
 
     translator value_changed field_edit FieldEdit
     translator pointer_down action Action
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on FieldEdit [lambda {cmd} {
         let args [get $cmd args]

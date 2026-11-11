@@ -626,6 +626,8 @@ app "Plotter" #{font $font font_size 13 width 1040 height 660} {
     keybinding right "" PanRight
     keybinding up "" PanUp
     keybinding down "" PanDown
+    keybinding q ctrl Quit   ;; no close button in a terminal
+    on Quit [lambda {cmd} { quit }]
 
     on SeriesToggle [lambda {cmd} {
         let id [get [get $cmd args] 0]

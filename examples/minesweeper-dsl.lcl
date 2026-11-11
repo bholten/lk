@@ -27,7 +27,9 @@
 ;;
 ;; Controls: left-click reveals, right-click flags, middle-click on a
 ;; number whose flags are all placed reveals its other neighbours
-;; (chording).  The face restarts; so does F2.
+;; (chording).  Ctrl+left-click chords too: some terminals keep the
+;; middle button for themselves (paste) and never report it.  The face
+;; restarts; so does F2.  Ctrl+Q quits.
 
 let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 
@@ -350,9 +352,12 @@ app "Minesweeper" #{font $font font_size 15 width 900 height 600} {
     translator pointer_down #{button primary}   cell Reveal
     translator pointer_down #{button secondary} cell Flag
     translator pointer_down #{button middle}    cell Chord
+    translator pointer_down #{button primary mods ctrl} cell Chord
     translator pointer_down action Action
     translator value_changed level Level
     keybinding f2 "" NewGame
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on Reveal [lambda {cmd} {
         let a [get $cmd args]
@@ -433,7 +438,7 @@ app "Minesweeper" #{font $font font_size 15 width 900 height 600} {
 
                 spacer "s3"
 
-                label "hint" #{text "left reveal · right flag · middle chord" tag dim}
+                label "hint" #{text "left reveal · right flag · middle or ctrl+left chord" tag dim}
             }
         }
     }

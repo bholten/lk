@@ -19,6 +19,11 @@
 ;;   primary    anywhere            ordinary editing (editor default)
 ;;   middle     selection or word   EXECUTE: eval it, insert "=> result"
 ;;                                  below the line, same document, undoable
+;;   Ctrl+Enter / Alt+Enter         EXECUTE the selection, or the word at
+;;                                  the caret (the keyboard spelling: some
+;;                                  terminals keep the middle button for
+;;                                  paste, and only SDL and kitty-protocol
+;;                                  terminals can send Ctrl+Enter)
 ;;   secondary  a plumb annotation  PLUMB: jump to file:line, opening a
 ;;                                  foreign file into the left pane
 ;;   secondary  anywhere else       LOOK: jump to the next occurrence of
@@ -351,6 +356,17 @@ proc _execute {side pos} {
     return 1
 }
 
+;; EXECUTE from the keyboard: the selection if there is one (its last
+;; byte, so the result lands under its last line), else the caret.
+proc _execute_at_caret {side} {
+    let ed [pane_get $side ed]
+    let sel [Lk::editor_selection $ed]
+
+    if [== [len $sel] 2] { return [_execute $side [- [get $sel 1] 1]] }
+
+    return [_execute $side [Lk::editor_cursor $ed]]
+}
+
 proc _goto_line {side ln} {
     let doc [pane_get $side doc]
     let lc [Lk::doc_line_count $doc]
@@ -422,6 +438,8 @@ proc greet {} { return "hello from weft-mini" }
 let SCRATCH {;; scratch - this pane is a live Lcl buffer.  The gestures:
 ;;
 ;;   middle-click   EXECUTE  the selection (click inside it) or word
+;;   Ctrl+Enter     EXECUTE  from the keyboard: the selection, or the
+;;                           word at the caret (Alt+Enter in a terminal)
 ;;   right-click    PLUMB    on an underlined file:line reference
 ;;   right-click    LOOK     elsewhere: jump to next occurrence
 ;;
@@ -542,6 +560,8 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
     keybinding s ctrl buf SaveLeft
     keybinding return "" search_edit SearchNext
     keybinding escape "" search_edit SearchClose
+    keybinding return ctrl buf Execute
+    keybinding return alt buf Execute
     keybinding q ctrl Quit   ;; the terminal has no close button
 
     ;; Secondary on a plumb presentation arrives HERE as a command
@@ -560,6 +580,7 @@ app "weft-mini" #{font $font font_size 15 width 1100 height 640} {
 
     on SearchEdit [lambda {cmd} { set! search_val [get $cmd source_value] }]
     on Quit [lambda {cmd} { quit }]
+    on Execute [lambda {cmd} { _execute_at_caret [get [get $cmd args] 0] }]
 
     on SearchNext [lambda {cmd} {
         if [empty? $search_val] { return "" }

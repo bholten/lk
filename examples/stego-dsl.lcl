@@ -37,6 +37,7 @@ var img {}      ;; the cover image (lk_image opaque)
 var total 0     ;; its w * h * 4 byte count
 var msg "attack at dawn"
 var status "type a message, press Embed"
+var can_io 1
 var extracted ""
 
 let HEX "0123456789abcdef"
@@ -208,6 +209,8 @@ app "Stego Lab" #{font $font font_size 15 width 860 height 520} {
 
     translator pointer_down action Action
     translator value_changed msg_edit MsgEdit
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on MsgEdit [lambda {cmd} {
         set! msg [get $cmd source_value]
@@ -260,6 +263,12 @@ app "Stego Lab" #{font $font font_size 15 width 860 height 520} {
 
     ;; The image registers in the window ui's resource table; the
     ;; `image` prop below carries the typed ref every frame.
+    ;; Image files need codecs behind the window, and not every backend
+    ;; has them (the terminal one does not, today).  Ask rather than
+    ;; assume: without `image_io` Load/Save stay on screen, disabled,
+    ;; with a line saying why.
+    set! can_io [List::any? [Lk::window_caps ${LkDsl::_win}] [lambda {c} { == $c image_io }]]
+
     adopt_image [Lk::image_new ${LkDsl::_ui} 48 32]
     paint_canvas
 
@@ -279,10 +288,12 @@ app "Stego Lab" #{font $font font_size 15 width 860 height 520} {
                 }
 
                 row "btns2" #{gap 8} {
-                    button "b_load" #{text "Load..." focusable 1 present (action (load))}
-                    button "b_save" #{text "Save..." focusable 1 present (action (save))}
+                    button "b_load" #{text "Load..." focusable 1 disabled [not $can_io] present (action (load))}
+                    button "b_save" #{text "Save..." focusable 1 disabled [not $can_io] present (action (save))}
                     button "b_paint" #{text "Repaint" focusable 1 present (action (repaint)) tooltip "fresh gradient, message erased"}
                 }
+
+                if [not $can_io] { label "io_off" #{text "no image codecs here: Load/Save are off" tag dim} }
 
                 label "status" #{text $status tag dim}
                 label "out" #{text "extracted: $extracted"}

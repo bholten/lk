@@ -2770,6 +2770,8 @@ int lk_window_step(lk_window *win, lk_frame_fn frame, void *ud) {
     if (!win->running) {
       return 0;
     }
+
+    lk_layout(cur, &lcfg, win->rects);
   }
 
   lk_render_build(cur, win->rects, styles, lk_ui_state(win->ui), lcfg.geom,

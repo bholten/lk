@@ -71,12 +71,17 @@ Lk::theme_rule $ui "scroll" "" "" #{bg (30 30 45) padding 8 gap 4 border_width 1
 ;; Translator: pointer_down on any "action" presentation -> "ButtonClick" command
 Lk::add_translator $ui "pointer_down" "action" "" "" "" "ButtonClick"
 
+;; Translator: Ctrl+Q anywhere -> "Quit" (a terminal has no close button)
+Lk::add_translator $ui "key_down" "" "" q ctrl "Quit"
+
 ;; Command handler: receives a dict with {name, args, source_node_id, ...}
 Lk::set_command_handler $ui [lambda {cmd} {
     if [== [get $cmd name] ButtonClick] {
         let action [get [get $cmd args] 0]
         puts "Command: ButtonClick, action=$action"
     }
+
+    if [== [get $cmd name] Quit] { Lk::window_stop $win }
 }]
 
 ;; Event handler for keyboard events (not handled by widgets or translators)

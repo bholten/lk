@@ -26,6 +26,8 @@ app "Modal Demo" #{font $font font_size 16 width 520 height 320} {
     }
 
     translator pointer_down action Action
+    keybinding q ctrl Quit   ;; no close button in a terminal
+    on Quit [lambda {cmd} { quit }]
 
     on Action [lambda {cmd} {
         let verb [get [get $cmd args] 0]

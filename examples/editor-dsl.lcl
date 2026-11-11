@@ -160,6 +160,8 @@ app "lk editor" #{font $font font_size 15 width 960 height 620} {
     ;; presentation the same way; ESC dismissal comes from core.
     keybinding g ctrl buf GotoOpen
     keybinding return "" goto_edit GotoSubmit
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on Action [lambda {cmd} {
         let verb [get [get $cmd args] 0]
