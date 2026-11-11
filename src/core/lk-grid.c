@@ -1,20 +1,4 @@
-/*
- * lk-grid.c -- UIK_GRID (docs/forms-widgets.md).
- *
- * Row-major cell grid: visible (non-UIP_HIDDEN) children fill cells
- * left-to-right, top-to-bottom, UIP_COLUMNS (default 1, clamped >= 1)
- * per row.  Every column is as wide as its widest cell, every row as
- * tall as its tallest -- the Tk `grid` feel without spans or weights
- * (v1).  Cells are separated by style->gap on both axes; the whole
- * thing is inset by padding + border_width.  Each child fills its
- * cell (stretch on both axes).  Extra space the parent hands the grid
- * beyond its measured size is left unused (the grid stays top-left
- * anchored inside its rect).
- *
- * Column/row extents are recomputed in layout from the measured child
- * sizes -- the same arithmetic as measure -- so no scratch survives
- * between the passes.  Render-less: the engine paints bg + border.
- */
+
 
 #include <string.h>
 
@@ -28,10 +12,6 @@ static int grid_columns(const lk_tree *t, lk_ix n) {
   return c < 1 ? 1 : (int)c;
 }
 
-/* Fill col_w[cols] / row_h[rows] with the max cell extents; returns the
- * number of rows used.  Either array may be NULL when only the row
- * count is wanted (col_w must be sized cols, row_h at least
- * ceil(children / cols)). */
 static int grid_extents(const lk_tree *t, lk_ix n, const lk_size *sizes,
                         int cols, lk_i32 *col_w, lk_i32 *row_h) {
   lk_ix c = t->nodes[n].first_child;
@@ -127,9 +107,6 @@ static void measure_grid(const lk_tree *t, lk_ix n, const lk_size *sizes,
     h += row_h[i];
   }
 
-  /* only columns that actually hold a cell get a gap: with fewer
-   * children than columns the trailing empty columns are zero-width
-   * and their gaps would still show, so count used columns */
   {
     int used_cols = count < cols ? count : cols;
 

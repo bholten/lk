@@ -1,20 +1,4 @@
-/*
- * lk-image.c -- lk_image resource + UIK_IMAGE widget
- * (docs/image-widget.md).
- *
- * An lk_image is an application-owned RGBA8888 pixel buffer shown by
- * the UIK_IMAGE leaf through a UIP_IMAGE resource ref -- the
- * editor-track ownership model: the tree presents a view of the
- * pixels, it never owns them.  The app mutates the buffer in place
- * and calls lk_image_mark_dirty; consumers (the SDL texture cache)
- * compare that pixel generation against their own copy and
- * re-upload.  Two generations are in play and must not be conflated:
- * the resource ref's (stale-handle detection, carried in the render
- * cmd) and the pixel-dirty one (never in the cmd -- queried off the
- * resolved image).
- *
- * Core stays codec-free: file load/save lives in the SDL backend.
- */
+
 
 #include <string.h>
 
@@ -22,14 +6,13 @@
 #include "lk-memory.h"
 #include <lk.h>
 
-/* Keeps w * h * 4 comfortably inside lk_u32 (16384^2 * 4 = 2^30). */
 #define LK_IMAGE_MAX_DIM 16384u
 
 struct lk_image {
   lk_u32 w;
   lk_u32 h;
-  lk_u32 generation; /* pixel-dirty; starts at 1, bumped by mark_dirty */
-  lk_u8 *pixels;     /* w * h * 4 bytes, RGBA order, pitch = w * 4 */
+  lk_u32 generation;
+  lk_u8 *pixels;
 
   void *(*alloc)(void *, lk_u32);
   void (*dealloc)(void *, void *);
@@ -73,7 +56,7 @@ lk_image *lk_image_new(lk_u32 w, lk_u32 h, void *(*alloc)(void *, lk_u32),
     return NULL;
   }
 
-  memset(img->pixels, 0, bytes); /* transparent black */
+  memset(img->pixels, 0, bytes);
   return img;
 }
 
@@ -109,17 +92,12 @@ lk_u32 lk_image_generation(const lk_image *img) {
   return img ? img->generation : 0;
 }
 
-/* ---- Resource integration ---- */
-
 static const lk_resource_type g_image_type = {"image", NULL};
 
 const lk_resource_type *lk_image_type(void) {
   return &g_image_type;
 }
 
-/* Find the node's UIP_IMAGE prop and return its raw ref ({0,0} when
- * absent).  Shared by the resolver and the render emitter, which needs
- * the ref itself, not just the resolved object. */
 static lk_resource_ref image_node_ref(const lk_tree *t, lk_ix n) {
   const lk_node *nd;
   lk_u32 k;
@@ -162,11 +140,6 @@ lk_image *lk_image_from_node(const lk_resources *rs, const lk_tree *t,
   return (lk_image *)lk_resource_get(rs, ref, &g_image_type);
 }
 
-/* ---- Widget ---- */
-
-/* Intrinsic size = the image's pixel dimensions; 0x0 when the ref
- * doesn't resolve.  The engine's generic UIP_W/UIP_H override applies
- * on top, so an explicit size wins either way. */
 static void measure_image(const lk_tree *t, lk_ix n, const lk_size *sizes,
                           const lk_layout_cfg *cfg, lk_i32 *out_w,
                           lk_i32 *out_h) {
@@ -184,7 +157,6 @@ static void measure_image(const lk_tree *t, lk_ix n, const lk_size *sizes,
   }
 }
 
-/* UIP_FILTER as an lk_image_filter; anything but NEAREST is LINEAR. */
 static lk_u8 image_filter(const lk_tree *t, lk_ix n) {
   if (lk_node_prop_i32(t, n, UIP_FILTER, LK_FILTER_LINEAR) ==
       LK_FILTER_NEAREST) {
@@ -203,8 +175,6 @@ static void render_image(const lk_tree *t, lk_ix n, const lk_rect *rect,
   (void)state;
   (void)geom;
 
-  /* Background fill (also the degraded rendering for a missing or
-   * stale image ref). */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
@@ -217,8 +187,6 @@ static void render_image(const lk_tree *t, lk_ix n, const lk_rect *rect,
     return;
   }
 
-  /* v1: stretch to the node rect, no fit modes.  Opaque white tint =
-   * draw the pixels as-is. */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_DRAW_IMAGE;
   cmd.rect = *rect;

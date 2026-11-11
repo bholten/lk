@@ -1,30 +1,4 @@
-/*
- * lk-slider.c -- UIK_SLIDER (docs/forms-widgets.md).
- *
- * Horizontal integer slider over [UIP_MIN, UIP_MAX] in UIP_STEP
- * increments (lk_value has no float; apps scale).  Leaf node.
- *
- * Effective value = LKS_SLIDER_VALUE state (drag / keys) > UIP_VALUE
- * (i32) > UIP_MIN, always snapped to MIN + k*STEP and clamped.  Every
- * change enqueues LK_EVENT_VALUE_CHANGED with the new value as a
- * decimal string; UIP_CONTROLLED nonzero suppresses the state write
- * (the app re-supplies UIP_VALUE each frame).
- *
- * Geometry: the track (thumb travel area) is the node's content rect
- * (rect inset by padding + border_width); the layout hook stashes it
- * in the per-frame geometry scratch (geom->track) because the event
- * handler sees neither rects nor styles.  Thumb x for value v is
- * track.x + (v - min) * (track.w - THUMB_W) / (max - min).  Render:
- * bg (if visible), TRACK_H-tall rail in style->border_color, the
- * filled part and the THUMB_W-wide thumb in style->accent.
- *
- * Events: POINTER_DOWN (primary/any) in the track jumps the value to
- * the pointer, takes focus (if focusable) and the pointer capture,
- * and sets LKS_SLIDER_DRAGGING; MOVE while dragging tracks the
- * pointer; UP releases.  Keys (when focused): LEFT/DOWN -step,
- * RIGHT/UP +step, PAGEUP/PAGEDOWN +-10 steps, HOME/END min/max.
- * No geom stashed (or no layout yet): pointer events bubble.
- */
+
 
 #include <stdio.h>
 #include <string.h>
@@ -102,8 +76,6 @@ lk_i32 lk_slider_effective(const lk_tree *t, lk_ix n, const lk_state *state) {
   return snap(v, mn, mx, step);
 }
 
-/* ---- Measure / layout ---- */
-
 static void measure_slider(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
                            lk_i32 *out_h) {
@@ -117,8 +89,6 @@ static void measure_slider(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = THUMB_H + inset * 2;
 }
 
-/* Leaf with a layout hook: nothing to place, but the content rect is
- * final here, so stash it as the track for the event handler. */
 static int layout_slider(const lk_tree *t, lk_ix n, const lk_size *sizes,
                          const lk_rect *content, const lk_layout_cfg *cfg,
                          lk_rect *rects) {
@@ -136,7 +106,6 @@ static int layout_slider(const lk_tree *t, lk_ix n, const lk_size *sizes,
   return 1;
 }
 
-/* Thumb x (left edge) for value v within a track. */
 static lk_i32 thumb_x(const lk_rect *track, lk_i32 v, lk_i32 mn, lk_i32 mx) {
   lk_i32 travel = track->w - THUMB_W;
 
@@ -147,7 +116,6 @@ static lk_i32 thumb_x(const lk_rect *track, lk_i32 v, lk_i32 mn, lk_i32 mx) {
   return track->x + (lk_i32)(((lk_i64)(v - mn) * travel) / (mx - mn));
 }
 
-/* Value for a pointer x within a track (thumb center under cursor). */
 static lk_i32 value_at_x(const lk_rect *track, lk_i32 x, lk_i32 mn, lk_i32 mx,
                          lk_i32 step) {
   lk_i32 travel = track->w - THUMB_W;
@@ -166,13 +134,10 @@ static lk_i32 value_at_x(const lk_rect *track, lk_i32 x, lk_i32 mn, lk_i32 mx,
     rel = travel;
   }
 
-  /* round to nearest */
   v = ((lk_i64)rel * (mx - mn) + travel / 2) / travel + mn;
 
   return snap((lk_i32)v, mn, mx, step);
 }
-
-/* ---- Render ---- */
 
 static void push_fill(lk_render_list *out, lk_i32 x, lk_i32 y, lk_i32 w,
                       lk_i32 h, lk_color c) {
@@ -215,17 +180,14 @@ static void render_slider(const lk_tree *t, lk_ix n, const lk_rect *rect,
   tx = thumb_x(&track, v, mn, mx);
   ty = track.y + (track.h - TRACK_H) / 2;
 
-  /* rail */
   push_fill(out, track.x, ty, track.w, TRACK_H, style->border_color);
-  /* filled part up to the thumb center */
+
   push_fill(out, track.x, ty, tx + THUMB_W / 2 - track.x, TRACK_H,
             style->accent);
-  /* thumb */
+
   th = track.h < THUMB_H ? track.h : THUMB_H;
   push_fill(out, tx, track.y + (track.h - th) / 2, THUMB_W, th, style->accent);
 }
-
-/* ---- Events ---- */
 
 static void emit_value_changed(lk_ui *ui, lk_ix n, lk_i32 v) {
   char buf[16];
@@ -239,8 +201,6 @@ static void emit_value_changed(lk_ui *ui, lk_ix n, lk_i32 v) {
   lk_event_enqueue(ui, &vev);
 }
 
-/* Set the value if it changed: state write (unless controlled) +
- * VALUE_CHANGED. */
 static void slider_set(lk_ui *ui, const lk_tree *t, lk_ix n, lk_i32 v) {
   lk_state *st = lk_ui_state(ui);
   lk_i32 cur = lk_slider_effective(t, n, st);
@@ -355,7 +315,6 @@ static int event_slider(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
       return 1;
     }
 
-    /* POINTER_UP while dragging */
     lk_state_set(st, nid, LKS_SLIDER_DRAGGING, lk_v_i32(0));
     lk_capture_clear(ui);
 
@@ -364,8 +323,6 @@ static int event_slider(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
   return 0;
 }
-
-/* ---- Registration ---- */
 
 lk_widget_def lk_slider_widget_def(void) {
   lk_widget_def def;

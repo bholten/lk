@@ -1,17 +1,4 @@
-/*
- * lk-document.c -- piece-table text document (editor track, stage A).
- *
- * Port of weft's document.c: immutable original buffer, append-only
- * add buffer, piece array, incremental line index, cached total
- * length.  The piece split/merge and line-index semantics are
- * preserved exactly; what is new around them is the change protocol:
- * transactions, per-op deltas carrying the actual bytes, and a
- * subscriber list notified once per committed transaction.
- *
- * Delta byte pointers are resolved only at notification time — the
- * add buffer and the deleted-bytes scratch may both be reallocated
- * while a transaction is open, so deltas store offsets internally.
- */
+
 
 #include <string.h>
 
@@ -36,8 +23,8 @@
 #define PIECE_ADD 1
 
 typedef struct doc_piece {
-  lk_u8 source; /* PIECE_ORIGINAL or PIECE_ADD */
-  lk_u32 start; /* byte offset into source buffer */
+  lk_u8 source;
+  lk_u32 start;
   lk_u32 length;
 } doc_piece;
 
@@ -52,46 +39,37 @@ struct lk_document {
   void (*dealloc)(void *, void *);
   void *ud;
 
-  /* original buffer -- initial content, never modified */
   char *original;
   lk_u32 original_len;
 
-  /* add buffer -- appended to on each insert */
   char *add;
   lk_u32 add_len, add_cap;
 
-  /* piece list -- sequence describing document content */
   doc_piece *pieces;
   lk_u32 pieces_len, pieces_cap;
 
   lk_u32 total_len;
 
-  /* line index -- byte offsets of line starts */
   lk_u32 *line_starts;
   lk_u32 line_count, line_cap;
 
   lk_revision revision;
 
-  /* open transaction */
   lk_u32 txn_depth;
   lk_u32 txn_origin;
   lk_doc_delta *deltas;
-  lk_u32 *ins_offs; /* per delta: offset into add buffer */
-  lk_u32 *del_offs; /* per delta: offset into scratch */
+  lk_u32 *ins_offs;
+  lk_u32 *del_offs;
   lk_u32 delta_count, delta_cap;
-  char *scratch; /* deleted bytes, captured before applying */
+  char *scratch;
   lk_u32 scratch_len, scratch_cap;
   int in_notify;
 
-  /* subscribers */
   doc_sub *subs;
   lk_u32 sub_count, sub_cap;
   lk_u32 next_sub_id;
 };
 
-/* ---- Allocation helpers ---- */
-
-/* Allocate new_bytes, copy old_bytes from old, free old. */
 static void *doc_realloc(lk_document *d, void *old, lk_u32 old_bytes,
                          lk_u32 new_bytes) {
   void *nb = d->alloc(d->ud, new_bytes);
@@ -225,7 +203,6 @@ static int ensure_scratch_capacity(lk_document *d, lk_u32 additional) {
   return 1;
 }
 
-/* The three delta-side arrays share one capacity and grow together. */
 static int ensure_delta_capacity(lk_document *d) {
   lk_u32 needed = d->delta_count + 1;
   lk_u32 new_cap;
@@ -302,8 +279,6 @@ static int ensure_subs_capacity(lk_document *d) {
   return 1;
 }
 
-/* ---- Revision ---- */
-
 int lk_revision_equal(lk_revision a, lk_revision b) {
   return a.hi == b.hi && a.lo == b.lo;
 }
@@ -324,15 +299,10 @@ static void rev_advance(lk_document *d) {
   }
 }
 
-/* ---- Piece helpers ---- */
-
 static const char *get_source_buffer(const lk_document *d, lk_u8 source) {
   return (source == PIECE_ORIGINAL) ? d->original : d->add;
 }
 
-/* Find the piece containing a document position.  A position on a
- * boundary lands at the end of the earlier piece; a position at the
- * very end (past all pieces) yields piece_idx == pieces_len. */
 static int find_piece_at_pos(const lk_document *d, lk_u32 pos,
                              lk_u32 *piece_idx, lk_u32 *offset_in_piece) {
   lk_u32 offset = 0;
@@ -358,9 +328,6 @@ static int find_piece_at_pos(const lk_document *d, lk_u32 pos,
   return 1;
 }
 
-/* ---- Line index ---- */
-
-/* Full rebuild by scanning all pieces for newlines. */
 static void rebuild_line_index(lk_document *d) {
   lk_u32 offset = 0;
   lk_u32 p;
@@ -388,8 +355,6 @@ static void rebuild_line_index(lk_document *d) {
   }
 }
 
-/* First line_starts entry strictly greater than pos, searching
- * [from, line_count). */
 static lk_u32 line_upper_bound(const lk_document *d, lk_u32 from, lk_u32 pos) {
   lk_u32 lo = from;
   lk_u32 hi = d->line_count;
@@ -407,7 +372,6 @@ static lk_u32 line_upper_bound(const lk_document *d, lk_u32 from, lk_u32 pos) {
   return lo;
 }
 
-/* Incremental line index update after inserting text at pos. */
 static void update_line_index_insert(lk_document *d, lk_u32 pos,
                                      const char *text, lk_u32 len) {
   lk_u32 new_line_count = 0;
@@ -462,7 +426,6 @@ static void update_line_index_insert(lk_document *d, lk_u32 pos,
   d->line_count = new_total;
 }
 
-/* Incremental line index update after deleting len bytes at pos. */
 static void update_line_index_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
   lk_u32 delete_end = pos + len;
   lk_u32 first_removed = line_upper_bound(d, 0, pos);
@@ -485,8 +448,6 @@ static void update_line_index_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
     d->line_starts[i] -= len;
   }
 }
-
-/* ---- Lifecycle ---- */
 
 lk_document *lk_doc_new(void *(*alloc)(void *, lk_u32),
                         void (*dealloc)(void *, void *), void *ud) {
@@ -610,8 +571,6 @@ void lk_doc_destroy(lk_document *d) {
   dealloc(ud, d);
 }
 
-/* ---- Read ---- */
-
 lk_u32 lk_doc_len(const lk_document *d) {
   if (!d) {
     return 0;
@@ -680,11 +639,6 @@ unsigned char lk_doc_get_byte(const lk_document *d, lk_u32 pos) {
 
   piece = &d->pieces[piece_idx];
 
-  /* find_piece_at_pos lands boundary positions at the END of the
-   * earlier piece (the insert-side contract).  A read must resolve
-   * to the next piece's first byte instead: one past the earlier
-   * piece's bytes is outside its contents, and at the add-buffer
-   * frontier it is unwritten memory. */
   while (offset_in_piece >= piece->length && piece_idx + 1 < d->pieces_len) {
     offset_in_piece -= piece->length;
     piece_idx++;
@@ -710,7 +664,7 @@ lk_u32 lk_doc_line_end(const lk_document *d, lk_u32 line) {
   }
 
   if (line + 1 < d->line_count) {
-    /* the line ends at its \n, one before the next line's start */
+
     return d->line_starts[line + 1] - 1;
   }
 
@@ -729,7 +683,7 @@ lk_u32 lk_doc_line_length(const lk_document *d, lk_u32 line) {
   end = lk_doc_line_end(d, line);
 
   if (line + 1 < d->line_count) {
-    return end - start + 1; /* include the \n */
+    return end - start + 1;
   }
 
   return end - start;
@@ -764,24 +718,8 @@ lk_revision lk_doc_revision(const lk_document *d) {
   return d->revision;
 }
 
-/* ---- Search ---- */
-
-/* Window size for lk_doc_find's chunked reconstruction (bytes). */
 #define DOC_FIND_WINDOW 1024
 
-/* Literal forward byte search, piece-table aware.
- *
- * Approach: chunked reconstruction into a sliding window.  The
- * document is a piece list over two buffers, so a match may span any
- * number of piece boundaries; rather than matching across pieces
- * in-place, each round copies a contiguous window of the document
- * (via lk_doc_get_text, which already walks pieces) into a stack
- * buffer and scans it with memcmp.  The window then slides forward
- * keeping needle_len - 1 bytes of overlap, so a match straddling a
- * window edge is fully contained in the next fill.  Needles larger
- * than the stack window get a heap window (document allocator) of
- * needle_len + DOC_FIND_WINDOW, preserving the invariant that every
- * fill can hold a whole match and still make forward progress. */
 int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
                 lk_u32 from, lk_u32 *out_pos) {
   char stack_win[DOC_FIND_WINDOW];
@@ -795,7 +733,7 @@ int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
   }
 
   if (from > d->total_len || needle_len > d->total_len - from) {
-    return 0; /* covers the empty document and over-long needles */
+    return 0;
   }
 
   if (needle_len > win_cap) {
@@ -827,7 +765,7 @@ int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
     got = lk_doc_get_text(d, base, win, want);
 
     if (got < needle_len) {
-      break; /* defensive: cannot happen for an in-range base */
+      break;
     }
 
     last = got - needle_len;
@@ -840,8 +778,6 @@ int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
       }
     }
 
-    /* slide, keeping needle_len - 1 bytes of overlap; got >=
-     * needle_len guarantees forward progress */
     base += got - (needle_len - 1);
   }
 
@@ -852,9 +788,6 @@ int lk_doc_find(const lk_document *d, const char *needle, lk_u32 needle_len,
   return found;
 }
 
-/* ---- Transactions ---- */
-
-/* Resolve delta byte pointers and notify every subscriber once. */
 static void doc_notify(lk_document *d) {
   lk_u32 i;
 
@@ -923,8 +856,6 @@ void lk_doc_commit(lk_document *d) {
   }
 }
 
-/* Record one effective op.  Delta capacity is guaranteed by the
- * caller before the op applies, so recording cannot fail. */
 static void record_delta(lk_document *d, lk_u32 start, lk_u32 deleted_len,
                          lk_u32 inserted_len, lk_u32 ins_off, lk_u32 del_off,
                          lk_revision before) {
@@ -943,8 +874,6 @@ static void record_delta(lk_document *d, lk_u32 start, lk_u32 deleted_len,
   d->del_offs[d->delta_count] = del_off;
   d->delta_count++;
 }
-
-/* ---- Mutation ---- */
 
 int lk_doc_insert(lk_document *d, lk_u32 pos, const char *text, lk_u32 len) {
   lk_u32 add_start;
@@ -993,7 +922,7 @@ int lk_doc_insert(lk_document *d, lk_u32 pos, const char *text, lk_u32 len) {
   }
 
   if (piece_idx >= d->pieces_len) {
-    /* insert at the end, past all pieces */
+
     if (!ensure_pieces_capacity(d, 1)) {
       d->add_len = add_start;
       return 0;
@@ -1002,7 +931,7 @@ int lk_doc_insert(lk_document *d, lk_u32 pos, const char *text, lk_u32 len) {
     d->pieces[d->pieces_len] = new_piece;
     d->pieces_len++;
   } else if (offset_in_piece == 0) {
-    /* insert at the start of a piece -- new piece goes before it */
+
     if (!ensure_pieces_capacity(d, 1)) {
       d->add_len = add_start;
       return 0;
@@ -1013,7 +942,7 @@ int lk_doc_insert(lk_document *d, lk_u32 pos, const char *text, lk_u32 len) {
     d->pieces[piece_idx] = new_piece;
     d->pieces_len++;
   } else if (offset_in_piece == d->pieces[piece_idx].length) {
-    /* insert at the end of a piece -- new piece goes after it */
+
     if (!ensure_pieces_capacity(d, 1)) {
       d->add_len = add_start;
       return 0;
@@ -1024,7 +953,7 @@ int lk_doc_insert(lk_document *d, lk_u32 pos, const char *text, lk_u32 len) {
     d->pieces[piece_idx + 1] = new_piece;
     d->pieces_len++;
   } else {
-    /* split the piece: before, new, after replace one */
+
     doc_piece original;
     doc_piece piece_before;
     doc_piece piece_after;
@@ -1113,7 +1042,6 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
     return 0;
   }
 
-  /* capture the doomed bytes before the piece surgery */
   if (!ensure_scratch_capacity(d, len)) {
     return 0;
   }
@@ -1125,7 +1053,7 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
     doc_piece *piece = &d->pieces[start_piece_idx];
 
     if (start_offset == 0 && end_offset == piece->length) {
-      /* delete the entire piece */
+
       memmove(&d->pieces[start_piece_idx], &d->pieces[start_piece_idx + 1],
               (d->pieces_len - start_piece_idx - 1) * sizeof(doc_piece));
       d->pieces_len--;
@@ -1135,7 +1063,7 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
     } else if (end_offset == piece->length) {
       piece->length = start_offset;
     } else {
-      /* delete from the middle -- split into two pieces */
+
       doc_piece piece_before;
       doc_piece piece_after;
 
@@ -1143,7 +1071,7 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
         return 0;
       }
 
-      piece = &d->pieces[start_piece_idx]; /* may have moved */
+      piece = &d->pieces[start_piece_idx];
 
       piece_before.source = piece->source;
       piece_before.start = piece->start;
@@ -1161,7 +1089,7 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
       d->pieces_len++;
     }
   } else {
-    /* deletion spans multiple pieces */
+
     lk_u32 pieces_to_remove;
     lk_u32 write_idx;
     lk_u32 read_idx;
@@ -1183,7 +1111,6 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
       d->pieces_len -= pieces_to_remove;
     }
 
-    /* compact away empty pieces */
     write_idx = 0;
 
     for (read_idx = 0; read_idx < d->pieces_len; read_idx++) {
@@ -1214,8 +1141,6 @@ int lk_doc_delete(lk_document *d, lk_u32 pos, lk_u32 len) {
 
   return 1;
 }
-
-/* ---- Subscriptions ---- */
 
 lk_u32 lk_doc_subscribe(lk_document *d, lk_doc_listener_fn fn, void *ud) {
   lk_u32 id;

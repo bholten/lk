@@ -1,15 +1,4 @@
-/*
- * lk-scroll.c -- Scroll container widget.
- *
- * Clips children, scrolls vertically via wheel events, displays a
- * scroll bar indicator.  Children are stacked vertically like a column.
- *
- * Scroll offset (user interaction state) stays in LKS_SCROLL_Y; the
- * max offset is DERIVED during layout, so it lives in the per-frame
- * geometry scratch (geom->scroll.max), read back by render (bar
- * geometry) and the wheel handler (clamping).  Without a geom
- * scratch the bar does not render and wheel events bubble.
- */
+
 
 #include <string.h>
 
@@ -18,8 +7,6 @@
 
 #define SCROLL_BAR_W 6
 #define SCROLL_STEP 30
-
-/* ---- Helpers ---- */
 
 static lk_i32 clamp(lk_i32 v, lk_i32 lo, lk_i32 hi) {
   if (v < lo) {
@@ -48,8 +35,6 @@ static lk_i32 get_scroll_y(const lk_state *state, lk_node_id nid) {
 
   return 0;
 }
-
-/* ---- Measure ---- */
 
 static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
                            const lk_layout_cfg *cfg, lk_i32 *out_w,
@@ -83,11 +68,14 @@ static void measure_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     sum_h += gap * (count - 1);
   }
 
+  if (lk_node_has_prop(t, n, UIP_GROW) &&
+      lk_node_prop_i32(t, n, UIP_GROW, 0) > 0) {
+    sum_h = LK_SCROLL_GROW_FLOOR_H;
+  }
+
   *out_w = max_w + inset * 2;
   *out_h = sum_h + inset * 2;
 }
-
-/* ---- Layout ---- */
 
 static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
                          const lk_rect *content, const lk_layout_cfg *cfg,
@@ -103,10 +91,9 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 scroll_y;
   lk_i32 avail_w;
   lk_i32 y;
-  lk_i32 *hs = NULL; /* fitted child heights (docs/styled-text.md s2) */
+  lk_i32 *hs = NULL;
   int hi;
 
-  /* Count children, then fit each at the content width */
   ch = nd->first_child;
 
   while (ch) {
@@ -143,20 +130,15 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     content_h += gap * (count - 1);
   }
 
-  /* Compute scroll bounds */
   scroll_max = content_h - content->h;
 
   if (scroll_max < 0) {
     scroll_max = 0;
   }
 
-  /* Read and clamp scroll offset */
   scroll_y = get_scroll_y(cfg->state, nid);
   scroll_y = clamp(scroll_y, 0, scroll_max);
 
-  /* scroll_max is derived geometry: per-frame scratch, not retained
-   * state.  The clamped scroll_y write-back IS retained interaction
-   * state (normalizing a stale offset after content shrank). */
   if (cfg->geom) {
     cfg->geom[n].scroll.max = scroll_max;
   }
@@ -165,7 +147,6 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     lk_state_set(cfg->state, nid, LKS_SCROLL_Y, lk_v_i32(scroll_y));
   }
 
-  /* Reduce available width when scrollable (scroll bar space) */
   avail_w = content->w;
 
   if (scroll_max > 0) {
@@ -175,8 +156,6 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
       avail_w = 0;
     }
 
-    /* Narrower content wraps taller: refit at the bar-reduced width
-     * (heights only grow, so the bar stays) and re-derive the extent. */
     content_h = 0;
     hi = 0;
     ch = nd->first_child;
@@ -212,7 +191,6 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
     }
   }
 
-  /* Position children */
   y = content->y - scroll_y;
   hi = 0;
   ch = nd->first_child;
@@ -238,8 +216,6 @@ static int layout_scroll(const lk_tree *t, lk_ix n, const lk_size *sizes,
   return 1;
 }
 
-/* ---- Render ---- */
-
 static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
                           const lk_style *style, const lk_state *state,
                           const lk_widget_geom *geom, lk_render_list *out) {
@@ -247,15 +223,12 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
   lk_i32 scroll_max;
   lk_render_cmd cmd;
 
-  /* Background */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
   cmd.color = style->bg;
   lk_render_list_push(out, cmd);
 
-  /* Scroll bar (rendered before CLIP_BEGIN so not clipped).  The max
-   * offset is layout-derived geometry; no geom, no bar. */
   scroll_max = geom ? geom->scroll.max : 0;
 
   if (scroll_max > 0) {
@@ -283,7 +256,6 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
       thumb_y += (scroll_y * (track_h - thumb_h)) / scroll_max;
     }
 
-    /* Track */
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_FILL_RECT;
     cmd.rect.x = rect->x + rect->w - SCROLL_BAR_W;
@@ -293,7 +265,6 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
     cmd.color = style->scrollbar_track;
     lk_render_list_push(out, cmd);
 
-    /* Thumb */
     memset(&cmd, 0, sizeof(cmd));
     cmd.op = LK_ROP_FILL_RECT;
     cmd.rect.x = rect->x + rect->w - SCROLL_BAR_W;
@@ -305,8 +276,6 @@ static void render_scroll(const lk_tree *t, lk_ix n, const lk_rect *rect,
   }
 }
 
-/* ---- Event handling ---- */
-
 static int event_scroll(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   lk_state *st;
   lk_node_id nid;
@@ -316,8 +285,6 @@ static int event_scroll(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
     return 0;
   }
 
-  /* Clamping needs the layout-derived max from the ui's geometry
-   * scratch (events run after layout).  No geom: bubble. */
   if (!ui->geom || (lk_u32)n >= ui->geom_cap) {
     return 0;
   }
@@ -337,8 +304,6 @@ static int event_scroll(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 
   return 1;
 }
-
-/* ---- Registration ---- */
 
 lk_widget_def lk_scroll_widget_def(void) {
   lk_widget_def def;

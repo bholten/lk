@@ -1,15 +1,4 @@
-/*
- * lk-spans.c -- lk_spans: an application-owned, sorted, non-overlapping
- * span set over a STYLED_TEXT's bytes (docs/styled-text.md section 3).
- *
- * Each entry pairs appearance (lk_text_span) with an optional
- * presentation (interned ptype + typed value): the span set is the
- * presentation carrier for prop-text, the way the annot store is for
- * documents.  Ordering and non-overlap are enforced at add time so
- * the renderer walks the list without checking.  Presented values are
- * released through one hook, exactly once per detachment (clear,
- * destroy) -- the annot store's contract.
- */
+
 
 #include <string.h>
 
@@ -18,7 +7,7 @@
 
 typedef struct spans_entry {
   lk_text_span span;
-  lk_u32 type_id; /* 0 = no presentation */
+  lk_u32 type_id;
   lk_value value;
 } spans_entry;
 
@@ -107,12 +96,6 @@ void lk_spans_set_release(lk_spans *s, void (*fn)(void *ud, lk_value v),
   }
 }
 
-/* Insert position for [start, end): the index i such that every entry
- * before i ends at or before start and every entry from i starts at or
- * after end.  Returns 0 (with *out unset) on overlap; 2 (with *out =
- * the entry) when an entry with the IDENTICAL range exists -- the
- * caller merges into it (a range may carry both a style and a
- * presentation). */
 static int spans_slot(const lk_spans *s, lk_u32 start, lk_u32 end,
                       lk_u32 *out) {
   lk_u32 i = 0;
@@ -127,14 +110,10 @@ static int spans_slot(const lk_spans *s, lk_u32 start, lk_u32 end,
     return 2;
   }
 
-  /* everything before i starts before `start`; the last of them must
-   * end at or before start */
   if (i > 0 && s->e[i - 1].span.end > start) {
     return 0;
   }
 
-  /* everything from i starts at or after `start`; the first of them
-   * must start at or after end */
   if (i < s->count && s->e[i].span.start < end) {
     return 0;
   }
@@ -190,7 +169,7 @@ int lk_spans_add(lk_spans *s, lk_u32 start, lk_u32 end, lk_color fg,
   }
 
   if (slot == 2) {
-    /* merge: the given fields replace, the presentation stays */
+
     lk_text_span *sp = &s->e[at].span;
 
     if (flags & LK_SPAN_FG) {
@@ -234,8 +213,7 @@ int lk_spans_add_present(lk_spans *s, lk_u32 start, lk_u32 end, lk_u32 type_id,
   }
 
   if (slot == 2) {
-    /* merge: replace the presentation (releasing the old value),
-     * keep the appearance */
+
     spans_entry *e = &s->e[at];
 
     if (e->type_id != 0 && s->release) {
@@ -291,9 +269,6 @@ lk_u32 lk_spans_present_at(const lk_spans *s, lk_u32 pos,
     return 0;
   }
 
-  /* Spans are disjoint, so at most one covers pos -- but the contract
-   * is a precedence-ordered list, kept general for a future nesting
-   * relaxation: shortest first, insertion (= start) order on ties. */
   for (i = 0; i < s->count && n < cap; i++) {
     const spans_entry *e = &s->e[i];
 

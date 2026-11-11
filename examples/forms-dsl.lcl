@@ -94,6 +94,8 @@ app "Deed Lab" #{font $font font_size 15 width 900 height 560} {
     translator value_changed page Page
     translator value_changed field Field
     translator pointer_down action Action
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on Page [lambda {cmd} { set! active [get $cmd source_value] }]
 

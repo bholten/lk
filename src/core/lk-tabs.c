@@ -1,47 +1,4 @@
-/*
- * lk-tabs.c -- UIK_TABS + UIK_TAB (docs/forms-widgets.md).
- *
- * A TABS node owns a header strip (like the dropdown owns its
- * trigger) and shows exactly one of its TAB children below it.
- *
- * Selection: LKS_SELECTED_INDEX state (clicks / arrow keys) >
- * UIP_VALUE (the id string of a TAB child) > 0, clamped to the count
- * of visible (non-UIP_HIDDEN) TAB children.  Selecting enqueues
- * LK_EVENT_VALUE_CHANGED whose payload is the selected TAB's node id
- * (already an intern id -- ids and prop strings share the table);
- * UIP_CONTROLLED nonzero suppresses the state write and the app
- * re-supplies UIP_VALUE each frame.
- *
- * Geometry (all in the layout hook, stashed in cfg->geom because
- * render and events see neither rects nor a text backend):
- *   - every visible TAB gets a header cell in the strip (text width +
- *     2*HDR_PAD_X by max text height + 2*HDR_PAD_Y, cells separated
- *     by style->gap), recorded in geom[tab].header;
- *   - the SELECTED tab's rect is the page (the content area below the
- *     strip and its 1 px separator); its children lay out as a column
- *     inside it (measure/layout come from lk-widget.c);
- *   - every OTHER tab's rect is its header cell and it is a leaf: the
- *     engine skips its layout hook and never descends into it
- *     (lk_tabs_collapsed), so its subtree rects stay zero and it is
- *     unreachable by hit-testing / focus traversal.  Hit-testing a
- *     header cell therefore lands on that TAB node (hover styling
- *     works per tab), and POINTER_DOWN there selects it.
- *   - geom[tabs].strip.h = strip height incl. separator.
- * Measure: max(strip width, widest page) by strip height + tallest
- * page -- unselected pages ARE measured, so switching tabs never
- * resizes the area.
- *
- * Render: TABS paints the strip bg (style->bg) and the separator
- * (style->border_color).  A TAB paints its header: text in fg, and
- * when selected a bg fill (page color, visually joining header and
- * page) plus a 2 px style->accent bar along the top; the selected TAB
- * also fills its page bg.  Engine borders behave as usual.
- *
- * Events: POINTER_DOWN (primary/any) on an unselected TAB selects it
- * (and focuses the TABS if focusable).  When the TABS is focused,
- * LEFT/RIGHT step the selection, HOME/END jump.  Clicks anywhere on
- * the selected page bubble as usual (the page IS the TAB's rect).
- */
+
 
 #include <string.h>
 
@@ -54,8 +11,6 @@
 #define HDR_MIN_H 12
 #define SEP_H 1
 #define ACCENT_H 2
-
-/* ---- Helpers ---- */
 
 static int is_visible_tab(const lk_tree *t, lk_ix c) {
   return (lk_kind)t->nodes[c].kind == UIK_TAB &&
@@ -198,9 +153,6 @@ static void measure_text(const lk_layout_cfg *cfg, lk_ix n, lk_str run,
   *out_h = m.h;
 }
 
-/* Strip metrics: total header width (cells + gaps) and strip height
- * (max cell height + separator).  Optionally writes each visible tab's
- * header cell at (x0, y0) into geom. */
 static void strip_metrics(const lk_tree *t, lk_ix n, const lk_layout_cfg *cfg,
                           lk_i32 x0, lk_i32 y0, lk_widget_geom *geom,
                           lk_i32 *out_w, lk_i32 *out_h) {
@@ -211,7 +163,6 @@ static void strip_metrics(const lk_tree *t, lk_ix n, const lk_layout_cfg *cfg,
   lk_i32 max_h = HDR_MIN_H;
   int count = 0;
 
-  /* pass 1: heights */
   while (c) {
     if (is_visible_tab(t, c)) {
       lk_i32 tw, th;
@@ -225,7 +176,6 @@ static void strip_metrics(const lk_tree *t, lk_ix n, const lk_layout_cfg *cfg,
     c = t->nodes[c].next_sibling;
   }
 
-  /* pass 2: cells */
   c = t->nodes[n].first_child;
 
   while (c) {
@@ -255,8 +205,6 @@ static void strip_metrics(const lk_tree *t, lk_ix n, const lk_layout_cfg *cfg,
   *out_w = x - x0;
   *out_h = max_h + SEP_H;
 }
-
-/* ---- Measure ---- */
 
 static void measure_tabs(const lk_tree *t, lk_ix n, const lk_size *sizes,
                          const lk_layout_cfg *cfg, lk_i32 *out_w,
@@ -290,8 +238,6 @@ static void measure_tabs(const lk_tree *t, lk_ix n, const lk_size *sizes,
   *out_h = sh + page_h + inset * 2;
 }
 
-/* ---- Layout ---- */
-
 static int layout_tabs(const lk_tree *t, lk_ix n, const lk_size *sizes,
                        const lk_rect *content, const lk_layout_cfg *cfg,
                        lk_rect *rects) {
@@ -319,7 +265,7 @@ static int layout_tabs(const lk_tree *t, lk_ix n, const lk_size *sizes,
         rects[c].h = 0;
       }
     } else if (is_visible_tab(t, c) && cfg->geom) {
-      /* collapsed tab: its rect IS its header cell (hit-testable) */
+
       rects[c].x = cfg->geom[c].header.x;
       rects[c].y = cfg->geom[c].header.y;
       rects[c].w = cfg->geom[c].header.w;
@@ -336,8 +282,6 @@ static int layout_tabs(const lk_tree *t, lk_ix n, const lk_size *sizes,
 
   return 1;
 }
-
-/* ---- Render ---- */
 
 static void push_fill(lk_render_list *out, lk_i32 x, lk_i32 y, lk_i32 w,
                       lk_i32 h, lk_color c) {
@@ -389,7 +333,7 @@ static void render_tab(const lk_tree *t, lk_ix n, const lk_rect *rect,
 
   if (selected) {
     if (!geom || geom->header.w <= 0) {
-      /* no geometry stashed: page bg only */
+
       if (style->bg.a > 0) {
         push_fill(out, rect->x, rect->y, rect->w, rect->h, style->bg);
       }
@@ -402,7 +346,6 @@ static void render_tab(const lk_tree *t, lk_ix n, const lk_rect *rect,
     hdr.w = geom->header.w;
     hdr.h = geom->header.h;
 
-    /* page bg, then the header joins it in the same color */
     if (style->bg.a > 0) {
       push_fill(out, rect->x, rect->y, rect->w, rect->h, style->bg);
       push_fill(out, hdr.x, hdr.y, hdr.w, hdr.h + SEP_H, style->bg);
@@ -430,9 +373,6 @@ static void render_tab(const lk_tree *t, lk_ix n, const lk_rect *rect,
   }
 }
 
-/* ---- Events ---- */
-
-/* Select the visible TAB child at index idx of TABS node n. */
 static void tabs_select(lk_ui *ui, const lk_tree *t, lk_ix n, int idx) {
   lk_state *st = lk_ui_state(ui);
   lk_ix c = t->nodes[n].first_child;
@@ -550,7 +490,7 @@ static int event_tab(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   }
 
   if (!lk_tabs_collapsed(t, n, lk_ui_state(ui))) {
-    return 0; /* click inside the open page: not ours */
+    return 0;
   }
 
   if (lk_node_prop_bool(t, parent, UIP_DISABLED) ||
@@ -574,8 +514,6 @@ static int event_tab(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   return 1;
 }
 
-/* ---- Registration ---- */
-
 lk_widget_def lk_tabs_widget_def(void) {
   lk_widget_def def;
   memset(&def, 0, sizeof(def));
@@ -590,8 +528,8 @@ lk_widget_def lk_tabs_widget_def(void) {
 lk_widget_def lk_tab_widget_def(void) {
   lk_widget_def def;
   memset(&def, 0, sizeof(def));
-  def.measure = 0; /* filled by lk-widget.c (column) */
-  def.layout = 0;  /* filled by lk-widget.c (column) */
+  def.measure = 0;
+  def.layout = 0;
   def.render = render_tab;
   def.event = event_tab;
   def.clips = 0;

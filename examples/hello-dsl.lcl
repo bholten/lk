@@ -19,6 +19,8 @@ app "Hello Lcl" #{font $font font_size 16} {
     }
 
     translator pointer_down action ButtonClick
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on ButtonClick [lambda {cmd} {
         let action [get [get $cmd args] 0]

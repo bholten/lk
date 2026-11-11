@@ -1,23 +1,4 @@
-/*
- * lk-overlay.c — Generalized overlay stack: registration, anchor
- * resolution with viewport clamping, and the overlay render /
- * hit-test / dismiss passes.
- *
- * Overlays live on a small stack owned by lk_ui (topmost = last).
- * Nodes are referenced by stable lk_node_id and resolved to tree
- * indices per pass.  Two content models:
- *
- *   - Procedural (content_root_id == 0): per-kind code emits render
- *     commands directly.  Currently only LK_OVERLAY_DROPDOWN_POPUP,
- *     which delegates to lk-dropdown.c.
- *   - Subtree (content_root_id != 0): a UIP_HIDDEN subtree in the main
- *     tree is measured and laid out on demand at the resolved anchor
- *     via lk_layout_subtree.  Subtree rects are computed into a
- *     transient scratch array (NOT the shared rects[] from lk_layout),
- *     so the main-pass rects stay untouched and const.
- *
- * See docs/overlays.md.
- */
+
 
 #include <string.h>
 
@@ -28,12 +9,7 @@
 #include "lk-tooltip.h"
 #include <lk.h>
 
-/* Scrim alpha for modal overlays (black at this opacity over the
- * whole viewport).  A theme-driven scrim color is future work; the
- * constant follows the SCROLL_BAR_W / SPLIT_DIVIDER_W precedent. */
 #define LK_MODAL_SCRIM_ALPHA 150
-
-/* ---- Stack manipulation ---- */
 
 int lk_overlay_push(lk_ui *ui, const lk_overlay *ov) {
   if (!ui || !ov) {
@@ -111,8 +87,6 @@ lk_u32 lk_overlay_count(const lk_ui *ui) {
   return ui ? ui->overlay_count : 0;
 }
 
-/* ---- Anchor resolution ---- */
-
 lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect, lk_i32 vw,
                           lk_i32 vh, lk_i32 content_w, lk_i32 content_h) {
   lk_rect r;
@@ -138,7 +112,6 @@ lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect, lk_i32 vw,
     r.x = owner_rect.x + ox;
     r.y = owner_rect.y - h - oy;
 
-    /* Flip below when overflowing the top and there is room below. */
     if (r.y < 0 && vh > 0 && owner_rect.y + owner_rect.h + h <= vh) {
       r.y = owner_rect.y + owner_rect.h + oy;
     }
@@ -159,14 +132,12 @@ lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect, lk_i32 vw,
     r.x = owner_rect.x + ox;
     r.y = owner_rect.y + owner_rect.h + oy;
 
-    /* Flip above when overflowing the bottom and there is room above. */
     if (vh > 0 && r.y + h > vh && owner_rect.y - h >= 0) {
       r.y = owner_rect.y - h - oy;
     }
     break;
   }
 
-  /* Clamp into the viewport (skip an axis when its extent is 0). */
   if (vw > 0) {
     if (r.x + w > vw) {
       r.x = vw - w;
@@ -190,15 +161,10 @@ lk_rect lk_anchor_resolve(const lk_overlay *ov, lk_rect owner_rect, lk_i32 vw,
   return r;
 }
 
-/* ---- Shared helpers ---- */
-
 static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
   return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
 }
 
-/* Lay out a subtree-content overlay into scratch (node_count rects)
- * at its resolved anchor.  Fills out_content (subtree root index) and
- * out_rect (final overlay rect).  Returns 1 on success. */
 static int overlay_content_geometry(const lk_tree *t, const lk_overlay *ov,
                                     const lk_rect *rects,
                                     const lk_layout_cfg *cfg, lk_rect *scratch,
@@ -214,7 +180,6 @@ static int overlay_content_geometry(const lk_tree *t, const lk_overlay *ov,
     return 0;
   }
 
-  /* First pass at (0,0) to learn the intrinsic content size. */
   if (!lk_layout_subtree(t, cfg, cix, 0, 0, scratch)) {
     return 0;
   }
@@ -233,19 +198,17 @@ static int overlay_content_geometry(const lk_tree *t, const lk_overlay *ov,
   final_rect =
       lk_anchor_resolve(ov, owner_rect, cfg->viewport_w, cfg->viewport_h,
                         scratch[cix].w, scratch[cix].h);
+  lk_rect_snap_grid(&final_rect, cfg->grid_w, cfg->grid_h);
 
-  /* Second pass at the anchored origin. */
   if (!lk_layout_subtree(t, cfg, cix, final_rect.x, final_rect.y, scratch)) {
     return 0;
   }
 
   *out_content = cix;
-  *out_rect = final_rect;
+  *out_rect = scratch[cix];
   return 1;
 }
 
-/* Deepest node in the subtree rooted at root containing (x,y), using
- * the given rects.  Skips hidden descendants but not root itself. */
 static lk_ix subtree_hit(const lk_tree *t, lk_ix root, const lk_rect *rects,
                          lk_i32 x, lk_i32 y) {
   lk_ix *stack;
@@ -276,8 +239,6 @@ static lk_ix subtree_hit(const lk_tree *t, lk_ix root, const lk_rect *rects,
 
     best = n;
 
-    /* Push children forward, then reverse segment for left-to-right
-     * DFS (later siblings win). */
     sp_start = sp;
     child = t->nodes[n].first_child;
 
@@ -304,8 +265,6 @@ static lk_ix subtree_hit(const lk_tree *t, lk_ix root, const lk_rect *rects,
   return best;
 }
 
-/* ---- Overlay render ---- */
-
 int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
                              const lk_layout_cfg *cfg, lk_render_list *out) {
   const lk_tree *t;
@@ -321,16 +280,9 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
     return 1;
   }
 
-  /* Bottom to top: topmost overlay draws last (on top). */
   for (i = 0; i < ui->overlay_count; i++) {
     const lk_overlay *ov = &ui->overlays[i];
 
-    /* Modal overlays (the same traps_focus && !dismiss_on_outside
-     * definition the dismiss pass uses) dim everything beneath them:
-     * a viewport-covering scrim before the content, making the
-     * already-real click blocking visible.  Needs an alpha-blending
-     * consumer to actually dim (the SDL backend enables
-     * SDL_BLENDMODE_BLEND). */
     if (ov->traps_focus && !ov->dismiss_on_outside && cfg->viewport_w > 0 &&
         cfg->viewport_h > 0) {
       lk_render_cmd scmd;
@@ -385,8 +337,6 @@ int lk_render_build_overlays(lk_ui *ui, const lk_rect *rects,
   return 1;
 }
 
-/* ---- Overlay hit-test ---- */
-
 lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
                           const lk_layout_cfg *cfg, lk_i32 x, lk_i32 y) {
   const lk_tree *t;
@@ -402,9 +352,6 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
     return 0;
   }
 
-  /* Top to bottom: topmost overlay is hit-tested first.  Kinds with
-   * no case below (LK_OVERLAY_TOOLTIP) are never hit-testable — the
-   * pointer sees straight through them. */
   i = ui->overlay_count;
 
   while (i > 0) {
@@ -444,8 +391,7 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
         }
       }
     } else if (ov->kind == LK_OVERLAY_CONTEXT_MENU) {
-      /* Inside the popup: the target is the menu's owner (the event
-       * pre-step consumes it before the owner's widget sees it). */
+
       if (lk_menu_contains(ui, ov, rects, cfg, x, y)) {
         lk_ix n = ov->owner_id ? lk_tree_find_by_id(t, ov->owner_id) : 0;
 
@@ -457,9 +403,6 @@ lk_ix lk_hit_test_overlay(lk_ui *ui, const lk_rect *rects,
   return 0;
 }
 
-/* ---- Overlay dismissal / modal blocking ---- */
-
-/* Overlay rect + owner rect containment for the topmost overlay. */
 static int overlay_contains(lk_ui *ui, const lk_overlay *ov,
                             const lk_rect *rects, const lk_layout_cfg *cfg,
                             lk_i32 x, lk_i32 y) {
@@ -472,8 +415,6 @@ static int overlay_contains(lk_ui *ui, const lk_overlay *ov,
 
   oix = ov->owner_id ? lk_tree_find_by_id(t, ov->owner_id) : 0;
 
-  /* Owner (trigger) rect counts as inside: clicking the trigger is
-   * the widget's own toggle, not an outside dismissal. */
   if (oix != 0 && rects && point_in(&rects[oix], x, y)) {
     return 1;
   }
@@ -518,9 +459,6 @@ int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
     return LK_DISMISS_NONE;
   }
 
-  /* Top to bottom.  Passive overlays (tooltips) are transparent: the
-   * scan skips over them so a dismissible overlay underneath still
-   * sees the outside click. */
   i = ui->overlay_count;
 
   while (i > 0) {
@@ -532,12 +470,10 @@ int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
       break;
     }
 
-    /* Modal: consume the outside click without dismissing. */
     if (ov->traps_focus && !ov->dismiss_on_outside) {
       return LK_DISMISS_BLOCKED;
     }
 
-    /* Passive overlay (e.g. tooltip): outside clicks pass through. */
     if (!ov->dismiss_on_outside) {
       i--;
       continue;
@@ -546,8 +482,6 @@ int lk_overlay_dismiss_outside(lk_ui *ui, const lk_rect *rects,
     owner = ov->owner_id;
     kind = ov->kind;
 
-    /* Remove entry i-1 (may not be topmost when a passive overlay
-     * sits above it). */
     {
       lk_u32 k;
 

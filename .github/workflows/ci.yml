@@ -34,6 +34,22 @@ jobs:
       - name: Lcl binding tests + doctests
         if: matrix.lcl == 'ON'
         run: build/lcl_lk_test
+      - name: Widget Tour through the terminal backend (headless, no SDL)
+        # docs/tui-backend.md: lcl_lk_tui renders the render list into a
+        # cell buffer; --snap leaves .txt/.ans pages.  Six pages or fail.
+        if: matrix.lcl == 'ON'
+        run: |
+          mkdir -p tour-tui
+          build/lcl_lk_tui examples/tour-dsl.lcl --snap "$PWD/tour-tui"
+          test "$(ls tour-tui/tour-*.txt | wc -l)" -eq 6
+          build/lcl_lk_tui examples/log-dsl.lcl --snap "$PWD/tour-tui"
+          test -s tour-tui/log.txt
+      - name: Terminal backend, live path (pty smoke test)
+        # The tty half (raw mode, input parser, differ, restore) only
+        # runs with a controlling terminal; tools/tui-pty-smoke.py
+        # provides one and reads the screen back.
+        if: matrix.lcl == 'ON'
+        run: python3 tools/tui-pty-smoke.py build/lcl_lk_tui
       - name: Install into a prefix (exercise the CMake package)
         run: |
           cmake --install build --prefix "$PWD/prefix"

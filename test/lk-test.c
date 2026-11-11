@@ -6432,6 +6432,58 @@ static void test_text_input_insert(void) {
   lk_ui_destroy(ui);
 }
 
+static void test_text_input_paste_event(void) {
+  lk_ui *ui;
+  lk_ix ti;
+  lk_event ev;
+  lk_state *st;
+  lk_node_id ti_id;
+  lk_value v;
+  lk_str text;
+  static const char pasted[] = "line one\nline two";
+
+  BEGIN_TEST("text_input: PASTE event inserts in one step, replaces selection");
+
+  ui = make_text_input_ui("ab", &ti);
+  st = lk_ui_state(ui);
+  ti_id = lk_intern_id(ui->intern, lk_str_c("ti"));
+
+  /* select "b" (1..2), cursor at 2 */
+  lk_state_set(st, ti_id, LKS_CURSOR_POS, lk_v_i32(2));
+  lk_state_set(st, ti_id, LKS_SELECTION_START, lk_v_i32(1));
+  lk_state_set(st, ti_id, LKS_SELECTION_END, lk_v_i32(2));
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_PASTE;
+  ev.target = ti;
+  ev.data.paste.ptr = pasted;
+  ev.data.paste.len = (lk_u32)(sizeof(pasted) - 1);
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  CHECK_EQ((unsigned)v.tag, (unsigned)UIV_STR);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1u + (lk_u32)(sizeof(pasted) - 1));
+  CHECK(text.len >= 2 && text.ptr[0] == 'a' && text.ptr[1] == 'l');
+
+  v = lk_state_get(st, ti_id, LKS_CURSOR_POS);
+  CHECK_EQ((unsigned)v.as.i, 1u + (unsigned)(sizeof(pasted) - 1));
+
+  /* an empty paste is consumed and changes nothing */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_PASTE;
+  ev.target = ti;
+  lk_event_route(ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  v = lk_state_get(st, ti_id, LKS_TEXT_BUF);
+  text = lk_intern_str(ui->intern, v.as.str_id);
+  CHECK_EQ(text.len, 1u + (lk_u32)(sizeof(pasted) - 1));
+
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
 static void test_text_input_emits_value_changed(void) {
   lk_ui *ui;
   lk_ix ti;
@@ -7245,12 +7297,12 @@ static void test_text_align_text_input_cursor_origin(void) {
     CHECK(find_draw_text(cur, r, styles, lk_ui_state(ui), geom, sid, &x, &y));
     CHECK_EQ((unsigned)x, (unsigned)(r[ti].x + inset + off));
 
-    /* The cursor bar (1 px wide FILL_RECT) sits at the run end. */
+    /* The caret (LK_ROP_CARET) sits at the run end. */
     memset(&rl, 0, sizeof(rl));
     lk_render_build(cur, r, styles, lk_ui_state(ui), geom, &rl);
 
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+      if (rl.cmds[i].op == LK_ROP_CARET) {
         CHECK_EQ((unsigned)rl.cmds[i].rect.x,
                  (unsigned)(r[ti].x + inset + off + 16));
         cursor_seen = 1;
@@ -7619,6 +7671,94 @@ static void test_scroll_measure(void) {
   lk_tree_destroy(t);
 }
 
+static void test_scroll_grow_in_column(void) {
+  /* window > column > [label, scroll(grow 1) > 20 labels].  The scroll
+   * measures at a one-row floor because it grows, so the column's
+   * leftover (viewport minus the label) becomes its height and the
+   * 320px of content overflows it -- a bar, not a column taller than
+   * the window. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, hdr, sc, first = 0;
+  lk_rect *r;
+  int i;
+
+  BEGIN_TEST("scroll: grow in a column takes the leftover");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  hdr = lk_tree_add_node_s(t, lk_str_c("hdr"), UIK_LABEL);
+  sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  lk_tree_add_prop(t, hdr, UIP_TEXT, lk_v_cstr(t->intern, "Title"));
+  lk_tree_add_prop(t, sc, UIP_GROW, lk_v_i32(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, hdr);
+  lk_tree_append_child(t, col, sc);
+
+  for (i = 0; i < 20; i++) {
+    char name[32];
+    lk_ix lbl;
+    sprintf(name, "lbl%d", i);
+    lbl = lk_tree_add_node_s(t, lk_str_c(name), UIK_LABEL);
+    lk_tree_add_prop(t, lbl, UIP_TEXT, lk_v_cstr(t->intern, name));
+    lk_tree_append_child(t, sc, lbl);
+
+    if (i == 0) {
+      first = lbl;
+    }
+  }
+
+  r = run_layout(t, 800, 300);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_EQ((unsigned)r[hdr].h, 16u);
+    /* the leftover: 300 - 16 (label), no gap, no padding */
+    CHECK_EQ((unsigned)r[sc].y, 16u);
+    CHECK_EQ((unsigned)r[sc].h, 284u);
+    /* content still starts at the top and is laid out in full */
+    CHECK_EQ((unsigned)r[first].y, 16u);
+    CHECK_EQ((unsigned)r[first].h, 16u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
+static void test_scroll_grow_zero_measures_content(void) {
+  /* An explicit `grow 0` pins: the scroll keeps measuring at its
+   * content height, as it does without the prop. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, col, sc, l1, l2;
+  lk_rect *r;
+
+  BEGIN_TEST("scroll: grow 0 still measures content");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  sc = lk_tree_add_node_s(t, lk_str_c("sc"), UIK_SCROLL);
+  l1 = lk_tree_add_node_s(t, lk_str_c("l1"), UIK_LABEL);
+  l2 = lk_tree_add_node_s(t, lk_str_c("l2"), UIK_LABEL);
+  lk_tree_add_prop(t, l1, UIP_TEXT, lk_v_cstr(t->intern, "Hello"));
+  lk_tree_add_prop(t, l2, UIP_TEXT, lk_v_cstr(t->intern, "World!"));
+  lk_tree_add_prop(t, sc, UIP_GROW, lk_v_i32(0));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, sc);
+  lk_tree_append_child(t, sc, l1);
+  lk_tree_append_child(t, sc, l2);
+
+  r = run_layout(t, 800, 600);
+  CHECK(r != NULL);
+  if (r) {
+    CHECK_EQ((unsigned)r[sc].h, 32u);
+    free(r);
+  }
+
+  END_TEST();
+  lk_tree_destroy(t);
+}
+
 static void test_scroll_layout_no_offset(void) {
   /* No scroll offset: children start at top of content area. */
   lk_ix sc;
@@ -7967,7 +8107,7 @@ static void test_widget_bubble_no_break_text_input(void) {
  * ================================================================ */
 
 static void test_border_render_four_fill_rects(void) {
-  /* Node with border_width=2 via styles -> 4 extra FILL_RECTs */
+  /* Node with border_width=2 via styles -> one STROKE_RECT of 2 px */
   lk_tree *t;
   lk_style *styles;
   lk_layout_cfg cfg;
@@ -7977,7 +8117,7 @@ static void test_border_render_four_fill_rects(void) {
   lk_u32 i;
   int border_count;
 
-  BEGIN_TEST("border: emits 4 fill rects");
+  BEGIN_TEST("border: emits one STROKE_RECT");
 
   t = lk_tree_create(NULL);
   w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
@@ -8019,15 +8159,22 @@ static void test_border_render_four_fill_rects(void) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
-    /* Count FILL_RECTs with border color */
+    /* Exactly one STROKE_RECT in the border color, on the node rect,
+     * stroke = border_width; no FILL_RECT carries that color. */
     border_count = 0;
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.r == 100 &&
-          rl.cmds[i].color.g == 150 && rl.cmds[i].color.b == 200) {
+      if (rl.cmds[i].color.r == 100 && rl.cmds[i].color.g == 150 &&
+          rl.cmds[i].color.b == 200) {
+        CHECK_EQ((unsigned)rl.cmds[i].op, (unsigned)LK_ROP_STROKE_RECT);
+        CHECK_EQ((unsigned)rl.cmds[i].stroke, 2u);
+        CHECK(rl.cmds[i].rect.x == rects[btn].x &&
+              rl.cmds[i].rect.y == rects[btn].y &&
+              rl.cmds[i].rect.w == rects[btn].w &&
+              rl.cmds[i].rect.h == rects[btn].h);
         border_count++;
       }
     }
-    CHECK_EQ((unsigned)border_count, 4u);
+    CHECK_EQ((unsigned)border_count, 1u);
 
     lk_render_list_destroy(&rl);
   }
@@ -8194,15 +8341,16 @@ static void test_border_theme_integration(void) {
     memset(&rl, 0, sizeof(rl));
     lk_render_build(t, rects, styles, NULL, NULL, &rl);
 
-    /* Should find 4 FILL_RECTs with the theme border color */
+    /* Should find one STROKE_RECT with the theme border color */
     border_count = 0;
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].color.r == 80 &&
+      if (rl.cmds[i].op == LK_ROP_STROKE_RECT && rl.cmds[i].color.r == 80 &&
           rl.cmds[i].color.g == 140 && rl.cmds[i].color.b == 220) {
+        CHECK_EQ((unsigned)rl.cmds[i].stroke, 1u);
         border_count++;
       }
     }
-    CHECK_EQ((unsigned)border_count, 4u);
+    CHECK_EQ((unsigned)border_count, 1u);
 
     lk_render_list_destroy(&rl);
   }
@@ -8772,6 +8920,214 @@ static void test_dropdown_overlay_render_when_expanded(void) {
  * Overlay generalization tests (lk-overlay.c, UIP_HIDDEN,
  * lk_layout_subtree, ESC-in-core, focus traps)
  * ================================================================ */
+
+/* ---- layout grid (lk_layout_cfg.grid_w/h; docs/tui-backend.md) ---- */
+
+static void test_grid_snap_rect(void) {
+  lk_rect r;
+
+  BEGIN_TEST("grid: lk_rect_snap_grid rounds edges to the nearest line");
+
+  r.x = 11;
+  r.y = 23;
+  r.w = 50;
+  r.h = 26;
+  lk_rect_snap_grid(&r, 8, 16);
+  CHECK_EQ(r.x, 8);  /* 11 -> 8 */
+  CHECK_EQ(r.y, 16); /* 23 -> 16 */
+  CHECK_EQ(r.w, 56); /* 61 -> 64, minus 8 */
+  CHECK_EQ(r.h, 32); /* 49 -> 48, minus 16 */
+
+  /* exact half rounds up; a sub-cell box collapses to nothing */
+  r.x = 4;
+  r.y = 8;
+  r.w = 2;
+  r.h = 2;
+  lk_rect_snap_grid(&r, 8, 16);
+  CHECK_EQ(r.x, 8);
+  CHECK_EQ(r.y, 16);
+  CHECK_EQ(r.w, 0);
+  CHECK_EQ(r.h, 0);
+
+  /* negative coordinates (an overlay flipped past the top) */
+  r.x = -13;
+  r.y = -9;
+  r.w = 30;
+  r.h = 20;
+  lk_rect_snap_grid(&r, 8, 16);
+  CHECK_EQ(r.x, -16);
+  CHECK_EQ(r.y, -16);
+  CHECK_EQ(r.w, 32); /* 17 -> 16 */
+  CHECK_EQ(r.h, 32); /* 11 -> 16 */
+
+  /* 0 on an axis leaves that axis alone */
+  r.x = 11;
+  r.y = 23;
+  r.w = 50;
+  r.h = 26;
+  lk_rect_snap_grid(&r, 0, 16);
+  CHECK_EQ(r.x, 11);
+  CHECK_EQ(r.w, 50);
+  CHECK_EQ(r.y, 16);
+
+  END_TEST();
+}
+
+static void test_grid_layout_snaps_every_rect(void) {
+  /* A row of three grow children over a 100 px viewport: unsnapped,
+   * the children get 33/34/33; with an 8x16 grid every edge lands on
+   * a grid line, the children stay inside the parent and in order. */
+  lk_tree *t = lk_tree_create(NULL);
+  lk_ix w, row, a, b, c;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+
+  BEGIN_TEST("grid: lk_layout snaps every rect, keeps nesting and order");
+
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  row = lk_tree_add_node_s(t, lk_str_c("row"), UIK_ROW);
+  lk_tree_add_prop(t, row, UIP_ALIGN, lk_v_i32(LK_ALIGN_STRETCH));
+  a = lk_tree_add_node_s(t, lk_str_c("a"), UIK_SPACER);
+  b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_SPACER);
+  c = lk_tree_add_node_s(t, lk_str_c("c"), UIK_SPACER);
+  lk_tree_add_prop(t, a, UIP_GROW, lk_v_i32(1));
+  lk_tree_add_prop(t, b, UIP_GROW, lk_v_i32(1));
+  lk_tree_add_prop(t, c, UIP_GROW, lk_v_i32(1));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, row);
+  lk_tree_append_child(t, row, a);
+  lk_tree_append_child(t, row, b);
+  lk_tree_append_child(t, row, c);
+
+  rects = (lk_rect *)calloc(t->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 100;
+  cfg.viewport_h = 50;
+
+  lk_layout(t, &cfg, rects);
+  CHECK_EQ(rects[a].w + rects[b].w + rects[c].w, 100); /* unsnapped */
+  CHECK(rects[a].w % 8 != 0 || rects[b].w % 8 != 0);
+
+  cfg.grid_w = 8;
+  cfg.grid_h = 16;
+  lk_layout(t, &cfg, rects);
+
+  {
+    lk_ix ns[5];
+    int i;
+
+    ns[0] = w;
+    ns[1] = row;
+    ns[2] = a;
+    ns[3] = b;
+    ns[4] = c;
+
+    for (i = 0; i < 5; i++) {
+      CHECK_EQ(rects[ns[i]].x % 8, 0);
+      CHECK_EQ(rects[ns[i]].w % 8, 0);
+      CHECK_EQ(rects[ns[i]].y % 16, 0);
+      CHECK_EQ(rects[ns[i]].h % 16, 0);
+    }
+  }
+
+  /* the 100 px viewport rounds to 104; children tile it in order */
+  CHECK_EQ(rects[w].w, 104);
+  CHECK_EQ(rects[a].x, 0);
+  CHECK_EQ(rects[b].x, rects[a].x + rects[a].w);
+  CHECK_EQ(rects[c].x, rects[b].x + rects[b].w);
+  CHECK(rects[c].x + rects[c].w <= rects[row].x + rects[row].w);
+  CHECK_EQ(rects[a].h, 48); /* 50 -> 48 */
+
+  free(rects);
+  lk_tree_destroy(t);
+  END_TEST();
+}
+
+static void test_grid_dropdown_popup(void) {
+  lk_ui *ui;
+  lk_ix dd;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect popup;
+
+  BEGIN_TEST("grid: dropdown popup rows are whole cells, rect on the grid");
+
+  ui = make_dropdown_ui(&dd);
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 600;
+  cfg.grid_w = 8;
+  cfg.grid_h = 16;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  popup = lk_dropdown_popup_rect(lk_ui_tree(ui), dd, rects, cfg.styles, &cfg);
+  CHECK_EQ(popup.x % 8, 0);
+  CHECK_EQ(popup.y % 16, 0);
+  CHECK_EQ(popup.w % 8, 0);
+  CHECK_EQ(popup.h % 16, 0);
+  /* three 16 px option rows + the (unsnapped here) 7 px inset twice
+   * = 62, rounded to the grid: 64 */
+  CHECK_EQ(popup.h, 64);
+  CHECK_EQ(popup.y, rects[dd].y + rects[dd].h);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
+
+static void test_grid_tooltip_one_row(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_tree *t;
+  lk_ix w, col, b;
+  lk_rect *rects;
+  lk_layout_cfg cfg;
+  lk_rect tip;
+
+  BEGIN_TEST("grid: tooltip is one row, a column of padding each side");
+
+  t = lk_ui_begin_frame(ui);
+  w = lk_tree_add_node_s(t, lk_str_c("w"), UIK_WINDOW);
+  col = lk_tree_add_node_s(t, lk_str_c("col"), UIK_COLUMN);
+  b = lk_tree_add_node_s(t, lk_str_c("b"), UIK_BUTTON);
+  lk_tree_add_prop(t, b, UIP_TEXT, lk_v_cstr(t->intern, "Go"));
+  lk_tree_add_prop(t, b, UIP_TOOLTIP, lk_v_cstr(t->intern, "Runs it"));
+  lk_tree_set_root(t, w);
+  lk_tree_append_child(t, w, col);
+  lk_tree_append_child(t, col, b);
+  lk_ui_end_frame(ui);
+
+  rects = (lk_rect *)calloc(lk_ui_tree(ui)->node_count, sizeof(lk_rect));
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.text = lk_text_backend_stub();
+  cfg.viewport_w = 400;
+  cfg.viewport_h = 600;
+  cfg.grid_w = 8;
+  cfg.grid_h = 16;
+  lk_ui_resolve_styles(ui);
+  cfg.styles = lk_ui_styles(ui);
+  cfg.state = lk_ui_state(ui);
+  lk_layout(lk_ui_tree(ui), &cfg, rects);
+
+  lk_hover_set(ui, lk_intern_id(ui->intern, lk_str_c("b")));
+  CHECK_EQ(lk_overlay_count(ui), 1u);
+  b = lk_tree_find_by_id(lk_ui_tree(ui),
+                         lk_intern_id(ui->intern, lk_str_c("b")));
+  tip = lk_tooltip_rect(lk_ui_tree(ui), b, lk_overlay_top(ui), rects, &cfg);
+  CHECK_EQ(tip.h, 16);         /* one row: no vertical pad */
+  CHECK_EQ(tip.w, 7 * 8 + 32); /* "Runs it" + two columns each side */
+  CHECK_EQ(tip.x % 8, 0);
+  CHECK_EQ(tip.y, rects[b].y + rects[b].h);
+
+  free(rects);
+  END_TEST();
+  lk_ui_destroy(ui);
+}
 
 static void test_anchor_below_fits(void) {
   lk_overlay ov;
@@ -9697,9 +10053,11 @@ static void test_tooltip_render_on_top(void) {
   main_count = rl.count;
   lk_render_build_overlays(ui, rects, &cfg, &rl);
 
-  /* Tooltip commands (bg + 4 border strips + text) appended on top;
+  /* Tooltip commands (bg + STROKE_RECT frame + text) appended on top;
    * the final command is the tooltip's DRAW_TEXT. */
-  CHECK_EQ(rl.count, main_count + 6);
+  CHECK_EQ(rl.count, main_count + 3);
+  CHECK_EQ((unsigned)rl.cmds[main_count + 1].op, (unsigned)LK_ROP_STROKE_RECT);
+  CHECK_EQ((unsigned)rl.cmds[main_count + 1].stroke, 1u);
   CHECK_EQ((unsigned)rl.cmds[rl.count - 1].op, (unsigned)LK_ROP_DRAW_TEXT);
   CHECK_EQ(rl.cmds[rl.count - 1].str_id, tip_sid);
   CHECK_EQ((unsigned)rl.cmds[main_count].op, (unsigned)LK_ROP_FILL_RECT);
@@ -10025,13 +10383,13 @@ static void test_text_input_cursor_only_when_focused(void) {
   cfg.geom = lk_ui_geom(ui);
   lk_layout(lk_ui_tree(ui), &cfg, rects);
 
-  /* Focused: render list contains the 1px cursor bar */
+  /* Focused: render list contains the caret */
   memset(&rl, 0, sizeof(rl));
   lk_render_build(lk_ui_tree(ui), rects, NULL, lk_ui_state(ui), cfg.geom, &rl);
   focused_count = rl.count;
   cursor_found = 0;
   for (i = 0; i < rl.count; i++) {
-    if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+    if (rl.cmds[i].op == LK_ROP_CARET) {
       cursor_found = 1;
     }
   }
@@ -10043,7 +10401,7 @@ static void test_text_input_cursor_only_when_focused(void) {
   CHECK_EQ(rl.count + 1, focused_count);
   cursor_found = 0;
   for (i = 0; i < rl.count; i++) {
-    if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+    if (rl.cmds[i].op == LK_ROP_CARET) {
       cursor_found = 1;
     }
   }
@@ -10360,13 +10718,13 @@ static void test_geom_null_degrades_safely(void) {
   CHECK(r != NULL);
 
   if (r) {
-    /* Render without geom: no 1px cursor bar even though focused */
+    /* Render without geom: no caret even though focused */
     memset(&rl, 0, sizeof(rl));
     lk_render_build(lk_ui_tree(ui), r, NULL, st, NULL, &rl);
     cursor_found = 0;
 
     for (i = 0; i < rl.count; i++) {
-      if (rl.cmds[i].op == LK_ROP_FILL_RECT && rl.cmds[i].rect.w == 1) {
+      if (rl.cmds[i].op == LK_ROP_CARET) {
         cursor_found = 1;
       }
     }
@@ -13078,6 +13436,8 @@ int main(void) {
   /* scroll widget */
   printf("\nlk scroll tests:\n");
   test_scroll_measure();
+  test_scroll_grow_in_column();
+  test_scroll_grow_zero_measures_content();
   test_scroll_layout_no_offset();
   test_scroll_layout_with_offset();
   test_scroll_render_clips();
@@ -13107,6 +13467,10 @@ int main(void) {
 
   /* overlay generalization */
   printf("\nlk overlay tests:\n");
+  test_grid_snap_rect();
+  test_grid_layout_snaps_every_rect();
+  test_grid_dropdown_popup();
+  test_grid_tooltip_one_row();
   test_anchor_below_fits();
   test_anchor_below_flips_above();
   test_anchor_x_clamp();
@@ -13157,6 +13521,7 @@ int main(void) {
   test_translator_disabled_no_command();
   test_state_survives_reparent();
   test_text_input_cursor_only_when_focused();
+  test_text_input_paste_event();
   test_dropdown_padding_click_stays_open();
   test_dropdown_hover_follows_pointer();
   test_geom_scratch_populated();

@@ -25,7 +25,8 @@
 ;;;   checkbox, radio, slider, tabs, tab, grid, image.
 ;;; - **Event types**: pointer_move, pointer_down, pointer_up,
 ;;;   key_down, key_up, text, wheel, window_resize, window_close,
-;;;   value_changed, focus_changed.
+;;;   value_changed, focus_changed, paste (host-delivered pasted text,
+;;;   `text` key; one event however large).
 ;;; - **Errors are hard.**  Bad arity, unknown enum names, wrong
 ;;;   opaque types, and rejected document mutations all raise script
 ;;;   errors rather than returning sentinels.
@@ -1413,6 +1414,24 @@ namespace Lk {
     ;;; >> Lk::annot_present $ui $s $a "file-ref" #{file "file.c" line 12}
     proc annot_present {ui s id ptype value} {}
 
+    ;;; Read an annotation's presentation back: `#{ptype .. value ..}`
+    ;;; (the value `Lk::annot_present` wrapped, live), or "" when the
+    ;;; annotation carries none.  The inverse of annot_present, so a
+    ;;; caller can copy presentations between stores.
+    ;;;
+    ;;; Examples:
+    ;;; >> let ui [Lk::ui_create]
+    ;;; >> let s [Lk::annot_store_new]
+    ;;; >> let d [Lk::doc_new "see file.c:12"]
+    ;;; >> Lk::annot_attach $s $d
+    ;;; >> let a [Lk::annot_add $s 4 13 "links"]
+    ;;; >> Lk::annot_present $ui $s $a "file-ref" #{file "file.c" line 12}
+    ;;; >> get [Lk::annot_presentation $ui $s $a] ptype
+    ;;; "file-ref"
+    ;;; >> Lk::annot_presentation $ui $s [Lk::annot_add $s 0 3 "links"]
+    ;;; ""
+    proc annot_presentation {ui s id} {}
+
     ;;; Map window coordinates to a byte position in the editor's
     ;;; last completed layout; -1 before first layout, after
     ;;; invalidating edits, or outside the laid-out rect (never
@@ -1897,6 +1916,24 @@ namespace Lk {
     ;;; command handler, the event handler, or the frame proc.
     proc window_stop {win} {}
 
+    ;;; What the window's backend really implements, as a list of
+    ;;; names from: `file_dialogs` (native open/save dialogs), `icon`
+    ;;; (`Lk::window_icon*` do something), `clipboard` (copy/paste
+    ;;; reach a system clipboard), `image_io` (`Lk::image_load*` /
+    ;;; `Lk::image_save*` have codecs), `pointer` (pointer events
+    ;;; arrive), `key_up` (real key releases arrive), `key_chords`
+    ;;; (the full chord space arrives distinct: Ctrl+Shift+x,
+    ;;; Ctrl+Return, Ctrl+digits, Ctrl+I apart from Tab).  The SDL
+    ;;; backend has all seven; a terminal has `pointer` and
+    ;;; `clipboard` (copies go out through OSC 52) and, when its
+    ;;; emulator speaks the kitty keyboard protocol, `key_up` and
+    ;;; `key_chords` -- a legacy terminal delivers only Ctrl+letter
+    ;;; and Alt+key, so an app without `key_chords` loads its terminal
+    ;;; key profile.  Ask before offering a feature: a file-dialog proc
+    ;;; called where there are no dialogs completes at once with an
+    ;;; empty list, which looks exactly like cancel.
+    proc window_caps {win} {}
+
     ;;; Destroy a window and its ui.  Editor handles registered in
     ;;; that ui are guarded against the teardown.
     proc window_destroy {win} {}
@@ -2013,6 +2050,13 @@ namespace Lk {
     ;;;     }] (("Images" "bmp;png"))
     ;;;
     ;;; A window destroyed while its dialog is open never delivers.
+    ;;;
+    ;;; Where the backend has no native dialogs (`Lk::window_caps`
+    ;;; without `file_dialogs`: a terminal), the window's
+    ;;; `Lk::file_dialog_fallback` runs instead -- the DSL prelude
+    ;;; installs a picker modal (a path input, Open/Save and Cancel)
+    ;;; for every `app`, so scripts need not care which; without a
+    ;;; fallback the proc is called at once with an empty list.
     proc open_file_dialog {win proc ?filters ?default} {}
 
     ;;; The "save as" twin of `Lk::open_file_dialog`: same arguments,
@@ -2024,4 +2068,20 @@ namespace Lk {
     ;;;         if [len $paths] { Lk::image_save $img [List::first $paths] }
     ;;;     }] (("BMP image" "bmp"))
     proc save_file_dialog {win proc ?filters ?default} {}
+
+    ;;; Install the window's stand-in for native file dialogs: where
+    ;;; `Lk::window_caps` lacks `file_dialogs`, `Lk::open_file_dialog`
+    ;;; and `Lk::save_file_dialog` call `proc save handler filters
+    ;;; default` instead of the backend (save is 1 for the save twin;
+    ;;; filters the (name pattern) list, possibly empty; default the
+    ;;; starting location or ""), and proc must later call handler with
+    ;;; a list of paths (empty = cancelled).  The DSL prelude installs
+    ;;; its picker modal here in `app`; raw `Lk::` scripts may install
+    ;;; their own.  Restyle the prelude's picker with
+    ;;; `rule column #{tag file_picker} #{...}`.
+    ;;;
+    ;;;     Lk::file_dialog_fallback $win [lambda {save handler filters default} {
+    ;;;         apply $handler [list "/tmp/fixed.txt"]
+    ;;;     }]
+    proc file_dialog_fallback {win proc} {}
 }

@@ -1,39 +1,4 @@
-/*
- * lk-split.c -- Resizable split-pane containers (UIK_SPLIT_H /
- * UIK_SPLIT_V).
- *
- * A split holds exactly two panes separated by a DIVIDER_W-pixel
- * divider band.  SPLIT_H places them side-by-side (vertical divider);
- * SPLIT_V stacks them (horizontal divider).  The divider band belongs
- * to the split node itself — it is not a separate node, so a
- * hit-test in the band lands on the split (no child covers it).
- *
- * Ratio is per-mille (0..1000; lk_value has no float).  Priority:
- *   LKS_SPLIT_RATIO state (written by dragging)
- *   > UIP_SPLIT_RATIO prop (host-set initial value)
- *   > 500.
- * The first pane is clamped to >= MIN_PANE px on the split axis
- * whenever the axis is big enough for both panes to keep it.
- *
- * Every drag MOVE emits a synthetic LK_EVENT_VALUE_CHANGED targeting
- * the split node whose payload is the clamped per-mille ratio as a
- * decimal string (the text-input/dropdown channel).  With
- * UIP_SPLIT_CONTROLLED nonzero the state write is suppressed
- * entirely: the app owns the ratio and re-supplies UIP_SPLIT_RATIO
- * each frame from its own model.
- *
- * Degradation: one visible child fills the whole content rect; zero
- * children renders background only; children beyond the first two are
- * ignored (their rects are zeroed).
- *
- * Dragging uses the pointer-capture facility (lk_capture_set): the
- * divider keeps receiving POINTER_MOVE/UP while the cursor is outside
- * the band.  Divider geometry is always derived from the split's own
- * laid-out rect (render) or its content rect stashed in the per-frame
- * geometry scratch (geom->content, written by lk_split_store_geometry
- * from lk_layout; events read it via ui->geom) — never recomputed
- * from ancestors.  Without a geom scratch dragging is disabled.
- */
+
 
 #include <stdio.h>
 #include <string.h>
@@ -44,8 +9,6 @@
 #define SPLIT_DIVIDER_W 5
 #define SPLIT_MIN_PANE 40
 #define SPLIT_DEFAULT_RATIO 500
-
-/* ---- Helpers ---- */
 
 static lk_i32 get_i32(const lk_state *state, lk_node_id nid, lk_u16 key) {
   lk_value v;
@@ -67,8 +30,6 @@ static int point_in(const lk_rect *r, lk_i32 x, lk_i32 y) {
   return x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h;
 }
 
-/* Collect up to two visible (non-hidden) children.  Returns the
- * visible-pane count clamped to 2; extras are ignored. */
 static lk_u32 split_panes(const lk_tree *t, lk_ix n, lk_ix out[2]) {
   lk_ix ch = t->nodes[n].first_child;
   lk_u32 c = 0;
@@ -91,7 +52,6 @@ static lk_u32 split_panes(const lk_tree *t, lk_ix n, lk_ix out[2]) {
   return c > 2 ? 2 : c;
 }
 
-/* Effective ratio: state > prop > default, clamped to 0..1000. */
 static lk_i32 split_ratio_eff(const lk_tree *t, lk_ix n,
                               const lk_state *state) {
   lk_i32 r = lk_node_prop_i32(t, n, UIP_SPLIT_RATIO, SPLIT_DEFAULT_RATIO);
@@ -115,9 +75,6 @@ static lk_i32 split_ratio_eff(const lk_tree *t, lk_ix n,
   return r;
 }
 
-/* First pane's extent along the split axis for a given available
- * extent (content minus divider).  Keeps both panes >= MIN_PANE when
- * the axis is big enough. */
 static lk_i32 split_first_main(lk_i32 avail, lk_i32 ratio) {
   lk_i32 first;
 
@@ -148,32 +105,31 @@ static lk_i32 split_first_main(lk_i32 avail, lk_i32 ratio) {
   return first;
 }
 
-/* Divider band rect within a content rect (only meaningful with two
- * visible panes; caller checks).  horiz=1 for SPLIT_H (vertical band),
- * 0 for SPLIT_V (horizontal band). */
-static lk_rect split_band_rect(const lk_rect *content, lk_i32 first,
-                               int horiz) {
+static lk_rect split_band_rect(const lk_rect *content, lk_i32 first, int horiz,
+                               lk_i32 div) {
   lk_rect band;
 
   if (horiz) {
     band.x = content->x + first;
     band.y = content->y;
-    band.w = SPLIT_DIVIDER_W;
+    band.w = div;
     band.h = content->h;
   } else {
     band.x = content->x;
     band.y = content->y + first;
     band.w = content->w;
-    band.h = SPLIT_DIVIDER_W;
+    band.h = div;
   }
 
   return band;
 }
 
-/* ---- Measure ---- */
+static lk_i32 split_div(const lk_layout_cfg *cfg, int horiz) {
+  lk_i32 g = cfg ? (horiz ? cfg->grid_w : cfg->grid_h) : 0;
 
-/* Intrinsics: sum of the two panes plus the divider on the split
- * axis, max on the cross axis. */
+  return g > SPLIT_DIVIDER_W ? g : SPLIT_DIVIDER_W;
+}
+
 static void measure_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
                           const lk_layout_cfg *cfg, lk_i32 *out_w,
                           lk_i32 *out_h, int horiz) {
@@ -199,7 +155,7 @@ static void measure_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
   }
 
   if (count == 2) {
-    sum_main += SPLIT_DIVIDER_W;
+    sum_main += split_div(cfg, horiz);
   }
 
   if (horiz) {
@@ -223,8 +179,6 @@ static void measure_split_v(const lk_tree *t, lk_ix n, const lk_size *sizes,
   measure_split(t, n, sizes, cfg, out_w, out_h, 0);
 }
 
-/* ---- Layout ---- */
-
 static int layout_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
                         const lk_rect *content, const lk_layout_cfg *cfg,
                         lk_rect *rects, int horiz) {
@@ -234,13 +188,12 @@ static int layout_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
   lk_i32 avail;
   lk_i32 first;
   lk_i32 second;
+  lk_i32 div;
   lk_ix ch;
   lk_u32 seen = 0;
 
   (void)sizes;
 
-  /* Extras beyond the first two visible children are ignored: zero
-   * their rects so they render nowhere and never hit-test. */
   ch = t->nodes[n].first_child;
 
   while (ch) {
@@ -263,12 +216,13 @@ static int layout_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
   }
 
   if (count == 1) {
-    /* Single pane fills the whole content rect. */
+
     rects[panes[0]] = *content;
     return 1;
   }
 
-  avail = main_size - SPLIT_DIVIDER_W;
+  div = split_div(cfg, horiz);
+  avail = main_size - div;
 
   if (avail < 0) {
     avail = 0;
@@ -283,7 +237,7 @@ static int layout_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
     rects[panes[0]].w = first;
     rects[panes[0]].h = content->h;
 
-    rects[panes[1]].x = content->x + first + SPLIT_DIVIDER_W;
+    rects[panes[1]].x = content->x + first + div;
     rects[panes[1]].y = content->y;
     rects[panes[1]].w = second;
     rects[panes[1]].h = content->h;
@@ -294,7 +248,7 @@ static int layout_split(const lk_tree *t, lk_ix n, const lk_size *sizes,
     rects[panes[0]].h = first;
 
     rects[panes[1]].x = content->x;
-    rects[panes[1]].y = content->y + first + SPLIT_DIVIDER_W;
+    rects[panes[1]].y = content->y + first + div;
     rects[panes[1]].w = content->w;
     rects[panes[1]].h = second;
   }
@@ -314,19 +268,16 @@ static int layout_split_v(const lk_tree *t, lk_ix n, const lk_size *sizes,
   return layout_split(t, n, sizes, content, cfg, rects, 0);
 }
 
-/* ---- Render ---- */
-
-/* Background plus the divider band (style->border_color).  Divider
- * geometry is derived from the node's OWN laid-out rect — never
- * recomputed from ancestors. */
 static void render_split(const lk_tree *t, lk_ix n, const lk_rect *rect,
                          const lk_style *style, const lk_state *state,
-                         lk_render_list *out, int horiz) {
+                         const lk_widget_geom *geom, lk_render_list *out,
+                         int horiz) {
+  lk_i32 div =
+      (geom && geom->content.div > 0) ? geom->content.div : SPLIT_DIVIDER_W;
   lk_render_cmd cmd;
   lk_ix panes[2];
   lk_u32 count;
 
-  /* Background */
   memset(&cmd, 0, sizeof(cmd));
   cmd.op = LK_ROP_FILL_RECT;
   cmd.rect = *rect;
@@ -346,14 +297,14 @@ static void render_split(const lk_tree *t, lk_ix n, const lk_rect *rect,
     content.w = rect->w - inset * 2;
     content.h = rect->h - inset * 2;
 
-    avail = (horiz ? content.w : content.h) - SPLIT_DIVIDER_W;
+    avail = (horiz ? content.w : content.h) - div;
 
     if (avail >= 0) {
       first = split_first_main(avail, split_ratio_eff(t, n, state));
 
       memset(&cmd, 0, sizeof(cmd));
       cmd.op = LK_ROP_FILL_RECT;
-      cmd.rect = split_band_rect(&content, first, horiz);
+      cmd.rect = split_band_rect(&content, first, horiz, div);
       cmd.color = style->border_color;
       lk_render_list_push(out, cmd);
     }
@@ -363,23 +314,17 @@ static void render_split(const lk_tree *t, lk_ix n, const lk_rect *rect,
 static void render_split_h(const lk_tree *t, lk_ix n, const lk_rect *rect,
                            const lk_style *style, const lk_state *state,
                            const lk_widget_geom *geom, lk_render_list *out) {
-  (void)geom; /* divider derives from the node's own rect */
-  render_split(t, n, rect, style, state, out, 1);
+  render_split(t, n, rect, style, state, geom, out, 1);
 }
 
 static void render_split_v(const lk_tree *t, lk_ix n, const lk_rect *rect,
                            const lk_style *style, const lk_state *state,
                            const lk_widget_geom *geom, lk_render_list *out) {
-  (void)geom; /* divider derives from the node's own rect */
-  render_split(t, n, rect, style, state, out, 0);
+  render_split(t, n, rect, style, state, geom, out, 0);
 }
 
-/* ---- Event handling ---- */
-
-/* Fetch the content rect stashed in the ui's per-frame geometry
- * scratch by the layout pass.  Returns 0 when absent (no geom wired,
- * or layout never ran) — dragging is then disabled. */
-static int split_stashed_content(const lk_ui *ui, lk_ix n, lk_rect *out) {
+static int split_stashed_content(const lk_ui *ui, lk_ix n, lk_rect *out,
+                                 lk_i32 *out_div) {
   const lk_widget_geom *g;
 
   if (!ui->geom || (lk_u32)n >= ui->geom_cap) {
@@ -396,6 +341,7 @@ static int split_stashed_content(const lk_ui *ui, lk_ix n, lk_rect *out) {
   out->y = g->content.y;
   out->w = g->content.w;
   out->h = g->content.h;
+  *out_div = g->content.div > 0 ? g->content.div : SPLIT_DIVIDER_W;
 
   return 1;
 }
@@ -406,6 +352,7 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
   lk_node_id nid = t->nodes[n].id;
   lk_rect content;
   lk_i32 avail;
+  lk_i32 div;
   int dragging;
 
   if (ev->type != LK_EVENT_POINTER_DOWN && ev->type != LK_EVENT_POINTER_MOVE &&
@@ -413,7 +360,7 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
     return 0;
   }
 
-  if (!st || !split_stashed_content(ui, n, &content)) {
+  if (!st || !split_stashed_content(ui, n, &content, &div)) {
     return 0;
   }
 
@@ -428,17 +375,17 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
       return 0;
     }
 
-    avail = (horiz ? content.w : content.h) - SPLIT_DIVIDER_W;
+    avail = (horiz ? content.w : content.h) - div;
 
     if (avail < 0) {
       return 0;
     }
 
     first = split_first_main(avail, split_ratio_eff(t, n, st));
-    band = split_band_rect(&content, first, horiz);
+    band = split_band_rect(&content, first, horiz, div);
 
     if (!point_in(&band, ev->data.pointer.x, ev->data.pointer.y)) {
-      /* Pane click bubbling through — not ours. */
+
       return 0;
     }
 
@@ -453,19 +400,16 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
   }
 
   if (ev->type == LK_EVENT_POINTER_MOVE) {
-    /* New ratio from pointer position along the split axis, anchoring
-     * the divider's center under the cursor.  Clamped so the first
-     * pane keeps >= MIN_PANE (per-mille min rounds up so the pixel
-     * result lands exactly on MIN_PANE). */
+
     lk_i32 pos = horiz ? ev->data.pointer.x : ev->data.pointer.y;
     lk_i32 origin = horiz ? content.x : content.y;
-    lk_i32 rel = pos - origin - SPLIT_DIVIDER_W / 2;
+    lk_i32 rel = pos - origin - div / 2;
     lk_i32 ratio;
 
-    avail = (horiz ? content.w : content.h) - SPLIT_DIVIDER_W;
+    avail = (horiz ? content.w : content.h) - div;
 
     if (avail <= 0) {
-      return 1; /* still consume while dragging */
+      return 1;
     }
 
     ratio = (rel * 1000) / avail;
@@ -491,10 +435,6 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
       ratio = 1000;
     }
 
-    /* Notify the app: the clamped per-mille ratio as a decimal
-     * string, on the same synthetic VALUE_CHANGED channel text
-     * inputs and dropdowns use (enqueued, drained after the
-     * originating event finishes its tiers). */
     {
       char buf[16];
       lk_event vev;
@@ -507,8 +447,6 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
       lk_event_enqueue(ui, &vev);
     }
 
-    /* Controlled split: the app owns the ratio — no state write; it
-     * re-supplies UIP_SPLIT_RATIO each frame from its own model. */
     if (!lk_node_prop_i32(t, n, UIP_SPLIT_CONTROLLED, 0)) {
       lk_state_set(st, nid, LKS_SPLIT_RATIO, lk_v_i32(ratio));
     }
@@ -516,7 +454,6 @@ static int event_split(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev,
     return 1;
   }
 
-  /* POINTER_UP while dragging: end the drag. */
   lk_state_set(st, nid, LKS_SPLIT_DRAGGING, lk_v_i32(0));
   lk_capture_clear(ui);
 
@@ -530,8 +467,6 @@ static int event_split_h(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
 static int event_split_v(lk_ui *ui, const lk_tree *t, lk_ix n, lk_event *ev) {
   return event_split(ui, t, n, ev, 0);
 }
-
-/* ---- Layout-pass geometry stash ---- */
 
 void lk_split_store_geometry(const lk_tree *t, const lk_rect *rects,
                              const lk_layout_cfg *cfg) {
@@ -562,10 +497,9 @@ void lk_split_store_geometry(const lk_tree *t, const lk_rect *rects,
     g->content.y = rects[n].y + inset;
     g->content.w = rects[n].w - inset * 2;
     g->content.h = rects[n].h - inset * 2;
+    g->content.div = split_div(cfg, kind == (lk_u16)UIK_SPLIT_H);
   }
 }
-
-/* ---- Registration ---- */
 
 lk_widget_def lk_split_h_widget_def(void) {
   lk_widget_def def;

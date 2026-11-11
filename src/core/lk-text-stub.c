@@ -1,23 +1,4 @@
-/* Deterministic monospace text backend for headless tests.
- *
- * Metrics (chosen to match the old lk_measure_text_stub so ASCII
- * layout assertions carry over unchanged):
- *   advance   = 8 px per CODEPOINT (old stub was 8 px per byte —
- *               identical for ASCII, exact for UTF-8 now)
- *   height    = 16 px
- *   baseline  = 12 px
- *   line_height = 16 px
- *
- * All metrics are independent of font_id/font_size: every face and
- * size is identical.  This is documented stub behavior — it makes
- * font selection testable (ids flow through) without affecting
- * geometry assertions.
- *
- * register_font hands out 1, 2, 3, ... from a process-global static
- * counter, so stub font ids are process-global (fine for tests).
- *
- * Codepoint stepping comes from lk-utf8.c (single source of truth).
- */
+
 
 #include "lk-utf8.h"
 #include <lk.h>
@@ -26,7 +7,6 @@
 #define STUB_HEIGHT 16
 #define STUB_BASELINE 12
 
-/* Count codepoints in run.ptr[0..len). */
 static lk_u32 stub_count_cp(lk_str run, lk_u32 len) {
   lk_u32 i = 0;
   lk_u32 n = 0;
@@ -39,8 +19,6 @@ static lk_u32 stub_count_cp(lk_str run, lk_u32 len) {
   return n;
 }
 
-/* Byte index of the boundary after cp_count codepoints (clamped to
- * run.len). */
 static lk_u32 stub_cp_to_byte(lk_str run, lk_u32 cp_count) {
   lk_u32 i = 0;
   lk_u32 seen = 0;
@@ -80,7 +58,6 @@ static lk_i32 stub_x_from_index(void *ud, lk_str run, lk_u16 font_id,
     ix = run.len;
   }
 
-  /* Snap down to a codepoint boundary. */
   while (ix > 0 && !lk_utf8_is_boundary(run.ptr, run.len, ix)) {
     ix--;
   }
@@ -101,8 +78,6 @@ static lk_u32 stub_index_from_x(void *ud, lk_str run, lk_u16 font_id,
     return 0;
   }
 
-  /* Boundary i sits at x = 8*i.  Nearest boundary, ties round up:
-   * i = floor((x + advance/2) / advance). */
   boundary = (lk_u32)(x + STUB_ADVANCE / 2) / STUB_ADVANCE;
   ncp = stub_count_cp(run, run.len);
 
@@ -121,8 +96,7 @@ static lk_i32 stub_line_height(void *ud, lk_u16 font_id, lk_u16 font_size) {
 }
 
 static lk_u16 stub_register_font(void *ud, const char *path) {
-  /* Process-global counter: successive calls return 1, 2, 3, ...
-   * regardless of which stub "instance" is used (there is only one). */
+
   static lk_u16 g_next_font = 1;
 
   (void)ud;

@@ -1,15 +1,5 @@
-/*
- * lcl-lk-wasm.c -- the browser runner.
- *
- * The Emscripten counterpart of lcl-lk-main.c.  Same interpreter, same
- * packages, same DSL prelude; two things differ because a page cannot
- * block.  The script is not an argv path but /app.lcl, preloaded into
- * the virtual filesystem at link time (CMake: LK_WASM_APP, along with
- * the font at LK_WASM_FONT), and the window loop is not run by the
- * script: Lk::window_run is deferred (include/lcl-lk.h), so the
- * script's `app` returns at once, and the browser's frame callback
- * drives lcl_lk_run_step until the window stops.
- */
+
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -26,6 +16,14 @@
 
 #ifdef LK_HAVE_LCL_RANDOM
 #include <lcl-random.h>
+#endif
+
+#ifdef LK_HAVE_LCL_JSON
+#include <lcl-json.h>
+#endif
+
+#ifdef LK_HAVE_LCL_MATH
+#include <lcl-math.h>
 #endif
 
 #include "lcl-lk.h"
@@ -79,7 +77,7 @@ int main(void) {
   lcl_lk_set_args(0, NULL);
 
 #ifdef LK_HAVE_LCL_IO
-  lcl_register_io(g_interp); /* MEMFS: whatever the link preloaded */
+  lcl_register_io(g_interp);
 #endif
 
 #ifdef LK_HAVE_LCL_REGEX
@@ -88,6 +86,14 @@ int main(void) {
 
 #ifdef LK_HAVE_LCL_RANDOM
   lcl_register_random(g_interp);
+#endif
+
+#ifdef LK_HAVE_LCL_JSON
+  lcl_register_json(g_interp);
+#endif
+
+#ifdef LK_HAVE_LCL_MATH
+  lcl_register_math(g_interp);
 #endif
 
   if (lcl_lk_load_dsl(g_interp) != LCL_RC_OK) {
@@ -111,9 +117,6 @@ int main(void) {
     return rc == LCL_RC_OK ? 0 : 1;
   }
 
-  /* The first frame right now, synchronously: the canvas is painted
-   * before the page yields, rather than after the first animation
-   * frame the browser grants (a background tab may grant none). */
   if (!lcl_lk_run_step()) {
     fprintf(stderr, "lk: window closed\n");
     lcl_interp_free(g_interp);
@@ -122,9 +125,6 @@ int main(void) {
 
   fprintf(stderr, "lk: first frame rendered; main loop on\n");
 
-  /* 0 fps = requestAnimationFrame; 1 = never return from main (the
-   * call unwinds through the JS event loop), so nothing below it may
-   * hold state the callback needs. */
   emscripten_set_main_loop_arg(tick, NULL, 0, 1);
 
   return 0;

@@ -255,6 +255,52 @@ static void test_activation_equals_gesture(void) {
 
 /* ---- the popup ---- */
 
+static void test_menu_grid(void) {
+  lk_ui *ui = lk_ui_create(NULL);
+  lk_layout_cfg cfg;
+  lk_rect cell_r;
+  lk_render_list rl;
+  lk_rect mr;
+
+  BEGIN_TEST("menu: on a cell grid, one row per item and separator");
+
+  add_translators(ui);
+  build_frame(ui, 0, 1);
+  cfg = layout_into_ui(ui);
+  cfg.grid_w = 8;
+  cfg.grid_h = 16;
+  lk_layout(lk_ui_tree(ui), &cfg, lk_ui_rects(ui));
+  CHECK(lk_node_rect(ui, lk_intern_cid(ui->intern, "cell"), &cell_r));
+
+  /* opened at a cell centre (what a terminal reports), the popup
+   * still lands on the grid */
+  CHECK_EQ(lk_menu_open_context(ui, lk_ui_tree(ui), cell_r.x + 4, cell_r.y + 8),
+           6);
+  memset(&rl, 0, sizeof(rl));
+  lk_render_build_overlays(ui, lk_ui_rects(ui), &cfg, &rl);
+  lk_render_list_destroy(&rl);
+  mr = lk_menu_rect(ui);
+  CHECK_EQ(mr.x % 8, 0);
+  CHECK_EQ(mr.y % 16, 0);
+  CHECK_EQ(mr.w % 8, 0);
+  /* 5 item rows + 1 separator row + a frame row above and below */
+  CHECK_EQ(mr.h, 8 * 16);
+
+  /* the second item is the second row below the frame row */
+  route_pointer(ui, LK_EVENT_POINTER_MOVE, find(ui, "cell"), mr.x + 20,
+                mr.y + 16 + 16 + 8, 0);
+  CHECK_EQ(lk_menu_hover(ui), 1);
+  /* the separator (index 3) takes a whole row too: the row after it
+   * is item 4, not item 5 */
+  route_pointer(ui, LK_EVENT_POINTER_MOVE, find(ui, "cell"), mr.x + 20,
+                mr.y + 16 + 4 * 16 + 8, 0);
+  CHECK_EQ(lk_menu_hover(ui), 4);
+
+  lk_menu_close(ui);
+  lk_ui_destroy(ui);
+  END_TEST();
+}
+
 static void test_popup_open_geometry_keys(void) {
   lk_ui *ui = lk_ui_create(NULL);
   lk_layout_cfg cfg;
@@ -562,6 +608,7 @@ void lk_menu_run_tests(void) {
   test_candidates_order();
   test_activation_equals_gesture();
   test_popup_open_geometry_keys();
+  test_menu_grid();
   test_popup_dismissal();
   test_explicit_menu();
   test_interior_candidates();

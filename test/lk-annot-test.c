@@ -1033,6 +1033,20 @@ static const lk_render_cmd *sp_find_fill(const lk_render_list *rl, lk_color c) {
   return NULL;
 }
 
+/* First DRAW_RUN carrying LK_TA_UNDERLINE (NULL if none). */
+static const lk_render_cmd *sp_find_underline(const lk_render_list *rl) {
+  lk_u32 i;
+
+  for (i = 0; i < rl->count; i++) {
+    if (rl->cmds[i].op == LK_ROP_DRAW_RUN &&
+        (rl->cmds[i].text_attr & LK_TA_UNDERLINE)) {
+      return &rl->cmds[i];
+    }
+  }
+
+  return NULL;
+}
+
 static void test_span_across_wrap_break(void) {
   sp_fix f;
   lk_render_list rl;
@@ -1165,12 +1179,14 @@ static void test_span_underline(void) {
 
   CHECK(sp_render(&f, &rl));
 
-  /* the underline is the only SP_FG FILL_RECT (the run itself is a
-   * DRAW_RUN); stub baseline = 12 -> y = 0 + 12 + 1 */
-  ul = sp_find_fill(&rl, SP_FG);
+  /* the underline is an attribute of the "llo" run (LK_TA_UNDERLINE);
+   * the run carries its measured width so the consumer can draw the
+   * line: x = 2 * 8, w = 3 * 8.  No SP_FG fill exists any more. */
+  ul = sp_find_underline(&rl);
   CHECK(ul != NULL);
-  CHECK(ul && ul->rect.x == 16 && ul->rect.y == 13 && ul->rect.w == 24 &&
-        ul->rect.h == 1);
+  CHECK(ul && col_eq(ul->color, SP_FG));
+  CHECK(ul && ul->rect.x == 16 && ul->rect.y == 0 && ul->rect.w == 24);
+  CHECK(sp_find_fill(&rl, SP_FG) == NULL);
 
   lk_render_list_destroy(&rl);
   sp_destroy(&f);
@@ -1619,7 +1635,7 @@ static void test_span_producer_end_to_end(void) {
         CHECK(col_eq(sp_nth_run(&rl, 0)->color, SP_FG2));
         CHECK(sp_run_is(&rl, sp_nth_run(&rl, 2), "def"));
         CHECK(col_eq(sp_nth_run(&rl, 2)->color, SP_FG));
-        CHECK(sp_find_fill(&rl, SP_FG) != NULL); /* underline */
+        CHECK(sp_find_underline(&rl) != NULL); /* underline */
 
         /* now edit: prepend "zz".  The editor forward-transforms its
          * span copy through the delta, so the in-between frame
@@ -1634,7 +1650,7 @@ static void test_span_producer_end_to_end(void) {
         CHECK(col_eq(sp_nth_run(&rl, 0)->color, SP_FG2));
         CHECK(sp_run_is(&rl, sp_nth_run(&rl, 2), "def"));
         CHECK(col_eq(sp_nth_run(&rl, 2)->color, SP_FG));
-        CHECK(sp_find_fill(&rl, SP_FG) != NULL); /* underline */
+        CHECK(sp_find_underline(&rl) != NULL); /* underline */
       } else {
         /* re-produced after the edit.  The "kw" annotation started
          * at 0 with a LEFT-bias anchor, so inserting AT 0 leaves it

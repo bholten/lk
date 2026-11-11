@@ -71,14 +71,8 @@ int lk_render_list_push_run(lk_render_list *rl, const char *ptr, lk_u32 len,
   return 1;
 }
 
-/* High bit marks a CLIP_END sentinel on the DFS stack.  Node indices
- * never reach 2^31 so this is safe.
- */
 #define CLIP_END_MARKER 0x80000000u
 
-/* Fallback style resolved from default theme for a given kind,
- * used when styles == NULL (backward compat for tests).
- */
 static lk_style g_fallback_styles[LK_KIND_MAX];
 static int g_fallback_inited;
 
@@ -94,7 +88,6 @@ static void init_fallback_styles(void) {
   g_fallback_inited = 1;
   memset(g_fallback_styles, 0, sizeof(g_fallback_styles));
 
-  /* Build a small tree with one node of each kind and resolve */
   th = lk_theme_default(NULL, NULL, NULL);
 
   if (!th) {
@@ -108,10 +101,6 @@ static void init_fallback_styles(void) {
     return;
   }
 
-  /* Add one node per kind (indices 1..UIK__COUNT-1).
-   * Make window the root and all others its children so the
-   * DFS resolver visits every node.
-   */
   for (k = UIK_WINDOW; k < (int)UIK__COUNT; k++) {
     lk_tree_add_node(t, (lk_node_id)(k), (lk_kind)k);
   }
@@ -138,21 +127,13 @@ static void init_fallback_styles(void) {
   lk_theme_destroy(th);
 }
 
-/* Shared DFS emitter for lk_render_build / lk_render_build_from.
- * Walks the subtree rooted at start and appends commands to out
- * (count is NOT reset here).  Subtrees whose root carries UIP_HIDDEN
- * are skipped, except start itself when ignore_start_hidden is set
- * (overlay content subtrees are hidden from the main pass but must
- * render in the overlay pass). */
 static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
                        const lk_style *styles, const lk_state *state,
                        const lk_widget_geom *geom, lk_render_list *out,
                        int ignore_start_hidden) {
   lk_ix *stack;
   lk_u32 sp;
-  /* Stack needs room for each node plus a CLIP_END marker per clipping
-   * node.  2x node_count is a safe upper bound.
-   */
+
   lk_u32 stack_cap;
 
   if (!styles && !g_fallback_inited) {
@@ -178,7 +159,6 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
     int clips;
     const lk_style *node_style;
 
-    /* Check for CLIP_END sentinel */
     if (raw & CLIP_END_MARKER) {
       lk_render_cmd cmd;
       memset(&cmd, 0, sizeof(cmd));
@@ -189,7 +169,6 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
 
     n = raw;
 
-    /* Hidden subtrees are skipped by the main render pass. */
     if (lk_node_prop_bool(t, n, UIP_HIDDEN) &&
         !(ignore_start_hidden && n == start)) {
       continue;
@@ -200,7 +179,6 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
     def = lk_widget_get(kind);
     clips = (def && def->clips) ? 1 : 0;
 
-    /* Determine style for this node */
     if (styles) {
       node_style = &styles[n];
     } else {
@@ -213,11 +191,7 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
       def->render(t, n, &rects[n], node_style, state, geom ? &geom[n] : NULL,
                   out);
     } else if (node_style->bg.a > 0) {
-      /* Render-less kinds (containers: column, row, spacer) get their
-       * background from the engine — widgets with a render fn own
-       * their full appearance.  Without this, a theme rule setting bg
-       * on a container matches, draws its border, and silently never
-       * paints the plate. */
+
       lk_render_cmd cmd;
 
       memset(&cmd, 0, sizeof(cmd));
@@ -227,44 +201,18 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
       lk_render_list_push(out, cmd);
     }
 
-    /* Emit border edges as 4 FILL_RECTs */
     if (node_style->border_width > 0) {
       lk_i32 bw = node_style->border_width;
       lk_render_cmd bcmd;
 
-      /* Top */
       memset(&bcmd, 0, sizeof(bcmd));
-      bcmd.op = LK_ROP_FILL_RECT;
+      bcmd.op = LK_ROP_STROKE_RECT;
       bcmd.color = node_style->border_color;
-      bcmd.rect.x = rects[n].x;
-      bcmd.rect.y = rects[n].y;
-      bcmd.rect.w = rects[n].w;
-      bcmd.rect.h = bw;
-      lk_render_list_push(out, bcmd);
-
-      /* Bottom */
-      bcmd.rect.x = rects[n].x;
-      bcmd.rect.y = rects[n].y + rects[n].h - bw;
-      bcmd.rect.w = rects[n].w;
-      bcmd.rect.h = bw;
-      lk_render_list_push(out, bcmd);
-
-      /* Left */
-      bcmd.rect.x = rects[n].x;
-      bcmd.rect.y = rects[n].y + bw;
-      bcmd.rect.w = bw;
-      bcmd.rect.h = rects[n].h - bw * 2;
-      lk_render_list_push(out, bcmd);
-
-      /* Right */
-      bcmd.rect.x = rects[n].x + rects[n].w - bw;
-      bcmd.rect.y = rects[n].y + bw;
-      bcmd.rect.w = bw;
-      bcmd.rect.h = rects[n].h - bw * 2;
+      bcmd.rect = rects[n];
+      bcmd.stroke = (lk_u8)(bw > 255 ? 255 : bw);
       lk_render_list_push(out, bcmd);
     }
 
-    /* Emit CLIP_BEGIN after own render commands, before children */
     if (clips) {
       lk_render_cmd cmd;
       memset(&cmd, 0, sizeof(cmd));
@@ -273,7 +221,6 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
       lk_render_list_push(out, cmd);
     }
 
-    /* Push children (and CLIP_END marker if clipping) */
     {
       lk_ix child;
       int child_count = 0;
@@ -287,13 +234,10 @@ static int render_walk(const lk_tree *t, lk_ix start, const lk_rect *rects,
         child = t->nodes[child].next_sibling;
       }
 
-      /* An unselected TAB page renders its header only: never descend
-       * (see lk-tabs.h). */
       if (lk_tabs_collapsed(t, n, state)) {
         child_count = 0;
       }
 
-      /* Push CLIP_END marker first so it pops AFTER all children */
       if (clips) {
         stack[sp++] = (n | CLIP_END_MARKER);
       }
@@ -332,9 +276,6 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
     return 0;
   }
 
-  /* Reset commands and the run arena together (capacity is reused).
-   * lk_render_build_overlays only appends, so overlays never clobber
-   * runs emitted by the main pass. */
   out->count = 0;
   out->bytes_count = 0;
 
@@ -349,8 +290,6 @@ int lk_render_build(const lk_tree *t, const lk_rect *rects,
   return render_walk(t, t->root, rects, styles, state, geom, out, 0);
 }
 
-/* Internal (declared in lk-overlay.h): append the subtree rooted at
- * start, ignoring UIP_HIDDEN on start itself. */
 int lk_render_build_from(const lk_tree *t, lk_ix start, const lk_rect *rects,
                          const lk_style *styles, const lk_state *state,
                          const lk_widget_geom *geom, lk_render_list *out) {

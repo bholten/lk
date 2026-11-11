@@ -35,6 +35,7 @@ var checks #{a 1 b 0 c 0}
 var radio_val "two"
 var slide 40
 var pick "Green"
+var popup "popup"
 var typed ""
 var modal_open 0
 var para_spans ""
@@ -194,6 +195,7 @@ proc on_check {id v} { set! checks [Dict::merge $checks [dict $id [int $v]]] }
 proc on_radio {v} { set! radio_val $v }
 proc on_slide {v} { set! slide [int $v] }
 proc on_pick {v} { set! pick $v }
+proc on_popup {v} { set! popup $v }
 proc on_typed {v} { set! typed $v }
 
 parse_args
@@ -235,6 +237,7 @@ app "Widget Tour" #{font $font font_size 14 width 900 height 620} {
     translator value_changed radio Radio
     translator value_changed slide Slide
     translator value_changed pick Pick
+    translator value_changed popup Popup
     translator value_changed typed Typed
     translator pointer_down modal Modal
     keybinding f12 "" Snap
@@ -249,6 +252,7 @@ app "Widget Tour" #{font $font font_size 14 width 900 height 620} {
     on Radio [lambda {cmd} { on_radio [get [get $cmd args] 0] }]
     on Slide [lambda {cmd} { on_slide [get $cmd source_value] }]
     on Pick [lambda {cmd} { on_pick [get $cmd source_value] }]
+    on Popup [lambda {cmd} { on_popup [get $cmd source_value] }]
     on Typed [lambda {cmd} { on_typed [get $cmd source_value] }]
     on Modal [lambda {cmd} {
         if [== [get [get $cmd args] 0] open] { open_modal } else { close_modal }
@@ -415,7 +419,7 @@ app "Widget Tour" #{font $font font_size 14 width 900 height 620} {
                     row "ob" #{gap 8} {
                         button "open_modal" #{text "Open modal" focusable 1 present (modal (open)) tooltip "Pushes a modal overlay"}
                         button "tt2" #{text "Hover me" focusable 1 tooltip "A tooltip: fg/bg swapped plate"}
-                        dropdown "dd2" #{value "popup" focusable 1 w 140} {
+                        dropdown "dd2" #{value $popup focusable 1 w 140 present (popup (p))} {
                             option "o_a" #{text "popup"}
                             option "o_b" #{text "is an"}
                             option "o_c" #{text "overlay too"}

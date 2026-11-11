@@ -17,6 +17,9 @@ app "Split Panes" #{font $font font_size 16 width 800 height 500} {
         rule split_h #{border_color (90 90 110)}
     }
 
+    keybinding q ctrl Quit   ;; no close button in a terminal
+    on Quit [lambda {cmd} { quit }]
+
     view {
         split_h "main_split" #{split_ratio 300} {
             column "sidebar" #{padding 12 gap 8} {

@@ -6,11 +6,6 @@
 
 #include "lk-menu.h"
 
-/* ---- Command queue operations ---- */
-
-/* Copy len bytes into a byte arena (render-list pattern: doubling
- * growth, capacity reused across clears).  Writes the run's starting
- * offset to *out_off and returns 1; 0 on allocation failure. */
 static int arena_push(char **bytes, lk_u32 *count, lk_u32 *cap,
                       void *(*alloc)(void *, lk_u32), void *alloc_ud,
                       void (*dealloc)(void *, void *), const char *ptr,
@@ -75,9 +70,6 @@ lk_value lk_v_text(lk_ui *ui, const char *ptr, lk_u32 len) {
   return v;
 }
 
-/* 1 when cmd points at an element of the log array (logged commands
- * carry offsets into the log arena, everything else into the queue
- * arena).  Pointer equality only — C89-safe. */
 static int cmd_is_logged(const lk_ui *ui, const lk_command *cmd) {
   lk_u32 i;
 
@@ -162,10 +154,6 @@ static int cmd_queue_push(lk_command_queue *q, void *(*alloc)(void *, lk_u32),
   return 1;
 }
 
-/* Rewrite one UIV_TEXT value in the log's copy of a command: the
- * bytes (currently in the queue arena) are copied into the log arena
- * so the log stays readable after lk_ui_clear_commands.  Failed
- * copies degrade to UIV_NONE rather than dangle. */
 static void log_copy_text(lk_ui *ui, const lk_command *src_cmd, lk_value *v) {
   lk_str s;
   lk_u32 off;
@@ -213,8 +201,6 @@ static int log_push(lk_ui *ui, const lk_command *cmd) {
 
   ui->cmd_log[ui->cmd_log_count] = *cmd;
 
-  /* The log retains commands past lk_ui_clear_commands: copy every
-   * transient text value into the log's own arena. */
   {
     lk_command *lc = &ui->cmd_log[ui->cmd_log_count];
     lk_u8 ai;
@@ -230,8 +216,6 @@ static int log_push(lk_ui *ui, const lk_command *cmd) {
   ui->cmd_log_count++;
   return 1;
 }
-
-/* ---- Translator management ---- */
 
 void lk_ui_add_translator(lk_ui *ui, lk_u8 event_type, lk_u32 ptype,
                           lk_u16 node_kind, lk_u16 keycode, lk_u8 mods,
@@ -283,8 +267,6 @@ void lk_ui_add_translator_s(lk_ui *ui, lk_u8 event_type, const char *ptype,
     return;
   }
 
-  /* Treat NULL or empty-string ptype as "any" (matches Lcl-binding
-   * convention, so both layers agree). */
   pt = (ptype && ptype[0] != '\0') ? lk_intern_id(ui->intern, lk_str_c(ptype))
                                    : 0;
   cn = lk_intern_id(ui->intern, lk_str_c(command_name));
@@ -299,8 +281,6 @@ void lk_ui_clear_translators(lk_ui *ui) {
   }
 }
 
-/* ---- Command handler ---- */
-
 void lk_ui_set_command_handler(lk_ui *ui, lk_command_handler_fn fn, void *ud) {
   if (!ui) {
     return;
@@ -309,8 +289,6 @@ void lk_ui_set_command_handler(lk_ui *ui, lk_command_handler_fn fn, void *ud) {
   ui->cmd_handler = fn;
   ui->cmd_handler_ud = ud;
 }
-
-/* ---- Command queue access ---- */
 
 const lk_command_queue *lk_ui_commands(const lk_ui *ui) {
   if (!ui) {
@@ -323,11 +301,9 @@ const lk_command_queue *lk_ui_commands(const lk_ui *ui) {
 void lk_ui_clear_commands(lk_ui *ui) {
   if (ui) {
     ui->cmd_queue.count = 0;
-    ui->cmd_queue.bytes_count = 0; /* dispatch arena dies with the queue */
+    ui->cmd_queue.bytes_count = 0;
   }
 }
-
-/* ---- Introspection ---- */
 
 static void wr_cstr(lk_write_fn wr, void *ud, const char *s) {
   if (!wr || !s) {
@@ -410,8 +386,6 @@ void lk_ui_dump_commands(const lk_ui *ui, lk_write_fn wr, void *wr_ud) {
 
   wr_cstr(wr, wr_ud, ")\n");
 
-  /* Command log.  UIV_TEXT args are printed from the LOG's copy —
-   * never from the (possibly reset) queue arena. */
   wr_cstr(wr, wr_ud, "(commands");
 
   for (i = 0; i < ui->cmd_log_count; i++) {
@@ -508,16 +482,6 @@ void lk_ui_clear_command_log(lk_ui *ui) {
   }
 }
 
-/* ---- Translator dispatch ----
- *
- * There is ONE translator matcher (docs/weft-surface.md §1).  Node-
- * presentation routing (lk_translate_event) and interior-presentation
- * routing (lk_translate_presentations) both converge on the shared
- * translator_match + emit_translated internals below; they differ
- * only in candidate discovery. */
-
-/* Does tr match (event, ptype, node)?  keycode != 0 and button != 0
- * both demand exact mods (the same discipline). */
 static int translator_match(const lk_translator *tr, const lk_tree *t,
                             lk_ix node, const lk_event *event, lk_u32 ptype) {
   if (tr->event_type != 0 && tr->event_type != event->type) {
@@ -557,9 +521,6 @@ static int translator_match(const lk_translator *tr, const lk_tree *t,
   return 1;
 }
 
-/* Build the command for a matched translator and dispatch it (queue,
- * log, handler).  hit may be NULL (node presentations, keybindings) —
- * the command's hit stays zeroed then. */
 static void emit_translated(lk_ui *ui, const lk_translator *tr, lk_ix node,
                             const lk_event *event, lk_u32 ptype,
                             const lk_value *args, lk_u8 arg_count,
@@ -582,8 +543,6 @@ static void emit_translated(lk_ui *ui, const lk_translator *tr, lk_ix node,
   cmd.source_node = node;
   cmd.source_ptype = ptype;
 
-  /* Carry the event-intrinsic value onto the command so handlers
-   * get (presentation args) + (new value) in one delivery. */
   if (event->type == LK_EVENT_VALUE_CHANGED) {
     cmd.source_value.tag = UIV_STR;
     cmd.source_value.as.str_id = event->data.value_changed.str_id;
@@ -601,10 +560,6 @@ static void emit_translated(lk_ui *ui, const lk_translator *tr, lk_ix node,
   }
 }
 
-/* ---- context-menu producer (docs/context-menu.md section 1) ---- */
-
-/* A translator a person can choose from a menu: one that answers a
- * gesture, not a reaction. */
 static int translator_menuable(const lk_translator *tr) {
   switch (tr->event_type) {
   case 0:
@@ -658,9 +613,6 @@ static const char *menu_key_name(lk_u16 kc, char *buf) {
   return "";
 }
 
-/* "ctrl+shift+q", "right-click", "ctrl+click" -- the DSL's chord
- * spelling; interned in the ui's table, 0 when there is nothing to
- * say. */
 static lk_u32 menu_accel(lk_ui *ui, const lk_translator *tr) {
   char buf[64];
   char kbuf[16];
@@ -731,7 +683,6 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
     return 0;
   }
 
-  /* Disabled suppression, as in lk_translate_event. */
   node = target;
 
   while (node != 0 && node < t->node_count) {
@@ -744,7 +695,6 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
 
   suppressed = (top_disabled != 0);
 
-  /* 1. Interior presentations under the point. */
   if (!suppressed) {
     const lk_widget_def *def = lk_widget_get((lk_kind)t->nodes[target].kind);
 
@@ -774,7 +724,6 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
     }
   }
 
-  /* 2. Node presentations, target -> root. */
   node = target;
 
   while (node != 0 && node < t->node_count && n < cap) {
@@ -791,7 +740,6 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
         const lk_translator *tr = &ui->translators[ti];
         lk_u8 ai;
 
-        /* ptype-less KEY translators are listed once, as globals */
         if (!translator_menuable(tr) ||
             (tr->ptype == 0 && translator_is_key(tr)) ||
             (tr->ptype != 0 && tr->ptype != pres->ptype) ||
@@ -821,8 +769,6 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
     node = t->nodes[node].parent;
   }
 
-  /* 3. Global key translators (the window-level fallback's set),
-   * after a separator when anything precedes them. */
   if (t->root != 0 && top_disabled != t->root) {
     int first = 1;
 
@@ -853,9 +799,6 @@ lk_u32 lk_menu_candidates(lk_ui *ui, const lk_tree *t, lk_ix target, lk_i32 x,
   return n;
 }
 
-/* Activation (docs/context-menu.md section 3): the command is the
- * gesture's command -- a synthetic event of the translator's own type
- * through the one emitter. */
 int lk_menu_emit(lk_ui *ui, const lk_tree *t, const lk_menu_item *it) {
   lk_ix node;
 
@@ -865,8 +808,6 @@ int lk_menu_emit(lk_ui *ui, const lk_tree *t, const lk_menu_item *it) {
 
   node = it->node_id ? lk_tree_find_by_id(t, it->node_id) : 0;
 
-  /* A translator item is bound to its node (vanished = cancelled);
-   * an explicit item with no owner falls back to the root. */
   if (node == 0 &&
       (it->translator_ix != LK_MENU_NO_TRANSLATOR || it->node_id != 0)) {
     return 0;
@@ -881,13 +822,13 @@ int lk_menu_emit(lk_ui *ui, const lk_tree *t, const lk_menu_item *it) {
     lk_event ev;
 
     if (it->translator_ix >= ui->translator_count) {
-      return 0; /* the table was cleared under the menu */
+      return 0;
     }
 
     tr = &ui->translators[it->translator_ix];
 
     if (tr->command_name != it->command_name) {
-      return 0; /* re-registered differently */
+      return 0;
     }
 
     memset(&ev, 0, sizeof(ev));
@@ -946,8 +887,6 @@ int lk_translate_presentations(lk_ui *ui, const lk_tree *t, lk_ix node,
     return 0;
   }
 
-  /* Candidates in the given order; the gesture picks which candidate
-   * is relevant — the first (hit, translator) pair wins. */
   for (hi = 0; hi < n; hi++) {
     for (ti = 0; ti < ui->translator_count; ti++) {
       const lk_translator *tr = &ui->translators[ti];
@@ -980,9 +919,6 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
     return;
   }
 
-  /* Disabled suppression: find the topmost (closest-to-root) disabled
-   * node on the target->root path.  That node and everything below it
-   * must not emit commands; ancestors above it still may. */
   top_disabled = 0;
   node = event->target;
 
@@ -996,14 +932,11 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
 
   suppressed = (top_disabled != 0);
 
-  /* Walk from target up to root, looking for presentations */
   node = event->target;
 
   while (node != 0 && node < t->node_count) {
     lk_u32 pi;
 
-    /* Check all presentations on this node (skipped while inside a
-     * disabled subtree) */
     for (pi = 0; suppressed == 0 && pi < t->pres_count; pi++) {
       const lk_presentation *pres;
       lk_u32 ti;
@@ -1021,8 +954,6 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
           continue;
         }
 
-        /* Node presentations are not interior presentations: no hit
-         * attached, pvalues flow into the args unchanged. */
         emit_translated(ui, tr, node, event, pres->ptype, pres->pvalues,
                         pres->pvalue_count, NULL);
         event->handled = 1;
@@ -1031,7 +962,6 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
       }
     }
 
-    /* Once we step above the topmost disabled node, matching resumes. */
     if (node == top_disabled) {
       suppressed = 0;
     }
@@ -1039,15 +969,6 @@ void lk_translate_event(lk_ui *ui, const lk_tree *t, lk_event *event) {
     node = t->nodes[node].parent;
   }
 
-  /* Window-level fallback for KEY events (the global-keybinding
-   * footgun, docs/TODO.md): a ptype-less key translator used to fire
-   * only when some node on the focus path carried a presentation, so
-   * `keybinding f2 "" NewGame` silently did nothing until the app
-   * decorated its root.  When no presentation matched, ptype-less
-   * translators get one more chance against the root itself, with no
-   * presentation args.  Pointer/value events keep the presentation
-   * discipline (a ptype-less pointer translator on the root would
-   * fire for every click).  A disabled root suppresses everything. */
   if (event->type != LK_EVENT_KEY_DOWN && event->type != LK_EVENT_KEY_UP) {
     return;
   }

@@ -27,11 +27,18 @@
 ;;     are bound as `$_1`, `$_2`, ... (and `$_` for the latest)
 ;;
 ;; Gestures on a result:   left  = ACCEPT it into the command line
-;;                         middle = DESCRIBE it (one line)
+;;                         middle = DESCRIBE it (one line); Ctrl+left
+;;                                  is its second spelling, for
+;;                                  terminals that keep the middle
+;;                                  button for themselves (paste)
 ;;                         right  = INSPECT it (one line per element,
 ;;                                  each element presented in turn)
 ;; Gestures on an echoed form:  left = recall it, right = re-run it.
-;; Keys: Ctrl+Enter evaluate · Ctrl+P/N history · Ctrl+L clear.
+;; Keys: Ctrl+Enter evaluate · Ctrl+P/N history · Ctrl+L clear ·
+;; Ctrl+Q quit.  Alt+Enter evaluates too: a terminal without the kitty
+;; keyboard protocol cannot send Ctrl+Enter (it arrives as a plain
+;; RETURN), and the hints name whichever chord this window can deliver
+;; (`Lk::window_caps` has `key_chords` or it does not).
 
 let font "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
 
@@ -57,7 +64,8 @@ var ied {}          ;; command-line editor
 var nres 0          ;; results bound so far (_1 .. _nres)
 var hist ()         ;; submitted forms, oldest first
 var hist_ix 0       ;; history cursor (== len hist when not browsing)
-var status "Ctrl+Enter evaluates"
+var eval_key "Ctrl+Enter" ;; the chord the hints name (asked at app time)
+var status ""
 var spans_rev ""    ;; transcript revision the spans were projected for
 
 ;; ---- transcript writing ----
@@ -365,16 +373,20 @@ app "The Listener" #{font $font font_size 15 width 960 height 640} {
         translator pointer_down #{button primary}   $t Accept
         translator pointer_down #{button middle}    $t Describe
         translator pointer_down #{button secondary} $t Inspect
+        translator pointer_down #{button primary mods ctrl} $t Describe
     }
 
     translator pointer_down #{button primary}   form Recall
     translator pointer_down #{button secondary} form Rerun
 
     keybinding return ctrl cmdline Submit
+    keybinding return alt cmdline Submit
     keybinding p ctrl cmdline HistPrev
     keybinding n ctrl cmdline HistNext
     keybinding l ctrl cmdline Clear
     keybinding l ctrl transcript Clear
+    keybinding q ctrl Quit   ;; no close button in a terminal
+    on Quit [lambda {cmd} { quit }]
 
     on Submit [lambda {cmd} {
         let form [input_text]
@@ -420,8 +432,15 @@ app "The Listener" #{font $font font_size 15 width 960 height 640} {
     }]
 
     note ";; The Listener — an Lcl REPL whose results stay alive."
-    note ";; Ctrl+Enter evaluates.  Click a result to accept it into the"
-    note ";; command line, middle-click to describe, right-click to inspect."
+    if [not [List::any? [Lk::window_caps ${LkDsl::_win}] [lambda {c} { == $c key_chords }]]] {
+        set! eval_key "Alt+Enter"
+    }
+
+    set! status "$eval_key evaluates"
+
+    note ";; $eval_key evaluates.  Click a result to accept it into the"
+    note ";; command line, middle- or ctrl-click to describe, right-click to"
+    note ";; inspect."
     note ";; Results bind as \$_1, \$_2, ... and \$_ is the latest."
     note ";; Try:  List::range 1 10        #{name Ada born 1815}"
     note ";;       proc sq {x} { * \$x \$x }      List::map \$_1 \$_"
@@ -452,7 +471,7 @@ app "The Listener" #{font $font font_size 15 width 960 height 640} {
                 row "status" #{tag status} {
                     label "st" #{text $status tag dim}
                     spacer "sp"
-                    label "keys" #{text "ctrl+enter eval · ctrl+p/n history · ctrl+l clear" tag dim}
+                    label "keys" #{text "[String::lower $eval_key] eval · ctrl+p/n history · ctrl+l clear · ctrl+q quit" tag dim}
                 }
             }
         }

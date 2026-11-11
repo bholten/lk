@@ -7,17 +7,10 @@
 #include "lk-text-input.h"
 #include <lk.h>
 
-/* Hidden subtrees (UIP_HIDDEN on the root of the subtree) are skipped
- * by the main passes.  The subtree entry points (lk_layout_subtree)
- * ignore the flag on their start node only, so overlay content —
- * hidden from the main tree — can still be measured and laid out. */
 static int node_hidden(const lk_tree *t, lk_ix n) {
   return lk_node_prop_bool(t, n, UIP_HIDDEN);
 }
 
-/* Post-order measure of the subtree rooted at start.  Hidden
- * descendants are skipped (their sizes stay zero); start itself is
- * always measured. */
 static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
                          lk_size *sizes, lk_ix start) {
   lk_ix *stack;
@@ -52,7 +45,7 @@ static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
       iter[sp - 1] = t->nodes[c].next_sibling;
 
       if (node_hidden(t, c)) {
-        continue; /* skip hidden subtree */
+        continue;
       }
 
       stack[sp] = c;
@@ -87,9 +80,6 @@ static void measure_pass(const lk_tree *t, const lk_layout_cfg *cfg,
   lk_sys_dealloc(NULL, iter);
 }
 
-/* Top-down layout of the subtree rooted at start.  rects[start] must
- * already hold the subtree root's final rect.  Hidden descendants are
- * not descended into (their rects are left as-is). */
 lk_i32 lk_widget_fit_height(const lk_tree *t, lk_ix n, lk_i32 width,
                             const lk_size *sizes, const lk_layout_cfg *cfg) {
   const lk_widget_def *def;
@@ -98,7 +88,6 @@ lk_i32 lk_widget_fit_height(const lk_tree *t, lk_ix n, lk_i32 width,
     return 0;
   }
 
-  /* An explicit height is final (measure_pass applied it to sizes). */
   if (lk_node_has_prop(t, n, UIP_H)) {
     return sizes[n].h;
   }
@@ -142,8 +131,6 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
       continue;
     }
 
-    /* An unselected TAB page is a leaf for this pass: no layout hook,
-     * no descent (its subtree rects stay zero).  See lk-tabs.h. */
     if (lk_tabs_collapsed(t, n, cfg->state)) {
       continue;
     }
@@ -160,7 +147,6 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
 
     def->layout(t, n, sizes, &content, cfg, rects);
 
-    /* Push children in reverse order for correct DFS traversal */
     child_count = 0;
     child = nd->first_child;
 
@@ -198,7 +184,48 @@ static void layout_pass(const lk_tree *t, const lk_layout_cfg *cfg,
   lk_sys_dealloc(NULL, stack);
 }
 
-/* ---- Public API ---- */
+static lk_i32 snap_edge(lk_i32 v, lk_i32 g) {
+  lk_i32 q = v + g / 2;
+
+  if (q >= 0) {
+    return (q / g) * g;
+  }
+
+  return -(((-q) + g - 1) / g) * g;
+}
+
+void lk_rect_snap_grid(lk_rect *r, lk_i32 grid_w, lk_i32 grid_h) {
+  if (grid_w > 0) {
+    lk_i32 x0 = snap_edge(r->x, grid_w);
+    lk_i32 x1 = snap_edge(r->x + r->w, grid_w);
+
+    r->x = x0;
+    r->w = x1 > x0 ? x1 - x0 : 0;
+  }
+
+  if (grid_h > 0) {
+    lk_i32 y0 = snap_edge(r->y, grid_h);
+    lk_i32 y1 = snap_edge(r->y + r->h, grid_h);
+
+    r->y = y0;
+    r->h = y1 > y0 ? y1 - y0 : 0;
+  }
+}
+
+static void snap_rects(const lk_tree *t, const lk_layout_cfg *cfg,
+                       lk_rect *rects) {
+  lk_u32 i;
+
+  if (cfg->grid_w <= 0 && cfg->grid_h <= 0) {
+    return;
+  }
+
+  for (i = 0; i < t->node_count; i++) {
+    if (rects[i].w > 0 || rects[i].h > 0) {
+      lk_rect_snap_grid(&rects[i], cfg->grid_w, cfg->grid_h);
+    }
+  }
+}
 
 int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
   lk_size *sizes;
@@ -234,11 +261,8 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
   rects[t->root].h = cfg->viewport_h;
 
   layout_pass(t, cfg, sizes, rects, t->root);
+  snap_rects(t, cfg, rects);
 
-  /* Per-frame geometry scratch: widgets stash derived geometry the
-   * event handlers need but cannot compute (trigger rects, text
-   * origin, split content rects).  NULL geom skips the stash; the
-   * degraded behaviors are documented on lk_widget_geom. */
   if (cfg->geom) {
     lk_dropdown_store_trigger_rects(t, rects, cfg);
     lk_text_input_store_geometry(t, rects, cfg);
@@ -249,9 +273,6 @@ int lk_layout(const lk_tree *t, const lk_layout_cfg *cfg, lk_rect *rects) {
   return 1;
 }
 
-/* Zero the rect slots of every node in the subtree rooted at start
- * (including hidden descendants), so stale values from a previous
- * subtree layout can't leak through. */
 static void zero_subtree_rects(const lk_tree *t, lk_ix start, lk_rect *rects) {
   lk_ix *stack;
   lk_u32 sp;
@@ -306,8 +327,6 @@ int lk_layout_subtree(const lk_tree *t, const lk_layout_cfg *cfg,
   memset(sizes, 0, sizeof(lk_size) * t->node_count);
   zero_subtree_rects(t, subtree_root, rects);
 
-  /* UIP_HIDDEN on subtree_root itself is deliberately ignored: the
-   * whole point is laying out subtrees the main pass skipped. */
   measure_pass(t, cfg, sizes, subtree_root);
 
   rects[subtree_root].x = origin_x;
@@ -316,6 +335,7 @@ int lk_layout_subtree(const lk_tree *t, const lk_layout_cfg *cfg,
   rects[subtree_root].h = sizes[subtree_root].h;
 
   layout_pass(t, cfg, sizes, rects, subtree_root);
+  snap_rects(t, cfg, rects);
 
   lk_sys_dealloc(NULL, sizes);
   return 1;

@@ -73,6 +73,7 @@ var start_y 0
 var hover_x -1    ;; pixel under the pointer (-1 = off-canvas)
 var hover_y -1
 var status "ready"
+var can_io 1
 
 ;; ---- small integer helpers (Lcl has no abs/min/max) ----
 
@@ -465,6 +466,8 @@ app "Tiny Paint" #{font $font font_size 14 width 820 height 600} {
     keybinding 4 "" Size4
     keybinding z ctrl Undo
     keybinding y ctrl Redo
+    keybinding q ctrl Quit
+    on Quit [lambda {cmd} { quit }]
 
     on ToolPick   [lambda {cmd} { set_tool [get [get $cmd args] 0] }]
     on ToolPencil [lambda {cmd} { set_tool pencil }]
@@ -589,6 +592,12 @@ app "Tiny Paint" #{font $font font_size 14 width 820 height 600} {
     }]
 
     ;; Both buffers register in the window ui's resource table.
+    ;; Image files need codecs behind the window, and not every backend
+    ;; has them (the terminal one does not, today).  Ask rather than
+    ;; assume: without `image_io` Load/Save stay on screen, disabled,
+    ;; with a line saying why.
+    set! can_io [List::any? [Lk::window_caps ${LkDsl::_win}] [lambda {c} { == $c image_io }]]
+
     new_canvas ${LkDsl::_ui} 64 64
     set! cur [Lk::image_new ${LkDsl::_ui} 1 1]
 
@@ -660,12 +669,15 @@ app "Tiny Paint" #{font $font font_size 14 width 820 height 600} {
                 }
 
                 row "files" #{gap 4} {
-                    button "b_load" #{text "Load..." focusable 1 present (action (load))}
-                    button "b_save" #{text "Save..." focusable 1 present (action (save))}
+                    button "b_load" #{text "Load..." focusable 1 disabled [not $can_io] present (action (load))}
+                    button "b_save" #{text "Save..." focusable 1 disabled [not $can_io] present (action (save))}
                 }
+
+                if [not $can_io] { label "io_off" #{text "no image codecs here" tag dim} }
 
                 label "hint" #{text "left paints · right erases" tag dim}
                 label "hint2" #{text "1-4 brush · Ctrl+Z undo" tag dim}
+                label "hint3" #{text "Ctrl+Q quit" tag dim}
             }
         }
     }

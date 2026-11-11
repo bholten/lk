@@ -334,12 +334,12 @@ static const lk_render_cmd *nth_sel_fill(const lk_render_list *rl, lk_u32 idx) {
   return NULL;
 }
 
-/* The cursor bar is the only 1-px-wide FILL_RECT the editor emits. */
+/* The (first) caret: an LK_ROP_CARET command. */
 static const lk_render_cmd *find_cursor_fill(const lk_render_list *rl) {
   lk_u32 i;
 
   for (i = 0; i < rl->count; i++) {
-    if (rl->cmds[i].op == LK_ROP_FILL_RECT && rl->cmds[i].rect.w == 1) {
+    if (rl->cmds[i].op == LK_ROP_CARET) {
       return &rl->cmds[i];
     }
   }
@@ -874,6 +874,43 @@ static void test_event_typing(void) {
   CHECK(send_text(&f, "!") == 1);
   CHECK(doc_is(f.doc, "hi!"));
   CHECK_EQ(lk_editor_cursor(f.ed), 3);
+
+  fix_destroy(&f);
+  END_TEST();
+}
+
+static void test_event_paste(void) {
+  ed_fix f;
+  lk_event ev;
+  static const char pasted[] = "alpha\nbeta\ngamma";
+
+  BEGIN_TEST("ed event: LK_EVENT_PASTE is one insertion, one undo step");
+
+  fix_init(&f, "", 400, 80);
+
+  CHECK(send_text(&f, "x") == 1);
+
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_PASTE;
+  ev.target = f.node;
+  ev.data.paste.ptr = pasted;
+  ev.data.paste.len = (lk_u32)(sizeof(pasted) - 1);
+  lk_event_route(f.ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 1u);
+  CHECK(doc_is(f.doc, "xalpha\nbeta\ngamma"));
+  CHECK_EQ(lk_editor_cursor(f.ed), 1 + (lk_u32)(sizeof(pasted) - 1));
+
+  /* ONE undo removes the whole paste, not one line of it */
+  CHECK(cmd0(&f, LK_ED_UNDO) == 1);
+  CHECK(doc_is(f.doc, "x"));
+
+  /* empty paste: not handled, nothing changes */
+  memset(&ev, 0, sizeof(ev));
+  ev.type = LK_EVENT_PASTE;
+  ev.target = f.node;
+  lk_event_route(f.ui, &ev);
+  CHECK_EQ((unsigned)ev.handled, 0u);
+  CHECK(doc_is(f.doc, "x"));
 
   fix_destroy(&f);
   END_TEST();
@@ -3509,7 +3546,7 @@ static lk_u32 count_cursor_fills(const lk_render_list *rl) {
   lk_u32 n = 0;
 
   for (i = 0; i < rl->count; i++) {
-    if (rl->cmds[i].op == LK_ROP_FILL_RECT && rl->cmds[i].rect.w == 1) {
+    if (rl->cmds[i].op == LK_ROP_CARET) {
       n++;
     }
   }
@@ -3522,7 +3559,7 @@ static const lk_render_cmd *nth_cursor_fill(const lk_render_list *rl,
   lk_u32 i;
 
   for (i = 0; i < rl->count; i++) {
-    if (rl->cmds[i].op == LK_ROP_FILL_RECT && rl->cmds[i].rect.w == 1) {
+    if (rl->cmds[i].op == LK_ROP_CARET) {
       if (n == 0) {
         return &rl->cmds[i];
       }
@@ -4426,6 +4463,7 @@ void lk_editor_run_tests(void) {
 
   printf("\nlk editor event-tier tests:\n");
   test_event_typing();
+  test_event_paste();
   test_event_return_tab_esc();
   test_event_arrows_modifiers();
   test_event_page_keys();

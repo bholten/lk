@@ -992,8 +992,8 @@ static void test_theme_rule_bad_font_size(void) {
   END_TEST();
 }
 
-#ifdef LK_HAVE_SDL
-#include "lk-sdl.h" /* lk_image_load_mem for the hermetic BMP test */
+#ifdef LK_HAVE_WINDOW
+#include <lk-window.h> /* lk_image_load_mem for the hermetic BMP test */
 
 /* defined later in this file (the editor-track harness section) */
 static void eval_expect_err(lcl_interp *interp, const char *src,
@@ -1204,7 +1204,7 @@ static void test_dialog_errors(void) {
   lcl_interp_free(interp);
   END_TEST();
 }
-#endif /* LK_HAVE_SDL */
+#endif /* LK_HAVE_WINDOW */
 
 static void test_set_command_handler(void) {
   lcl_interp *interp;
@@ -5553,7 +5553,7 @@ static void test_args_proc(void) {
   END_TEST();
 }
 
-#ifdef LK_HAVE_SDL
+#ifdef LK_HAVE_WINDOW
 /* Headless like the dialog tests: only the contracts that error before
  * any window exists. */
 static void test_screenshot_stop_errors(void) {
@@ -5575,6 +5575,10 @@ static void test_screenshot_stop_errors(void) {
   eval_expect_err(interp, "Lk::window_stop", "Lk::window_stop", "1 argument",
                   NULL);
   eval_expect_err(interp, "Lk::window_stop $ui", "expected lk_window opaque",
+                  NULL, NULL);
+  eval_expect_err(interp, "Lk::window_caps", "Lk::window_caps", "1 argument",
+                  NULL);
+  eval_expect_err(interp, "Lk::window_caps $ui", "expected lk_window opaque",
                   NULL, NULL);
 
   lcl_interp_free(interp);
@@ -6462,6 +6466,74 @@ static void test_annot_present_errors(void) {
   }
   eval_expect_err(interp, "Lk::annot_present $ui2 $s $a \"t\" 2",
                   "bound to a different ui", NULL, NULL);
+
+  lcl_interp_free(interp);
+  END_TEST();
+}
+
+/* annot_presentation: the inverse of annot_present -- the wrapped Lcl
+ * value comes back live; no presentation reads as ""; errors mirror
+ * annot_present's. */
+static void test_annot_presentation_get(void) {
+  lcl_interp *interp;
+  lcl_value *r = NULL;
+
+  BEGIN_TEST("annot_presentation: reads back what annot_present set");
+  interp = make_interp();
+
+  eval_ok(
+      interp,
+      "let ui [Lk::ui_create]\n"
+      "let doc [Lk::doc_new \"hello world\"]\n"
+      "let s [Lk::annot_store_new]\n"
+      "Lk::annot_attach $s $doc\n"
+      "let a [Lk::annot_add $s 0 5 \"l\"]\n"
+      "let b [Lk::annot_add $s 6 11 \"l\"]\n"
+      "Lk::annot_present $ui $s $a \"qjump\" #{buffer \"b1\" start 4 end 9}",
+      &r);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  eval_ok(interp, "get [Lk::annot_presentation $ui $s $a] ptype", &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "qjump") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  eval_ok(interp, "get [get [Lk::annot_presentation $ui $s $a] value] end", &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "9") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  /* no presentation -> "" */
+  eval_ok(interp, "Lk::annot_presentation $ui $s $b", &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  /* a replaced presentation reads back the new value */
+  eval_ok(interp,
+          "Lk::annot_present $ui $s $a \"loc\" 42\n"
+          "let p [Lk::annot_presentation $ui $s $a]\n"
+          "\"[get $p ptype]/[get $p value]\"",
+          &r);
+  CHECK(r != NULL && strcmp(lcl_value_to_string(r), "loc/42") == 0);
+  if (r) {
+    lcl_ref_dec(r);
+  }
+  r = NULL;
+
+  eval_expect_err(interp, "Lk::annot_presentation $ui $s 999",
+                  "no such annotation", NULL, NULL);
+  eval_expect_err(interp, "Lk::annot_presentation $ui $s",
+                  "expected 3 arguments", NULL, NULL);
 
   lcl_interp_free(interp);
   END_TEST();
@@ -7507,7 +7579,7 @@ int main(void) {
   test_theme_rule_font_keys();
   test_theme_rule_bad_font_id();
   test_theme_rule_bad_font_size();
-#ifdef LK_HAVE_SDL
+#ifdef LK_HAVE_WINDOW
   test_register_font_arity();
   test_register_font_bad_window();
   test_window_icon_errors();
@@ -7628,7 +7700,7 @@ int main(void) {
   test_dsl_list_window();
   test_list_value_prop();
   test_args_proc();
-#ifdef LK_HAVE_SDL
+#ifdef LK_HAVE_WINDOW
   test_screenshot_stop_errors();
 #endif
   test_node_rect();
@@ -7642,6 +7714,7 @@ int main(void) {
   test_focus_changed_marshal();
   test_focus_changed_translator_name();
   test_annot_present_errors();
+  test_annot_presentation_get();
   test_annot_present_ui_dies_first();
   test_command_handler_released_on_ui_destroy();
   test_name_arg_strictness();
